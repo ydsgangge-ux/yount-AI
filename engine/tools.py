@@ -1446,15 +1446,13 @@ def _wait_for_comfyui(prompt_id: str, timeout: int = 120) -> Optional[str]:
         "当用户想看你的样子、环境、周围场景时优先使用此工具。"
         "注意：如果用户要求看风景、场景、环境，不要在 prompt 中添加人物，"
         "同时将 no_human 参数设为 true。"
-        "关键规则：当用户明确给出提示词要求画图时（如'帮我画一个XXX''按这个提示词画图''生成图片sun, 1girl...'），"
-        "你必须在 prompt 最前面加上 [NO_INJECT] 标记（注意是 prompt 值的开头），"
-        "此时系统不会注入任何角色外貌、姿势等信息，完全按照用户的 prompt 生成。"
-        "当是你自己要拍照或拍风景时（如'让我看看你''拍张照'），不要加 [NO_INJECT]，让系统自动注入你的角色特征。"
+        "当用户明确点击工具面板画图（对话中包含工具名），系统会自动跳过角色特征注入。"
+        "当是你自己要拍照或拍风景时（如'让我看看你''拍张照'），直接生成 prompt 即可，系统会自动注入你的角色特征。"
     ),
     parameters={
         "prompt": {
             "type": "string",
-            "description": "英文画面描述，使用逗号分隔的标签/关键词格式。人数用 1girl/1boy/2girls 等，构图用 solo/full body/upper body 等，服装外貌用具体描述如 white_shirt/black_dress/long_hair。示例: '1girl, solo, full body, long_hair, white_shirt, standing, indoors, cafe, warm_lighting'。用户指定画图时必须在开头加 [NO_INJECT]，如 '[NO_INJECT] sun, 1girl, lens_flare...'",
+            "description": "英文画面描述，使用逗号分隔的标签/关键词格式。人数用 1girl/1boy/2girls 等，构图用 solo/full body/upper body 等，服装外貌用具体描述如 white_shirt/black_dress/long_hair。示例: '1girl, solo, full body, long_hair, white_shirt, standing, indoors, cafe, warm_lighting'",
             "required": True,
         },
         "negative_prompt": {
@@ -1489,11 +1487,20 @@ def generate_image_comfy(prompt: str, negative_prompt: str = "", no_human: bool 
         from datetime import datetime
         from engine.image_gen import get_image_dir
 
-        # 0.0 检测 [NO_INJECT] 标记（用户指定画图，跳过角色特征注入）
-        no_inject = prompt.strip().startswith("[NO_INJECT]")
+        # 0.0 判断是否跳过角色特征注入
+        # 策略：用户原始消息包含"generate_image_comfy"（点击工具面板）→ 跳过注入
+        #       其他情况（系统自主调用、自然对话触发）→ 注入角色特征
+        _raw_input = getattr(generate_image_comfy, '_user_raw_input', '') or ''
+        no_inject = 'generate_image_comfy' in _raw_input
+        # 兼容：LLM 也可能加 [NO_INJECT]，仅当用户消息也匹配时才生效
+        if not no_inject and prompt.strip().startswith("[NO_INJECT]"):
+            prompt = prompt.strip().replace("[NO_INJECT]", "").strip().lstrip(",").strip()
+            # LLM 单方面加的 [NO_INJECT]，用户消息没有工具名，忽略
         if no_inject:
             prompt = prompt.strip().replace("[NO_INJECT]", "").strip().lstrip(",").strip()
-            print(f"[ComfyUI] 检测到 [NO_INJECT] 标记，跳过角色特征注入")
+            print(f"[ComfyUI] 用户主动指定画图，跳过角色特征注入")
+        else:
+            print(f"[ComfyUI] 系统自主调用，将注入角色特征")
 
         # 0.0.1 风格冲突清理（anime ↔ realistic，两个模式都需要）
         _current_style = _load_comfyui_config()["style"]
@@ -2170,12 +2177,15 @@ def add_schedule(content: str, date: str, category: str = "personal", source: st
 # 工具执行入口
 # ═══════════════════════════════════════════════════
 
-def execute_tool(name: str, params: dict) -> Dict:
-    """执行指定工具，返回结果"""
+def execute_tool(name: str, params: dict, user_input: str = "") -> Dict:
+    """执行指定工具，返回结果。user_input 用于传递用户原始消息（供工具内部判断上下文）"""
     if name not in TOOL_REGISTRY:
         return {"ok": False, "error": f"工具 '{name}' 不存在"}
     try:
         func = TOOL_REGISTRY[name]["function"]
+        # 注入用户原始消息到函数属性，供 generate_image_comfy 等工具使用
+        if user_input and hasattr(func, '_user_raw_input') is not False:
+            func._user_raw_input = user_input
         result = func(**params)
         return result
     except TypeError as e:

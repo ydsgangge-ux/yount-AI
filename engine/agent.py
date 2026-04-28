@@ -405,7 +405,7 @@ class ConsciousnessAgent:
 
             exec_result = self.b.execute_task(
                 task=tool_task, context=context, use_tools=True,
-                max_tokens=_max_tokens
+                max_tokens=_max_tokens, user_input=user_input
             )
             tool_steps  = exec_result.get("steps", [])
             tools_used  = exec_result.get("tools_used", [])

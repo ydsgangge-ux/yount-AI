@@ -88,7 +88,8 @@ class BLayerExecutor:
         task: str,
         context: str = "",
         use_tools: bool = True,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        user_input: str = ""
     ) -> Dict[str, Any]:
         """
         执行一个需要工具的任务
@@ -99,6 +100,7 @@ class BLayerExecutor:
           "success": bool
         }
         """
+        self._user_input = user_input  # 保存用户原始消息
         self.execution_log = []
         steps = []
         tools_used = []
@@ -191,9 +193,11 @@ class BLayerExecutor:
                         result_content = {"ok": False, "error": "用户拒绝执行此高风险操作"}
                         self._log("拒绝", f"{tool_name} 被用户拒绝")
                     else:
-                        result_content = execute_tool(tool_name, tool_params)
+                        result_content = execute_tool(tool_name, tool_params,
+                                                      user_input=getattr(self, '_user_input', ''))
                 else:
-                    result_content = execute_tool(tool_name, tool_params)
+                    result_content = execute_tool(tool_name, tool_params,
+                                                  user_input=getattr(self, '_user_input', ''))
 
                 self._log(
                     "结果",
