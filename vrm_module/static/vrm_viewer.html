@@ -226,8 +226,8 @@ async function loadVRM() {
 
     scene.add(vrm.scene);
 
-    // ★ 从 T 姿势转为自然站立姿势（VRM 加载后默认是绑定姿势）
-    applyNaturalPose(vrm);
+    // ★ 从 T 姿势自然过渡到站立姿势（基于当前骨骼状态做相对调整）
+    transitionToIdlePose(vrm);
 
     // ★ 立刻设置一个表情，确认面部渲染正常
     setTimeout(() => {
@@ -287,35 +287,70 @@ function updateExpressions() {
   }
 }
 
-// ★ 从 T 姿势转为自然站立姿势
-function applyNaturalPose(vrmInst) {
+// ★ 从 T 姿势自然过渡到站立姿势（相对调整，不依赖具体模型）
+//    原理：读取骨骼当前旋转 → 计算目标增量 → 逐帧插值过渡
+let _idleTransition = { active: false, progress: 0, boneTargets: new Map() };
+
+function transitionToIdlePose(vrmInst) {
   if (!vrmInst || !vrmInst.humanoid) return;
   const h = vrmInst.humanoid;
 
-  // 手臂放下到身体两侧（VRM 默认 T 姿势）
-  const setBone = (name, rot) => {
-    const bone = h.getNormalizedBoneNode(name);
-    if (bone) {
-      bone.rotation.set(rot[0], rot[1], rot[2]);
-    }
+  // 定义每个骨骼的【相对旋转增量】（在当前值基础上加多少）
+  // 这些值对标准 T 姿势有效，不同模型差异不会太大
+  const deltas = {
+    // 上臂：从水平外展向下收（T 姿势的典型特征是手臂沿 X 轴张开）
+    "leftUpperArm":  { x: 0.3, y: 0.0, z: 2.8 },
+    "rightUpperArm": { x: 0.3, y: 0.0, z: -2.8 },
+    // 下臂：自然微曲
+    "leftLowerArm":  { x: 0.0, y: 0.0, z: 0.2 },
+    "rightLowerArm": { x: 0.0, y: 0.0, z: -0.2 },
+    // 手腕：微微内收
+    "leftHand":      { x: 0.05, y: 0.0, z: 0.1 },
+    "rightHand":     { x: 0.05, y: 0.0, z: -0.1 },
   };
 
-  // 上臂：从水平外展 → 自然下垂略向前
-  setBone("leftUpperArm",  [0.25,   0.0,   2.85]);   // 左上臂向下收
-  setBone("rightUpperArm", [0.25,   0.0,  -2.85]);   // 右上臂向下收
+  _idleTransition.boneTargets.clear();
+  for (const [boneName, delta] of Object.entries(deltas)) {
+    const bone = h.getNormalizedBoneNode(boneName);
+    if (!bone) continue;
+    // 记录：起始值 + 目标值 = 当前 + delta
+    _idleTransition.boneTargets.set(boneName, {
+      bone,
+      start: { x: bone.rotation.x, y: bone.rotation.y, z: bone.rotation.z },
+      end: {
+        x: bone.rotation.x + delta.x,
+        y: bone.rotation.y + delta.y,
+        z: bone.rotation.z + delta.z,
+      },
+    });
+  }
 
-  // 前臂：自然弯曲
-  setBone("leftLowerArm",  [0.00,   0.0,   0.15]);   // 左前臂微曲
-  setBone("rightLowerArm", [0.00,   0.0,  -0.15]);   // 右前臂微曲
+  if (_idleTransition.boneTargets.size > 0) {
+    _idleTransition.active = true;
+    _idleTransition.progress = 0;
+    console.log(`[VRM] 开始过渡到自然姿势 (${_idleTransition.boneTargets.size} 个骨骼)`);
+  }
+}
 
-  // 脊柱微微前倾（自然的站姿）
-  setBone("spine",        [0.02,   0.0,   0.0]);
-  setBone("chest",        [0.01,   0.0,   0.0]);
+// 每帧调用，平滑过渡到 idle 姿势
+function updateIdleTransition(dt) {
+  if (!_idleTransition.active) return;
+  _idleTransition.progress += dt * 1.2; // 约 0.8 秒完成
+  if (_idleTransition.progress >= 1.0) {
+    _idleTransition.progress = 1.0;
+    _idleTransition.active = false;
+    console.log("[VRM] 自然姿势过渡完成");
+  }
+  const t = easeOutCubic(_idleTransition.progress);
+  for (const [, target] of _idleTransition.boneTargets) {
+    target.bone.rotation.x = target.start.x + (target.end.x - target.start.x) * t;
+    target.bone.rotation.y = target.start.y + (target.end.y - target.start.y) * t;
+    target.bone.rotation.z = target.start.z + (target.end.z - target.start.z) * t;
+  }
+}
 
-  // 颈部微调
-  setBone("neck",         [0.0,    0.0,   0.0]);
-
-  console.log("[VRM] 已应用自然站立姿势");
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
 }
 
 // ★ 眨眼（独立于表情系统）
@@ -394,6 +429,9 @@ function animate() {
     renderer.render(scene, camera);
     return;
   }
+
+  // T 姿势 → 自然站立 过渡
+  updateIdleTransition(dt);
 
   // 表情平滑过渡
   updateExpressions();
