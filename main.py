@@ -49,6 +49,11 @@ except ImportError:
 except Exception as _we_err:
     print(f"[WebEngine] PyQt6-WebEngine 加载失败: {_we_err}")
 
+# ★ 把自己注册为 "main"，这样 vrm_widget / main_window 用 sys.modules["main"] 能找到 WEBENGINE_AVAILABLE
+if __name__ == "__main__" and "main" not in sys.modules:
+    import sys as _sys_mod
+    _sys_mod.modules["main"] = _sys_mod.modules["__main__"]
+
 # 导入应用模块（这里报错说明项目文件有问题）
 try:
     from desktop.config  import APP_NAME, APP_VERSION, load_config, save_config, DARK_QSS, DB_FILE

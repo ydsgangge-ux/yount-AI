@@ -6,14 +6,15 @@ vrm_widget.py — PyQt6 QWebEngineView 嵌入组件
 
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt6.QtCore import QUrl, QTimer
+from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtGui import QColor
 
-# WebEngine 是否可用，延迟从 main 模块读取（避免模块级循环导入）
+# WebEngine 是否可用，从 sys.modules["main"] 读取（main.py 在 QApplication 前已预导入）
 import sys as _sys
 
 def _is_webengine_available():
-    return getattr(_sys.modules.get("main", type("M", (), {})()), "WEBENGINE_AVAILABLE", False)
+    _m = _sys.modules.get("main")
+    return getattr(_m, "WEBENGINE_AVAILABLE", False) if _m else False
 
 
 class VRMWidget(QWidget):

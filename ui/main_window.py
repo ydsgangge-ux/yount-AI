@@ -5027,10 +5027,10 @@ class SimLifePage(QWidget):
 
     def _try_load(self):
         """延迟加载 WebEngine，避免影响启动性能"""
-        # 检查 WebEngine 是否在启动时已成功预加载
-        # 使用 sys.modules 避免循环导入
+        # 从 main 模块读取预检标志（main.py 在 QApplication 前已预导入）
         import sys as _sys
-        _we_avail = getattr(_sys.modules.get("main", type("M", (), {})()), "WEBENGINE_AVAILABLE", False)
+        _m = _sys.modules.get("main")
+        _we_avail = getattr(_m, "WEBENGINE_AVAILABLE", False) if _m else False
 
         if not _we_avail:
             if self._placeholder:
