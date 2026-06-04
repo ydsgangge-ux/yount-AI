@@ -73,6 +73,19 @@ class VRMWidget(QWidget):
                 "QWebEngineView{background:transparent;border:none;}"
             )
 
+            # ★ 允许 file:// 协议加载 ES 模块（Chromium 默认禁止）
+            _settings = self._web.settings()
+            try:
+                from PyQt6.QtWebEngineCore import QWebEngineSettings
+                _settings.setAttribute(
+                    QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True
+                )
+                _settings.setAttribute(
+                    QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+                )
+            except Exception:
+                pass
+
             # 禁用右键菜单
             self._web.setContextMenuPolicy(
                 Qt.ContextMenuPolicy.NoContextMenu
