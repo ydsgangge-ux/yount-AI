@@ -225,6 +225,15 @@ async function loadVRM() {
     }
 
     scene.add(vrm.scene);
+
+    // ★ 从 T 姿势转为自然站立姿势（VRM 加载后默认是绑定姿势）
+    applyNaturalPose(vrm);
+
+    // ★ 立刻设置一个表情，确认面部渲染正常
+    setTimeout(() => {
+      window.setEmotion("neutral", 1.0);
+    }, 300);
+
     loadingEl.classList.add("hidden");
     console.log("[VRM] 模型加载成功");
   } catch (e) {
@@ -278,6 +287,37 @@ function updateExpressions() {
   }
 }
 
+// ★ 从 T 姿势转为自然站立姿势
+function applyNaturalPose(vrmInst) {
+  if (!vrmInst || !vrmInst.humanoid) return;
+  const h = vrmInst.humanoid;
+
+  // 手臂放下到身体两侧（VRM 默认 T 姿势）
+  const setBone = (name, rot) => {
+    const bone = h.getNormalizedBoneNode(name);
+    if (bone) {
+      bone.rotation.set(rot[0], rot[1], rot[2]);
+    }
+  };
+
+  // 上臂：从水平外展 → 自然下垂略向前
+  setBone("leftUpperArm",  [0.25,   0.0,   2.85]);   // 左上臂向下收
+  setBone("rightUpperArm", [0.25,   0.0,  -2.85]);   // 右上臂向下收
+
+  // 前臂：自然弯曲
+  setBone("leftLowerArm",  [0.00,   0.0,   0.15]);   // 左前臂微曲
+  setBone("rightLowerArm", [0.00,   0.0,  -0.15]);   // 右前臂微曲
+
+  // 脊柱微微前倾（自然的站姿）
+  setBone("spine",        [0.02,   0.0,   0.0]);
+  setBone("chest",        [0.01,   0.0,   0.0]);
+
+  // 颈部微调
+  setBone("neck",         [0.0,    0.0,   0.0]);
+
+  console.log("[VRM] 已应用自然站立姿势");
+}
+
 // ★ 眨眼（独立于表情系统）
 let _isBlinking = false;
 
@@ -302,41 +342,44 @@ function updateBlink(dt) {
   }
 }
 
-// ★ 呼吸 + 身体摇摆 + 微动
+// ★ 呼吸 + 身体摇摆 + 微动（在自然姿势基础上叠加）
 function updateBodyAnim(t) {
   if (!vrm || !vrm.humanoid) return;
+  const h = vrm.humanoid;
 
-  // 呼吸（脊柱起伏）
-  const spine = vrm.humanoid.getNormalizedBoneNode("spine");
+  // 呼吸（脊柱起伏）— 在 base 上叠加
+  const spine = h.getNormalizedBoneNode("spine");
   if (spine) {
-    spine.position.y = Math.sin(t * 1.2) * 0.006;
+    spine.position.y += Math.sin(t * 1.2) * 0.004;  // 叠加呼吸位移
   }
 
   // 头部微动
-  const head = vrm.humanoid.getNormalizedBoneNode("head");
+  const head = h.getNormalizedBoneNode("head");
   if (head) {
-    head.rotation.y = Math.sin(t * 0.25) * 0.03;
+    head.rotation.y += Math.sin(t * 0.25) * 0.02;    // 微微左右看
     if (speaking) {
-      head.rotation.x = Math.sin(t * 4.5) * 0.02;
+      head.rotation.x += Math.sin(t * 4.5) * 0.015;   // 说话时点头
     } else {
-      head.rotation.x *= 0.95;
+      head.rotation.x *= 0.96;                         // 回正
     }
   }
 
-  // 上半身微微左右摆动（自然的重心移动）
-  const hips = vrm.humanoid.getNormalizedBoneNode("hips");
+  // 身体重心微微左右偏移
+  const hips = h.getNormalizedBoneNode("hips");
   if (hips) {
-    hips.rotation.z = Math.sin(t * 0.4) * 0.008;
+    hips.rotation.z += Math.sin(t * 0.4) * 0.004;     // 轻微重心转移
   }
 
-  // 手臂自然晃动（如果模型有手臂骨骼）
-  const leftArm = vrm.humanoid.getNormalizedBoneNode("leftUpperArm");
-  const rightArm = vrm.humanoid.getNormalizedBoneNode("rightUpperArm");
+  // 手臂自然轻微晃动（在放下基础上）
+  const leftArm = h.getNormalizedBoneNode("leftUpperArm");
+  const rightArm = h.getNormalizedBoneNode("rightUpperArm");
   if (leftArm) {
-    leftArm.rotation.z = Math.sin(t * 0.3) * 0.01 - 0.02;
+    leftArm.rotation.x += Math.sin(t * 0.3) * 0.008;   // 前后微摆
+    leftArm.rotation.z += Math.sin(t * 0.22) * 0.01;   // 左右微摆
   }
   if (rightArm) {
-    rightArm.rotation.z = Math.sin(t * 0.3 + Math.PI) * 0.01 + 0.02;
+    rightArm.rotation.x += Math.sin(t * 0.3 + Math.PI) * 0.008;
+    rightArm.rotation.z += Math.sin(t * 0.22 + Math.PI) * 0.01;
   }
 }
 
