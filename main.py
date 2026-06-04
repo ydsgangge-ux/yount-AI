@@ -37,6 +37,18 @@ except ImportError as e:
     input("按回车退出…")
     sys.exit(1)
 
+# ★ WebEngine 必须在 QApplication 创建之前导入，否则会初始化失败
+#    设置全局标志，供 VRM / SimLife 等模块判断
+WEBENGINE_AVAILABLE = False
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+    WEBENGINE_AVAILABLE = True
+    print("[WebEngine] PyQt6-WebEngine 已加载")
+except ImportError:
+    print("[WebEngine] PyQt6-WebEngine 未安装，VRM/SimLife 内嵌页面不可用")
+except Exception as _we_err:
+    print(f"[WebEngine] PyQt6-WebEngine 加载失败: {_we_err}")
+
 # 导入应用模块（这里报错说明项目文件有问题）
 try:
     from desktop.config  import APP_NAME, APP_VERSION, load_config, save_config, DARK_QSS, DB_FILE

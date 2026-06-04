@@ -9,6 +9,12 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QColor
 
+# WebEngine 是否可用，延迟从 main 模块读取（避免模块级循环导入）
+import sys as _sys
+
+def _is_webengine_available():
+    return getattr(_sys.modules.get("main", type("M", (), {})()), "WEBENGINE_AVAILABLE", False)
+
 
 class VRMWidget(QWidget):
     """
@@ -37,9 +43,7 @@ class VRMWidget(QWidget):
             "background:#0d1117;border:1px dashed #30363d;"
             "color:#484f58;font-size:11px;"
         )
-        self._placeholder.setAlignment(
-            __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter
-        )
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._placeholder)
 
         self._web = None
@@ -52,6 +56,10 @@ class VRMWidget(QWidget):
 
     def _try_load_webengine(self):
         """延迟加载 WebEngine，避免影响启动性能"""
+        if not _is_webengine_available():
+            self._placeholder.setText("VRM: WebEngine\n未安装")
+            print("[VRM] PyQt6-WebEngine 未安装，pip install PyQt6-WebEngine")
+            return
         try:
             from PyQt6.QtWebEngineWidgets import QWebEngineView
 
@@ -66,7 +74,7 @@ class VRMWidget(QWidget):
 
             # 禁用右键菜单
             self._web.setContextMenuPolicy(
-                __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.ContextMenuPolicy.NoContextMenu
+                Qt.ContextMenuPolicy.NoContextMenu
             )
 
             html_path = os.path.join(
@@ -81,9 +89,6 @@ class VRMWidget(QWidget):
 
             layout.addWidget(self._web)
 
-        except ImportError:
-            self._placeholder.setText("VRM: WebEngine\n未安装")
-            print("[VRM] PyQt6-WebEngine 未安装，pip install PyQt6-WebEngine")
         except Exception as e:
             self._placeholder.setText("VRM: 加载失败")
             print(f"[VRM] WebEngine 加载失败: {e}")

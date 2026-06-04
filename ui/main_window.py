@@ -5027,6 +5027,21 @@ class SimLifePage(QWidget):
 
     def _try_load(self):
         """延迟加载 WebEngine，避免影响启动性能"""
+        # 检查 WebEngine 是否在启动时已成功预加载
+        # 使用 sys.modules 避免循环导入
+        import sys as _sys
+        _we_avail = getattr(_sys.modules.get("main", type("M", (), {})()), "WEBENGINE_AVAILABLE", False)
+
+        if not _we_avail:
+            if self._placeholder:
+                self._placeholder.setText(
+                    "🌱 SimLife 生活模拟\n\n"
+                    "PyQt6-WebEngine 未安装\n"
+                    "请点击上方「浏览器打开」按钮\n"
+                    "或执行: pip install PyQt6-WebEngine"
+                )
+            print("[SimLife] WebEngine 未安装，降级为外部浏览器模式")
+            return
         try:
             from PyQt6.QtWebEngineWidgets import QWebEngineView
             lay = self._container.layout()
@@ -5043,15 +5058,6 @@ class SimLifePage(QWidget):
             lay.addWidget(self._web)
             self._loaded = True
             print("[SimLife] 内嵌页面已加载")
-        except ImportError:
-            if self._placeholder:
-                self._placeholder.setText(
-                    "🌱 SimLife 生活模拟\n\n"
-                    "PyQt6-WebEngine 未安装\n"
-                    "请点击上方「浏览器打开」按钮\n"
-                    "或执行: pip install PyQt6-WebEngine"
-                )
-            print("[SimLife] WebEngine 未安装，降级为外部浏览器模式")
         except Exception as e:
             if self._placeholder:
                 self._placeholder.setText(
