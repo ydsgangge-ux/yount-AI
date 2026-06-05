@@ -84,13 +84,13 @@
   }
 </style>
 
-<!-- ES Module import map: 本地 Three.js + CDN three-vrm v2.x（支持 VRM 1.0） -->
+<!-- ES Module import map: 本地 three-vrm（已含 VRM 1.0 支持） -->
 <script type="importmap">
 {
   "imports": {
     "three": "./three.module.js",
     "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
+    "@pixiv/three-vrm": "./three-vrm.module.js",
     "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js",
     "@pixiv/three-vrm-materials-mtoon": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-mtoon@2.1.0/lib/three-vrm-materials-mtoon.module.js"
   }
@@ -117,7 +117,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils, VRM10LoaderPlugin } from '@pixiv/three-vrm';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 let scene, camera, renderer, clock;
 let vrm = null;
@@ -186,9 +186,9 @@ function onResize() {
   renderer.setSize(w, h);
 }
 
-// ── 2. VRM 加载（自动检测版本，VRM 1.0 / 0.x 兼容） ──
+// ── 2. VRM 加载（本地 three-vrm 已支持 0.x + 1.0） ──
 let availableExpressions = [];
-let _isVrm1 = false; // 全局标记：当前加载的是否为 VRM 1.0
+let _isVrm1 = false;
 
 async function loadVRM() {
   loadStatus.textContent = "加载 VRM 模型";
@@ -197,49 +197,33 @@ async function loadVRM() {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const arrayBuffer = await response.arrayBuffer();
 
-    // ★ 先尝试用 VRM 1.0 加载器
-    let gltf, vrmObj;
-    try {
-      const loader10 = new GLTFLoader();
-      loader10.register((parser) => new VRM10LoaderPlugin(parser));
-      gltf = await new Promise((resolve, reject) => {
-        loader10.parse(arrayBuffer, "", resolve, reject);
-      });
-      vrmObj = gltf.userData.vrm10;
-      if (vrmObj) {
-        _isVrm1 = true;
-        console.log("[VRM] 使用 VRM 1.0 加载器 ✓");
-      }
-    } catch (e10) {
-      console.log("[VRM] VRM 1.0 加载失败，回退到 0.x:", e10.message);
-      // ★ 回退到旧版 VRM 0.x 加载器
-      const loader = new GLTFLoader();
-      loader.register((parser) => new VRMLoaderPlugin(parser));
-      gltf = await new Promise((resolve, reject) => {
-        loader.parse(arrayBuffer, "", resolve, reject);
-      });
-      vrmObj = gltf.userData.vrm;
-      _isVrm1 = false;
-      console.log("[VRM] 使用 VRM 0.x 加载器 ✓");
-    }
+    // ★ 统一用 VRMLoaderPlugin（本地版本已兼容 0.x 和 1.0）
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    if (!vrmObj) throw new Error("无法解析 VRM 数据");
+    const gltf = await new Promise((resolve, reject) => {
+      loader.parse(arrayBuffer, "", resolve, reject);
+    });
 
-    vrm = vrmObj;
+    vrm = gltf.userData.vrm;
     window.vrm = vrm;
+    if (!vrm) throw new Error("无法解析 VRM 数据");
 
-    // 清理网格（两个版本的 API 不同）
+    // ★ 检测是否为 VRM 1.0
+    _isVrm1 = typeof vrm.humanoid?.getRawBoneNode === "function";
+    console.log(`[VRM] 版本检测: ${_isVrm1 ? '1.0' : '0.x'}`);
+
     try { VRMUtils.removeUnnecessaryVertices(gltf.scene); } catch(e) {}
     try { VRMUtils.removeUnnecessaryJoints(gltf.scene); } catch(e){}
 
-    // ★ VRM 1.0 关键：默认面向 +Z（背对相机），需要旋转 180° 面向观众
+    // ★ 坐标处理：只有 0.x 才需要 rotateVRM0
     if (_isVrm1) {
+      // VRM 1.0 默认面向 +Z（背对相机），旋转 180° 面向观众
       vrm.scene.rotation.y = Math.PI;
-      console.log("[VRM] VRM 1.0: 已旋转 180° 面向相机");
+      console.log("[VRM] 1.0: 旋转180°面向相机");
     } else {
-      // VRM 0.0 需要 Z→Y 坐标转换
       try { VRMUtils.rotateVRM0(vrm); } catch(e) {}
-      console.log("[VRM] VRM 0.0: 已执行坐标转换");
+      console.log("[VRM] 0.x: 坐标转换");
     }
 
     // 材质半透明
@@ -250,30 +234,24 @@ async function loadVRM() {
       }
     });
 
-    // ★ 收集表情
+    // 收集表情
     availableExpressions = [];
     if (vrm.expressionManager && vrm.expressionManager.expressions) {
       availableExpressions = vrm.expressionManager.expressions.map(e => e.expressionName);
-    } else if (_isVrm1 && vrm.expressionManager) {
-      // VRM 1.0 的 expressionManager 可能是 Map 结构
-      for (const [name] of vrm.expressionManager.expressions || []) {
-        availableExpressions.push(name);
-      }
     }
-    console.log(`[VRM${_isVrm1 ? ' 1.0' : ' 0.x'}] 支持的表情:`, availableExpressions.join(", ") || "(无)");
+    console.log(`[VRM] 表情:`, availableExpressions.join(", ") || "(无)");
 
     scene.add(vrm.scene);
 
-    // ★ 启动姿势过渡
+    // 启动姿势过渡
     transitionToIdlePose(vrm);
 
-    // 立刻设置表情
     setTimeout(() => { window.setEmotion("neutral", 1.0); }, 300);
 
     loadingEl.classList.add("hidden");
-    console.log(`[VRM] 模型加载成功 (版本: ${_isVrm1 ? '1.0' : '0.x'})`);
+    console.log(`[VRM] 加载成功 (${_isVrm1 ? '1.0' : '0.x'})`);
   } catch (e) {
-    console.warn("[VRM] 模型加载失败:", e.message);
+    console.warn("[VRM] 加载失败:", e.message);
     loadStatus.innerHTML = "模型加载失败: " + e.message + "<br>5秒后重试...";
     setTimeout(loadVRM, 5000);
   }
