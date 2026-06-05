@@ -208,17 +208,13 @@ async function loadVRM() {
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.removeUnnecessaryJoints(gltf.scene);
 
-    // ★ 关键修复：检测 VRM 版本，只有 0.0 才需要旋转坐标系
-    //    VRoid Hub 的模型都是 VRM 1.0（已经是 Y-up），调用 rotateVRM0 会反而搞坏姿势
-    const vrmVersion = vrm.meta?.metaVersion || vrm.meta?.version || "unknown";
-    const isVrm1 = typeof vrm.humanoid?.getBone === "function"; // VRM 1.0 API 特征
-    console.log(`[VRM] 版本: ${vrmVersion}, VRM 1.0: ${isVrm1}`);
-
-    if (!isVrm1) {
+    // ★ VRM 0.0 需要 rotateVRM0 转 Y-up；VRM 1.0 不需要
+    //    用 try 包裹，如果模型已经是 Y-up 就跳过
+    try {
       VRMUtils.rotateVRM0(vrm);
-      console.log("[VRM] 已执行 VRM 0.0 坐标转换");
-    } else {
-      console.log("[VRM] VRM 1.0 模型，跳过坐标转换");
+      console.log("[VRM] 已执行坐标转换");
+    } catch (e) {
+      console.log("[VRM] 跳过坐标转换:", e.message);
     }
 
     vrm.scene.traverse((obj) => {
@@ -298,34 +294,14 @@ function updateExpressions() {
   }
 }
 
-// ★ 从 T 姿势自然过渡到站立姿势（相对调整，兼容 VRM 0.0 / 1.0）
+// ★ 从 T 姿势自然过渡到站立姿势（相对增量 + 平滑插值）
 let _idleTransition = { active: false, progress: 0, boneTargets: new Map() };
-let _isVrm1Mode = false; // 全局标记
-
-function getBone(name) {
-  if (!vrm || !vrm.humanoid) return null;
-  try {
-    if (_isVrm1Mode) {
-      // VRM 1.0: getBone() 接受 HumanoidBoneName 枚举或字符串
-      return vrm.humanoid.getBone(name);
-    } else {
-      // VRM 0.0: getNormalizedBoneNode()
-      return vrm.humanoid.getNormalizedBoneNode(name);
-    }
-  } catch (e) {
-    // 兼容：尝试另一种方式
-    try { return vrm.humanoid.getNormalizedBoneNode(name); } catch (e2) {}
-    try { return vrm.humanoid.getBone(name); } catch (e3) {}
-    return null;
-  }
-}
 
 function transitionToIdlePose(vrmInst) {
   if (!vrmInst || !vrmInst.humanoid) return;
+  const h = vrmInst.humanoid;
 
-  _isVrm1Mode = typeof vrmInst.humanoid.getBone === "function";
-
-  // 每个骨骼的【相对旋转增量】
+  // 每个骨骼的【相对旋转增量】（在当前值基础上叠加）
   const deltas = {
     "leftUpperArm":  { x: 0.3, y: 0.0, z: 2.8 },
     "rightUpperArm": { x: 0.3, y: 0.0, z: -2.8 },
@@ -337,7 +313,14 @@ function transitionToIdlePose(vrmInst) {
 
   _idleTransition.boneTargets.clear();
   for (const [boneName, delta] of Object.entries(deltas)) {
-    const bone = getBone(boneName);
+    let bone;
+    try {
+      // VRM 1.0 用 getBone，VRM 0.0 用 getNormalizedBoneNode
+      bone = h.getNormalizedBoneNode ? h.getNormalizedBoneNode(boneName)
+           : (h.getBone ? h.getBone(boneName) : null);
+    } catch (e) {
+      try { bone = h.getBone(boneName); } catch (e2) {}
+    }
     if (!bone) continue;
     _idleTransition.boneTargets.set(boneName, {
       bone,
@@ -353,7 +336,7 @@ function transitionToIdlePose(vrmInst) {
   if (_idleTransition.boneTargets.size > 0) {
     _idleTransition.active = true;
     _idleTransition.progress = 0;
-    console.log(`[VRM] 开始过渡到自然姿势 (${_idleTransition.boneTargets.size} 个骨骼, VRM1:${_isVrm1Mode})`);
+    console.log(`[VRM] 开始过渡到自然姿势 (${_idleTransition.boneTargets.size} 个骨骼)`);
   }
 }
 
@@ -402,18 +385,26 @@ function updateBlink(dt) {
   }
 }
 
-// ★ 呼吸 + 身体摇摆 + 微动（在自然姿势基础上叠加，兼容 VRM 0.0/1.0）
+// ★ 呼吸 + 身体摇摆 + 微动（在自然姿势基础上叠加）
+function _getBone(name) {
+  if (!vrm || !vrm.humanoid) return null;
+  const h = vrm.humanoid;
+  try { return h.getNormalizedBoneNode(name); } catch (e) {}
+  try { return h.getBone(name); } catch (e2) {}
+  return null;
+}
+
 function updateBodyAnim(t) {
   if (!vrm || !vrm.humanoid) return;
 
-  // 呼吸（脊柱起伏）— 在 base 上叠加
-  const spine = getBone("spine");
+  // 呼吸（脊柱起伏）
+  const spine = _getBone("spine");
   if (spine) {
     spine.position.y += Math.sin(t * 1.2) * 0.004;
   }
 
   // 头部微动
-  const head = getBone("head");
+  const head = _getBone("head");
   if (head) {
     head.rotation.y += Math.sin(t * 0.25) * 0.02;
     if (speaking) {
@@ -424,14 +415,14 @@ function updateBodyAnim(t) {
   }
 
   // 身体重心微微左右偏移
-  const hips = getBone("hips");
+  const hips = _getBone("hips");
   if (hips) {
     hips.rotation.z += Math.sin(t * 0.4) * 0.004;
   }
 
-  // 手臂自然轻微晃动（在放下基础上）
-  const leftArm = getBone("leftUpperArm");
-  const rightArm = getBone("rightUpperArm");
+  // 手臂自然轻微晃动
+  const leftArm = _getBone("leftUpperArm");
+  const rightArm = _getBone("rightUpperArm");
   if (leftArm) {
     leftArm.rotation.x += Math.sin(t * 0.3) * 0.008;
     leftArm.rotation.z += Math.sin(t * 0.22) * 0.01;
