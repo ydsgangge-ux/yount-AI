@@ -1,7 +1,7 @@
 """
 vrm_widget.py — PyQt6 QWebEngineView 嵌入组件
 
-在右侧工具面板上方显示 AI 萌宠形象（Lottie 动画），尺寸固定，不影响下方工具列表。
+在右侧工具面板上方显示 AI 萌宠形象（Live2D），尺寸固定，不影响下方工具列表。
 兼容旧版 VRM 接口（set_emotion / set_speaking）。
 """
 
@@ -19,7 +19,7 @@ def _is_webengine_available():
 
 class VRMWidget(QWidget):
     """
-    AI 萌宠面板，嵌入 QWebEngineView 加载 Lottie 动画页面。
+    AI 萌宠面板，嵌入 QWebEngineView 加载 Live2D 动画页面。
     尺寸通过 config 配置，默认 220x220。
     API 完全兼容旧版 VRM 接口。
     """
@@ -92,10 +92,14 @@ class VRMWidget(QWidget):
                 Qt.ContextMenuPolicy.NoContextMenu
             )
 
-            # ★ 优先加载 Lottie 萌宠页面，回退到 VRM 页面
+            # ★ 优先加载 Live2D 萌宠页面，回退到 Lottie / VRM 页面
             html_path = os.path.join(
-                os.path.dirname(__file__), "static", "lottie_pet.html"
+                os.path.dirname(__file__), "static", "live2d_pet.html"
             )
+            if not os.path.isfile(html_path):
+                html_path = os.path.join(
+                    os.path.dirname(__file__), "static", "lottie_pet.html"
+                )
             if not os.path.isfile(html_path):
                 html_path = os.path.join(
                     os.path.dirname(__file__), "static", "vrm_viewer.html"
