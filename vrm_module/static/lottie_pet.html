@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Pet</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+#pet-container{
+  width:100%;height:100%;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  position:relative;
+}
+canvas#pet-canvas{width:100%;height:100%}
+
+/* 状态指示 */
+#status-bubble{
+  position:absolute;top:8px;right:8px;
+  padding:3px 8px;border-radius:10px;
+  font-size:10px;color:#c9d1d9;
+  background:rgba(22,27,34,0.8);
+  border:1px solid #30363d;
+  opacity:0;transition:opacity 0.3s;
+  pointer-events:none;
+}
+#status-bubble.show{opacity:1}
+
+/* 表情指示器 */
+#emotion-dot{
+  position:absolute;bottom:8px;left:8px;
+  width:8px;height:8px;border-radius:50%;
+  background:#58a6ff;
+  box-shadow:0 0 6px #58a6ff;
+  transition:background 0.5s,box-shadow 0.5s;
+}
+</style>
+</head>
+<body>
+<div id="pet-container">
+  <canvas id="pet-canvas"></canvas>
+  <div id="status-bubble"></div>
+  <div id="emotion-dot"></div>
+</div>
+
+<script type="module">
+import { DotLottie } from "https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web/+esm";
+
+// ── 动画配置 ──
+// LottieFiles 免费动画 URL（可替换为任何 .json / .lottie 链接）
+const ANIMATIONS = {
+  idle:     "https://lottie.host/4db68bbd-31f6-4cd8-84eb-189de081159a/IGmMCqhzpt.lottie",
+  speaking: "https://lottie.host/4db68bbd-31f6-4cd8-84eb-189de081159a/IGmMCqhzpt.lottie",
+  happy:    "https://lottie.host/4db68bbd-31f6-4cd8-84eb-189de081159a/IGmMCqhzpt.lottie",
+  thinking: "https://lottie.host/4db68bbd-31f6-4cd8-84eb-189de081159a/IGmMCqhzpt.lottie",
+};
+
+// 表情颜色映射
+const EMOTION_COLORS = {
+  neutral:  "#58a6ff",
+  happy:    "#3fb950",
+  sad:      "#58a6ff",
+  angry:    "#f85149",
+  surprised:"#d2a8ff",
+  thinking: "#79c0ff",
+  love:     "#f778ba",
+  speaking: "#3fb950",
+};
+
+let currentAnim = null;
+let currentEmotion = "neutral";
+let speaking = false;
+let statusTimer = null;
+
+// ── 初始化动画 ──
+const canvas = document.getElementById("pet-canvas");
+
+function loadAnimation(name) {
+  const src = ANIMATIONS[name] || ANIMATIONS.idle;
+  if (currentAnim) {
+    currentAnim.destroy();
+  }
+  currentAnim = new DotLottie({
+    canvas,
+    autoplay: true,
+    loop: true,
+    src,
+    speed: name === "speaking" ? 1.5 : 1.0,
+    renderConfig: { autoResize: true },
+  });
+  console.log(`[Pet] 切换动画: ${name}`);
+}
+
+loadAnimation("idle");
+
+// ── 对外 API（与 VRM 兼容） ──
+
+// 设置表情
+window.setEmotion = function(emotion, intensity = 1.0) {
+  currentEmotion = emotion;
+  // 更新颜色指示
+  const dot = document.getElementById("emotion-dot");
+  const color = EMOTION_COLORS[emotion] || EMOTION_COLORS.neutral;
+  dot.style.background = color;
+  dot.style.boxShadow = `0 0 6px ${color}`;
+
+  // 根据表情切换动画
+  if (speaking) return; // 说话时优先
+  const animMap = {
+    happy: "happy",
+    love: "happy",
+    angry: "thinking",
+    sad: "thinking",
+    surprised: "happy",
+    thinking: "thinking",
+  };
+  const targetAnim = animMap[emotion] || "idle";
+  loadAnimation(targetAnim);
+  showStatus(emotion);
+};
+
+// 设置说话状态
+window.setSpeaking = function(isSpeaking) {
+  speaking = isSpeaking;
+  if (isSpeaking) {
+    loadAnimation("speaking");
+    showStatus("speaking");
+  } else {
+    // 恢复到当前表情对应的动画
+    window.setEmotion(currentEmotion);
+  }
+};
+
+// 显示状态气泡
+function showStatus(text) {
+  const bubble = document.getElementById("status-bubble");
+  const labels = {
+    neutral: "待机中", happy: "开心", sad: "难过",
+    angry: "生气", surprised: "惊讶", thinking: "思考中",
+    love: "喜欢", speaking: "说话中",
+  };
+  bubble.textContent = labels[text] || text;
+  bubble.classList.add("show");
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => bubble.classList.remove("show"), 2000);
+}
+
+// ── 本地动画文件支持 ──
+// 如果 static/pet/ 目录下有本地 .json 文件，优先加载
+async function tryLocalAnimations() {
+  const localFiles = {
+    idle: "pet/idle.json",
+    speaking: "pet/speaking.json",
+    happy: "pet/happy.json",
+    thinking: "pet/thinking.json",
+  };
+  for (const [name, path] of Object.entries(localFiles)) {
+    try {
+      const r = await fetch(path, { method: "HEAD" });
+      if (r.ok) {
+        ANIMATIONS[name] = path;
+        console.log(`[Pet] 发现本地动画: ${name} -> ${path}`);
+      }
+    } catch(e) { /* 忽略，用默认 CDN */ }
+  }
+  // 重新加载当前动画
+  loadAnimation(speaking ? "speaking" : "idle");
+}
+tryLocalAnimations();
+
+console.log("[Pet] Lottie 桌面萌宠已加载");
+</script>
+</body>
+</html>

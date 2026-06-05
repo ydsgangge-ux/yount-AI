@@ -1,13 +1,13 @@
 """
 vrm_widget.py — PyQt6 QWebEngineView 嵌入组件
 
-在右侧工具面板上方显示 VRM 虚拟形象，尺寸固定，不影响下方工具列表。
+在右侧工具面板上方显示 AI 萌宠形象（Lottie 动画），尺寸固定，不影响下方工具列表。
+兼容旧版 VRM 接口（set_emotion / set_speaking）。
 """
 
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, QUrl, QTimer
-from PyQt6.QtGui import QColor
 
 # WebEngine 是否可用，从 sys.modules["main"] 读取（main.py 在 QApplication 前已预导入）
 import sys as _sys
@@ -19,8 +19,9 @@ def _is_webengine_available():
 
 class VRMWidget(QWidget):
     """
-    VRM 渲染面板，嵌入 QWebEngineView 加载 Three.js 页面。
+    AI 萌宠面板，嵌入 QWebEngineView 加载 Lottie 动画页面。
     尺寸通过 config 配置，默认 220x220。
+    API 完全兼容旧版 VRM 接口。
     """
 
     WIDTH  = 220
@@ -58,8 +59,8 @@ class VRMWidget(QWidget):
     def _try_load_webengine(self):
         """延迟加载 WebEngine，避免影响启动性能"""
         if not _is_webengine_available():
-            self._placeholder.setText("VRM: WebEngine\n未安装")
-            print("[VRM] PyQt6-WebEngine 未安装，pip install PyQt6-WebEngine")
+            self._placeholder.setText("AI Pet: WebEngine\n未安装")
+            print("[Pet] PyQt6-WebEngine 未安装，pip install PyQt6-WebEngine")
             return
         try:
             from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -73,7 +74,7 @@ class VRMWidget(QWidget):
                 "QWebEngineView{background:transparent;border:none;}"
             )
 
-            # ★ 允许 file:// 协议加载 ES 模块（Chromium 默认禁止）
+            # ★ 允许 file:// 协议加载远程资源
             _settings = self._web.settings()
             try:
                 from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -91,31 +92,37 @@ class VRMWidget(QWidget):
                 Qt.ContextMenuPolicy.NoContextMenu
             )
 
+            # ★ 优先加载 Lottie 萌宠页面，回退到 VRM 页面
             html_path = os.path.join(
-                os.path.dirname(__file__), "static", "vrm_viewer.html"
+                os.path.dirname(__file__), "static", "lottie_pet.html"
             )
+            if not os.path.isfile(html_path):
+                html_path = os.path.join(
+                    os.path.dirname(__file__), "static", "vrm_viewer.html"
+                )
+
             if os.path.isfile(html_path):
                 self._web.load(QUrl.fromLocalFile(
                     html_path.replace("\\", "/")
                 ))
             else:
-                print(f"[VRM] 渲染页面不存在: {html_path}")
+                print(f"[Pet] 渲染页面不存在: {html_path}")
 
             layout.addWidget(self._web)
 
         except Exception as e:
-            self._placeholder.setText("VRM: 加载失败")
-            print(f"[VRM] WebEngine 加载失败: {e}")
+            self._placeholder.setText("AI Pet: 加载失败")
+            print(f"[Pet] WebEngine 加载失败: {e}")
 
     def set_emotion(self, emotion: str, intensity: float = 1.0):
-        """驱动 VRM 表情（由 emotion_bridge.translate 生成参数后调用）"""
+        """驱动表情（兼容旧版 VRM 接口）"""
         if not self._web:
             return
         js = f"setEmotion('{emotion}', {intensity:.2f})"
         self._web.page().runJavaScript(js)
 
     def set_speaking(self, is_speaking: bool):
-        """触发/停止说话动画"""
+        """触发/停止说话动画（兼容旧版 VRM 接口）"""
         if not self._web:
             return
         js = f"setSpeaking({str(is_speaking).lower()})"
