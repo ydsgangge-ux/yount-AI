@@ -143,10 +143,16 @@ class DesktopPet(QWidget):
                 _settings.setAttribute(
                     QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
                 )
-                # ★ 关键：设置背景色为透明（0 = 完全透明）
-                _settings.setBackgroundColor(Qt.GlobalColor.transparent)
             except Exception:
                 pass
+
+            # ★ 关键：用 page().setBackgroundColor 设置透明背景
+            #    settings().setBackgroundColor() 在 PyQt6 中不生效
+            try:
+                from PyQt6.QtGui import QColor
+                self._web.page().setBackgroundColor(QColor(0, 0, 0, 0))
+            except Exception as e:
+                print(f"[DesktopPet] 透明背景设置失败: {e}", flush=True)
 
             self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
 

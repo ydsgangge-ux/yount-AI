@@ -25,18 +25,24 @@ canvas{display:block;position:absolute;top:0;left:0}
 <canvas id="canvas"></canvas>
 <div id="bubble"></div>
 
-<!-- 本地依赖 -->
+<!--
+  正确的库加载顺序：
+  1. PixiJS 渲染引擎
+  2. Cubism 2 Core（支持 .model.json 模型）
+  3. Cubism 4 Core（支持 .model3.json 模型）
+  4. pixi-live2d-display index（同时支持 Cubism 2+4）
+-->
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2d.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
-<script src="lib/cubism4.min.js"></script>
+<script src="lib/index.min.js"></script>
 
 <script>
 (function () {
   "use strict";
 
+  // ★ 暴露 PIXI 到 window，pixi-live2d-display 需要引用
   window.PIXI = PIXI;
-  var PIXI_L2D = PIXI.live2d;
 
   var canvas = document.getElementById("canvas");
   var app = null;
@@ -48,14 +54,15 @@ canvas{display:block;position:absolute;top:0;left:0}
   var lastTapTime = 0;
 
   // ── 模型列表 ──
+  // Haru/Hiyori = Cubism 4 (.model3.json)，Shizuku = Cubism 2 (.model.json)
   var MODELS = [
-    {
-      name: "Shizuku",
-      url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/shizuku/shizuku.model.json",
-    },
     {
       name: "Haru",
       url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru_greeter_t03.model3.json",
+    },
+    {
+      name: "Shizuku",
+      url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/shizuku/shizuku.model.json",
     },
     {
       name: "Hiyori",
@@ -82,12 +89,10 @@ canvas{display:block;position:absolute;top:0;left:0}
     ],
   };
 
-  // ── 随机选台词 ──
   function pickLine(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
-  // ── 气泡 ──
   var bubbleTimer = null;
   function showBubble(text, duration) {
     var el = document.getElementById("bubble");
@@ -123,10 +128,12 @@ canvas{display:block;position:absolute;top:0;left:0}
   // ── 加载模型 ──
   function loadModel() {
     var cfg = MODELS[modelIndex];
-    showBubble("加载中: " + cfg.name + "...", 5000);
+    showBubble("加载: " + cfg.name + "...", 8000);
     console.log("[Live2D] 加载模型:", cfg.name, cfg.url);
 
-    PIXI_L2D.Live2DModel.from(cfg.url, { autoInteract: false }).then(function (m) {
+    var Live2DModel = PIXI.live2d.Live2DModel;
+
+    Live2DModel.from(cfg.url, { autoInteract: false }).then(function (m) {
       if (model) {
         app.stage.removeChild(model);
         model.destroy();
@@ -143,7 +150,6 @@ canvas{display:block;position:absolute;top:0;left:0}
       // ★ 点击互动
       model.on("hit", function (areas) {
         var now = Date.now();
-        // 双击检测（500ms 内两次点击）
         if (now - lastTapTime < 500) {
           tapCount++;
         } else {
@@ -162,7 +168,6 @@ canvas{display:block;position:absolute;top:0;left:0}
           try { model.motion("tap_body"); } catch (e) {}
           showBubble(pickLine(LINES.body), 3000);
         } else {
-          // 点击其他区域
           showBubble(pickLine(LINES.idle), 3000);
         }
       });
@@ -182,8 +187,8 @@ canvas{display:block;position:absolute;top:0;left:0}
 
       console.log("[Live2D] 模型加载成功:", cfg.name);
     }).catch(function (e) {
-      console.error("[Live2D] 加载失败:", e);
-      showBubble("加载失败，双击切换模型", 5000);
+      console.error("[Live2D] 加载失败:", cfg.name, e);
+      showBubble(cfg.name + " 加载失败，双击切换", 5000);
     });
   }
 
@@ -244,9 +249,11 @@ canvas{display:block;position:absolute;top:0;left:0}
 
   // ── 启动 ──
   function tryInit() {
-    if (typeof PIXI !== "undefined" && PIXI.live2d) {
+    if (typeof PIXI !== "undefined" && PIXI.live2d && PIXI.live2d.Live2DModel) {
+      console.log("[Live2D] 库加载完成，开始初始化");
       initApp();
     } else {
+      console.log("[Live2D] 等待库加载... PIXI=" + typeof PIXI + " live2d=" + !!(PIXI && PIXI.live2d));
       setTimeout(tryInit, 300);
     }
   }
