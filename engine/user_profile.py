@@ -148,12 +148,13 @@ class UserProfileManager:
 
     # ── 性格特征 ──────────────────────────────
 
-    def get_traits(self) -> List[PersonalityTrait]:
+    def get_traits(self, limit: int = 200) -> List[PersonalityTrait]:
         with guarded_connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT data_json FROM personality_traits WHERE user_id=? "
-                "ORDER BY json_extract(data_json,'$.confidence') DESC",
-                (self.user_id,)
+                "ORDER BY json_extract(data_json,'$.confidence') DESC "
+                "LIMIT ?",
+                (self.user_id, limit)
             ).fetchall()
         return [PersonalityTrait(**json.loads(r[0])) for r in rows]
 

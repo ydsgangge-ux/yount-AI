@@ -622,14 +622,18 @@ class ChatPage(QWidget):
             from vrm_module import desktop_pet_class
             from desktop.config import load_config
             _cfg = load_config()
+            print(f"[DesktopPet] desktop_pet_class={desktop_pet_class}, vrm_enabled={_cfg.get('vrm_enabled', True)}", flush=True)
             if desktop_pet_class and _cfg.get("vrm_enabled", True):
                 self.vrm_widget = desktop_pet_class(
                     width=_cfg.get("vrm_width", 260),
                     height=_cfg.get("vrm_height", 380),
                 )
                 self.vrm_widget.show()
+                print(f"[DesktopPet] 已显示, 位置=({self.vrm_widget.x()},{self.vrm_widget.y()})", flush=True)
+            elif not desktop_pet_class:
+                print("[DesktopPet] desktop_pet_class 为 None，跳过", flush=True)
         except Exception as e:
-            print(f"[DesktopPet] 桌面宠物加载跳过: {e}")
+            print(f"[DesktopPet] 桌面宠物加载跳过: {e}", flush=True)
 
         # 工具面板
         self.tool_panel = ToolPanel()
