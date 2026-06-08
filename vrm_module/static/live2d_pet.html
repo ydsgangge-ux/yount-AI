@@ -24,20 +24,16 @@ canvas{display:block;position:absolute;top:0;left:0}
 <canvas id="canvas"></canvas>
 <div id="status"></div>
 
-<!-- PixiJS v6 -->
-<script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
-<!-- Cubism 2 Core -->
-<script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
-<!-- Cubism 4 Core -->
-<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
-<!-- pixi-live2d-display (Cubism 2+4 全支持版) -->
-<script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/cubism4.min.js"></script>
+<!-- 本地依赖（不依赖 CDN） -->
+<script src="lib/pixi.min.js"></script>
+<script src="lib/live2d.min.js"></script>
+<script src="lib/live2dcubismcore.min.js"></script>
+<script src="lib/cubism4.min.js"></script>
 
 <script>
 (function () {
   "use strict";
 
-  // 暴露 PIXI 全局变量（pixi-live2d-display 需要）
   window.PIXI = PIXI;
   var PIXI_L2D = PIXI.live2d;
 
@@ -48,37 +44,38 @@ canvas{display:block;position:absolute;top:0;left:0}
   var speaking = false;
   var modelIndex = 0;
 
-  // ── 模型列表 ──
-  // 使用 pixi-live2d-display 官方测试资源（CDN 稳定）
+  // ── 模型列表（通过 HTTP 服务加载远程模型） ──
   var MODELS = [
     {
       name: "Shizuku",
       url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/shizuku/shizuku.model.json",
-      scale: 0.15,
     },
     {
       name: "Haru",
       url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru_greeter_t03.model3.json",
-      scale: 0.15,
     },
     {
       name: "Hiyori",
       url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json",
-      scale: 0.15,
     },
   ];
 
   // ── 初始化 PixiJS ──
   function initApp() {
-    app = new PIXI.Application({
-      view: canvas,
-      transparent: true,
-      autoStart: true,
-      resizeTo: window,
-      backgroundAlpha: 0,
-    });
+    try {
+      app = new PIXI.Application({
+        view: canvas,
+        transparent: true,
+        autoStart: true,
+        resizeTo: window,
+        backgroundAlpha: 0,
+      });
+    } catch (e) {
+      console.error("[Live2D] PixiJS 初始化失败:", e);
+      showStatus("PixiJS 失败");
+      return;
+    }
 
-    // 从 localStorage 恢复模型选择
     var saved = localStorage.getItem("live2d_model_index");
     if (saved !== null) modelIndex = parseInt(saved) % MODELS.length;
 
@@ -97,20 +94,16 @@ canvas{display:block;position:absolute;top:0;left:0}
         model.destroy();
       }
       model = m;
-
-      // 适配画布大小
       fitModel();
-
       app.stage.addChild(model);
 
-      // 鼠标跟踪（眼睛跟随）
+      // 鼠标跟踪
       canvas.addEventListener("mousemove", function (e) {
         if (model) model.focus(e.clientX, e.clientY);
       });
 
       // 点击交互
       model.on("hit", function (areas) {
-        console.log("[Live2D] 点击区域:", areas);
         if (areas.indexOf("head") >= 0) {
           try { model.motion("tap_head"); } catch (e) {}
         } else if (areas.indexOf("body") >= 0) {
@@ -118,9 +111,7 @@ canvas{display:block;position:absolute;top:0;left:0}
         }
       });
 
-      // 播放待机动作
       try { model.motion("idle"); } catch (e) {}
-
       showStatus(cfg.name);
       console.log("[Live2D] 模型加载成功:", cfg.name);
     }).catch(function (e) {
@@ -129,7 +120,7 @@ canvas{display:block;position:absolute;top:0;left:0}
     });
   }
 
-  // ── 适配模型到画布 ──
+  // ── 适配模型 ──
   function fitModel() {
     if (!model) return;
     var w = canvas.clientWidth;
@@ -147,23 +138,17 @@ canvas{display:block;position:absolute;top:0;left:0}
     loadModel();
   };
 
-  // ── 对外 API（兼容 VRM 接口） ──
+  // ── 对外 API ──
   window.setEmotion = function (emotion, intensity) {
     currentEmotion = emotion;
     if (speaking || !model) return;
-
-    // 尝试播放表情
     try { model.expression(emotion); } catch (e) {}
-
-    // 尝试播放动作
     var motionMap = {
       happy: "tap_body", sad: "tap_body", angry: "tap_body",
       surprised: "tap_head", thinking: "idle", love: "tap_body",
     };
     var motion = motionMap[emotion];
-    if (motion) {
-      try { model.motion(motion); } catch (e) {}
-    }
+    if (motion) { try { model.motion(motion); } catch (e) {} }
     showStatus(emotion);
   };
 
@@ -194,15 +179,14 @@ canvas{display:block;position:absolute;top:0;left:0}
     statusTimer = setTimeout(function () { el.classList.remove("show"); }, 2000);
   }
 
-  // ── 窗口大小变化 ──
   window.addEventListener("resize", function () { fitModel(); });
 
   // ── 启动 ──
-  // 等待所有脚本加载完成
   function tryInit() {
     if (typeof PIXI !== "undefined" && PIXI.live2d) {
       initApp();
     } else {
+      console.log("[Live2D] 等待库加载...");
       setTimeout(tryInit, 300);
     }
   }
