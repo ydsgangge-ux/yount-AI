@@ -7,143 +7,72 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent}
-/* 隐藏 oh-my-live2d 的工具栏和提示框装饰 */
-#oml2d-toolbar{display:none!important}
-#oml2d-tips{border:none!important;box-shadow:none!important;background:rgba(22,27,34,0.8)!important;color:#c9d1d9!important;font-size:12px!important;border-radius:8px!important}
+/* 调整看板娘位置和大小 */
+#waifu{
+  position:relative!important;
+  width:100%!important;
+  height:100%!important;
+  bottom:auto!important;
+  left:auto!important;
+}
+#waifu-tool{
+  display:none!important;
+}
+#waifu-tips{
+  border:none!important;box-shadow:none!important;
+  background:rgba(22,27,34,0.85)!important;
+  color:#c9d1d9!important;font-size:12px!important;
+  border-radius:8px!important;
+}
 </style>
 </head>
 <body>
 
-<!-- oh-my-live2d: 内含 PixiJS + Cubism Core，一个脚本搞定 -->
-<script src="https://cdn.jsdelivr.net/npm/oh-my-live2d@latest/dist/index.min.js"></script>
+<!-- live2d-widgets: 一行代码加载 Live2D 看板娘 -->
+<script src="https://fastly.jsdelivr.net/npm/live2d-widgets@1.0.0/dist/autoload.js"></script>
 
 <script>
 (function () {
   "use strict";
 
-  let oml2d = null;
-  let currentEmotion = "neutral";
-  let speaking = false;
-  let modelIndex = 0;
-
-  // ── 模型列表 ──
-  const MODELS = [
-    {
-      name: "仙狐小姐",
-      path: "https://cdn.jsdelivr.net/gh/Eikanya/Live2d-model/Live2D/Senko_Normals/senko.model3.json",
-      scale: 0.12,
-      position: [0, 50],
-    },
-    {
-      name: "森巫女",
-      path: "https://cdn.jsdelivr.net/gh/Eikanya/Live2d-model/galgame%20live2d/Fox%20Hime%20Zero/mori_miko/mori_miko.model3.json",
-      scale: 0.12,
-      position: [0, 50],
-    },
-    {
-      name: "拉菲",
-      path: "https://cdn.jsdelivr.net/gh/zenghongtu/live2d-model-assets@master/assets/moc3/lafei/lafei.model3.json",
-      scale: 0.12,
-      position: [0, 50],
-    },
-    {
-      name: "Z46",
-      path: "https://cdn.jsdelivr.net/gh/zenghongtu/live2d-model-assets@master/assets/moc3/z46/z46.model3.json",
-      scale: 0.12,
-      position: [0, 50],
-    },
-    {
-      name: "独角兽",
-      path: "https://cdn.jsdelivr.net/gh/zenghongtu/live2d-model-assets@master/assets/moc3/unicorn/unicorn.model3.json",
-      scale: 0.12,
-      position: [0, 50],
-    },
-  ];
-
-  // ── 初始化 ──
-  function init() {
-    var saved = localStorage.getItem("live2d_model_index");
-    if (saved !== null) modelIndex = parseInt(saved) % MODELS.length;
-    var cfg = MODELS[modelIndex];
-
-    try {
-      oml2d = OML2D.loadOml2d({
-        dockedPosition: "left",
-        sayHello: false,
-        tips: {
-          idleTips: {
-            wordTheDay: false,
-          },
-        },
-        models: [
-          {
-            path: cfg.path,
-            scale: cfg.scale,
-            position: cfg.position,
-            stageStyle: {
-              width: 220,
-              height: 340,
-            },
-          },
-        ],
-      });
-      console.log("[Live2D] 初始化, 模型:", cfg.name);
-    } catch (e) {
-      console.error("[Live2D] 初始化失败:", e);
-    }
-  }
+  var currentEmotion = "neutral";
+  var speaking = false;
 
   // ── 对外 API（兼容 VRM 接口） ──
   window.setEmotion = function (emotion, intensity) {
     currentEmotion = emotion;
     if (speaking) return;
-
+    // live2d-widgets 内置了提示语系统
     var labels = {
       neutral: "待机中~", happy: "好开心!", sad: "有点难过...",
       angry: "哼! 生气了!", surprised: "诶?!", thinking: "让我想想...",
       love: "好喜欢~",
     };
-    if (labels[emotion] && oml2d) {
-      try { oml2d.tipsMessage(labels[emotion], 3000, 0); } catch (e) {}
+    // 尝试调用内置的 showMessage
+    if (labels[emotion] && typeof showMessage === "function") {
+      try { showMessage(labels[emotion], 3000, 0); } catch (e) {}
     }
   };
 
   window.setSpeaking = function (isSpeaking) {
     speaking = isSpeaking;
     if (isSpeaking) {
-      if (oml2d) {
-        try { oml2d.tipsMessage("...", 60000, 0); } catch (e) {}
+      if (typeof showMessage === "function") {
+        try { showMessage("...", 60000, 0); } catch (e) {}
       }
     } else {
-      if (oml2d) {
-        try { oml2d.tipsMessage("", 0, 0); } catch (e) {}
+      if (typeof showMessage === "function") {
+        try { showMessage("", 0, 0); } catch (e) {}
       }
       window.setEmotion(currentEmotion);
     }
   };
 
-  // 切换模型（供外部调用）
+  // 切换模型（live2d-widgets 内置了切换功能）
   window.switchModel = function () {
-    modelIndex = (modelIndex + 1) % MODELS.length;
-    localStorage.setItem("live2d_model_index", modelIndex);
-    if (oml2d) {
-      try { oml2d.unloadOml2d(); } catch (e) {}
-    }
-    init();
+    var btn = document.querySelector("#waifu-tool .fa-random");
+    if (btn) btn.click();
   };
-
-  // 等待 OML2D 加载
-  if (typeof OML2D !== "undefined") {
-    init();
-  } else {
-    var t = setInterval(function () {
-      if (typeof OML2D !== "undefined") {
-        clearInterval(t);
-        init();
-      }
-    }, 200);
-    setTimeout(function () { clearInterval(t); }, 15000);
-  }
 })();
 </script>
 </body>
