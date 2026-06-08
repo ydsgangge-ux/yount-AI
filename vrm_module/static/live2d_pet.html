@@ -8,23 +8,24 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent}
 canvas{display:block;position:absolute;top:0;left:0}
-#status{
-  position:absolute;top:4px;right:4px;
-  padding:1px 6px;border-radius:6px;
-  font:9px/1.4 sans-serif;color:#8b949e;
-  background:rgba(22,27,34,0.6);
+#bubble{
+  position:absolute;top:8px;left:50%;transform:translateX(-50%);
+  padding:4px 12px;border-radius:12px;
+  font:12px/1.4 "Microsoft YaHei",sans-serif;color:#e6edf3;
+  background:rgba(22,27,34,0.9);
   border:1px solid #30363d;
+  white-space:nowrap;
   opacity:0;transition:opacity 0.3s;
   pointer-events:none;z-index:999;
 }
-#status.show{opacity:1}
+#bubble.show{opacity:1}
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div id="status"></div>
+<div id="bubble"></div>
 
-<!-- 本地依赖（不依赖 CDN） -->
+<!-- 本地依赖 -->
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2d.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
@@ -43,8 +44,10 @@ canvas{display:block;position:absolute;top:0;left:0}
   var currentEmotion = "neutral";
   var speaking = false;
   var modelIndex = 0;
+  var tapCount = 0;
+  var lastTapTime = 0;
 
-  // ── 模型列表（通过 HTTP 服务加载远程模型） ──
+  // ── 模型列表 ──
   var MODELS = [
     {
       name: "Shizuku",
@@ -60,6 +63,42 @@ canvas{display:block;position:absolute;top:0;left:0}
     },
   ];
 
+  // ── 互动台词 ──
+  var LINES = {
+    head: [
+      "嗯？怎么了~", "不要摸头啦！", "嘻嘻~", "你好呀！",
+      "在叫我吗？", "嗯嗯，我在听~", "头发放不整齐啦...",
+    ],
+    body: [
+      "呀！别碰！", "好痒~", "哼，讨厌！", "嘻嘻~",
+      "你在干什么！", "不要闹~", "好啦好啦~",
+    ],
+    idle: [
+      "好无聊呀...", "嗯？", "有人在看我吗？", "今天天气真好~",
+      "想聊天吗？", "我在这里哦~",
+    ],
+    greet: [
+      "你好！我是 AI 助手~", "欢迎回来！", "今天也要加油哦！",
+    ],
+  };
+
+  // ── 随机选台词 ──
+  function pickLine(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+
+  // ── 气泡 ──
+  var bubbleTimer = null;
+  function showBubble(text, duration) {
+    var el = document.getElementById("bubble");
+    el.textContent = text;
+    el.classList.add("show");
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function () {
+      el.classList.remove("show");
+    }, duration || 3000);
+  }
+
   // ── 初始化 PixiJS ──
   function initApp() {
     try {
@@ -72,7 +111,6 @@ canvas{display:block;position:absolute;top:0;left:0}
       });
     } catch (e) {
       console.error("[Live2D] PixiJS 初始化失败:", e);
-      showStatus("PixiJS 失败");
       return;
     }
 
@@ -85,7 +123,7 @@ canvas{display:block;position:absolute;top:0;left:0}
   // ── 加载模型 ──
   function loadModel() {
     var cfg = MODELS[modelIndex];
-    showStatus("加载: " + cfg.name);
+    showBubble("加载中: " + cfg.name + "...", 5000);
     console.log("[Live2D] 加载模型:", cfg.name, cfg.url);
 
     PIXI_L2D.Live2DModel.from(cfg.url, { autoInteract: false }).then(function (m) {
@@ -97,26 +135,55 @@ canvas{display:block;position:absolute;top:0;left:0}
       fitModel();
       app.stage.addChild(model);
 
-      // 鼠标跟踪
+      // 鼠标跟踪（眼睛跟随）
       canvas.addEventListener("mousemove", function (e) {
         if (model) model.focus(e.clientX, e.clientY);
       });
 
-      // 点击交互
+      // ★ 点击互动
       model.on("hit", function (areas) {
+        var now = Date.now();
+        // 双击检测（500ms 内两次点击）
+        if (now - lastTapTime < 500) {
+          tapCount++;
+        } else {
+          tapCount = 1;
+        }
+        lastTapTime = now;
+
         if (areas.indexOf("head") >= 0) {
           try { model.motion("tap_head"); } catch (e) {}
+          if (tapCount >= 3) {
+            showBubble("好啦好啦！不要一直摸头！", 3000);
+          } else {
+            showBubble(pickLine(LINES.head), 3000);
+          }
         } else if (areas.indexOf("body") >= 0) {
           try { model.motion("tap_body"); } catch (e) {}
+          showBubble(pickLine(LINES.body), 3000);
+        } else {
+          // 点击其他区域
+          showBubble(pickLine(LINES.idle), 3000);
         }
       });
 
+      // 播放待机动作 + 打招呼
       try { model.motion("idle"); } catch (e) {}
-      showStatus(cfg.name);
+      setTimeout(function () {
+        showBubble(pickLine(LINES.greet), 4000);
+      }, 1500);
+
+      // 随机闲置台词
+      setInterval(function () {
+        if (!speaking && Math.random() < 0.3) {
+          showBubble(pickLine(LINES.idle), 3000);
+        }
+      }, 30000);
+
       console.log("[Live2D] 模型加载成功:", cfg.name);
     }).catch(function (e) {
       console.error("[Live2D] 加载失败:", e);
-      showStatus("加载失败");
+      showBubble("加载失败，双击切换模型", 5000);
     });
   }
 
@@ -149,7 +216,14 @@ canvas{display:block;position:absolute;top:0;left:0}
     };
     var motion = motionMap[emotion];
     if (motion) { try { model.motion(motion); } catch (e) {} }
-    showStatus(emotion);
+
+    var bubbleMap = {
+      happy: "好开心!", sad: "有点难过...", angry: "哼！生气了！",
+      surprised: "诶?!", thinking: "让我想想...", love: "好喜欢~",
+      neutral: "",
+    };
+    var text = bubbleMap[emotion] || "";
+    if (text) showBubble(text, 3000);
   };
 
   window.setSpeaking = function (isSpeaking) {
@@ -157,27 +231,14 @@ canvas{display:block;position:absolute;top:0;left:0}
     if (!model) return;
     if (isSpeaking) {
       try { model.motion("tap_body"); } catch (e) {}
-      showStatus("说话中");
+      showBubble("...", 60000);
     } else {
       try { model.motion("idle"); } catch (e) {}
+      var el = document.getElementById("bubble");
+      el.classList.remove("show");
       window.setEmotion(currentEmotion);
     }
   };
-
-  // ── 状态提示 ──
-  var statusTimer = null;
-  function showStatus(text) {
-    var el = document.getElementById("status");
-    var labels = {
-      neutral: "待机", happy: "开心", sad: "难过",
-      angry: "生气", surprised: "惊讶", thinking: "思考",
-      love: "喜欢", "说话中": "说话中",
-    };
-    el.textContent = labels[text] || text;
-    el.classList.add("show");
-    clearTimeout(statusTimer);
-    statusTimer = setTimeout(function () { el.classList.remove("show"); }, 2000);
-  }
 
   window.addEventListener("resize", function () { fitModel(); });
 
@@ -186,7 +247,6 @@ canvas{display:block;position:absolute;top:0;left:0}
     if (typeof PIXI !== "undefined" && PIXI.live2d) {
       initApp();
     } else {
-      console.log("[Live2D] 等待库加载...");
       setTimeout(tryInit, 300);
     }
   }

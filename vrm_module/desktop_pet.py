@@ -143,6 +143,8 @@ class DesktopPet(QWidget):
                 _settings.setAttribute(
                     QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
                 )
+                # ★ 关键：设置背景色为透明（0 = 完全透明）
+                _settings.setBackgroundColor(Qt.GlobalColor.transparent)
             except Exception:
                 pass
 
