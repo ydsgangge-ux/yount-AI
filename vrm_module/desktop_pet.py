@@ -12,8 +12,9 @@ import sys as _sys
 import threading
 import http.server
 import functools
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt, QUrl, QTimer
+from PyQt6.QtGui import QColor
 
 
 def _is_webengine_available():
@@ -56,13 +57,89 @@ def _ensure_http_server():
         return None
 
 
+class _DragBar(QWidget):
+    """顶部拖动条 — QWebEngineView 会吞掉鼠标事件，所以需要单独的拖动区域。"""
+
+    def __init__(self, parent_pet):
+        super().__init__(parent_pet)
+        self._pet = parent_pet
+        self.setFixedHeight(28)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setStyleSheet(
+            "background:rgba(22,27,34,0.75);"
+            "border-top-left-radius:10px;border-top-right-radius:10px;"
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 4, 2)
+
+        # 标题
+        title = QLabel("AI Pet")
+        title.setStyleSheet("color:#8b949e;font-size:10px;border:none;background:transparent;")
+        layout.addWidget(title)
+        layout.addStretch()
+
+        # 切换模型按钮
+        btn_switch = QPushButton("切换")
+        btn_switch.setFixedSize(36, 20)
+        btn_switch.setStyleSheet(
+            "QPushButton{background:#21262d;color:#8b949e;border:1px solid #30363d;"
+            "border-radius:4px;font-size:9px;}"
+            "QPushButton:hover{background:#30363d;color:#c9d1d9;}"
+        )
+        btn_switch.clicked.connect(self._on_switch)
+        layout.addWidget(btn_switch)
+
+        # 关闭按钮
+        btn_close = QPushButton("x")
+        btn_close.setFixedSize(20, 20)
+        btn_close.setStyleSheet(
+            "QPushButton{background:#21262d;color:#8b949e;border:1px solid #30363d;"
+            "border-radius:4px;font-size:9px;}"
+            "QPushButton:hover{background:#da3633;color:#fff;}"
+        )
+        btn_close.clicked.connect(self._on_close)
+        layout.addWidget(btn_close)
+
+        self._drag_pos = None
+
+    def _on_switch(self):
+        if self._pet._web:
+            self._pet._web.page().runJavaScript("switchModel()")
+
+    def _on_close(self):
+        self._pet._save_position()
+        self._pet.hide()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self._pet.pos()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._pet.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self._pet._save_position()
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        self._on_switch()
+
+
 class DesktopPet(QWidget):
     """
     桌面悬浮宠物 — 无边框透明窗口，浮在所有窗口之上。
     """
 
-    DEFAULT_WIDTH  = 260
-    DEFAULT_HEIGHT = 380
+    DEFAULT_WIDTH  = 280
+    DEFAULT_HEIGHT = 420
 
     def __init__(self, parent=None, width=None, height=None):
         super().__init__(None)
@@ -84,6 +161,10 @@ class DesktopPet(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # ★ 顶部拖动条（QWebEngineView 会吞掉鼠标事件，必须用单独的拖动区域）
+        self._drag_bar = _DragBar(self)
+        layout.addWidget(self._drag_bar)
+
         # ── 占位标签 ──
         self._placeholder = QLabel("AI Pet\n加载中...")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -100,9 +181,6 @@ class DesktopPet(QWidget):
         self._load_timer.setSingleShot(True)
         self._load_timer.timeout.connect(self._try_load_webengine)
         self._load_timer.start(500)
-
-        # ── 拖动状态 ──
-        self._drag_pos = None
 
         # ── 恢复上次位置 ──
         self._restore_position()
@@ -147,16 +225,14 @@ class DesktopPet(QWidget):
                 pass
 
             # ★ 关键：用 page().setBackgroundColor 设置透明背景
-            #    settings().setBackgroundColor() 在 PyQt6 中不生效
             try:
-                from PyQt6.QtGui import QColor
                 self._web.page().setBackgroundColor(QColor(0, 0, 0, 0))
             except Exception as e:
                 print(f"[DesktopPet] 透明背景设置失败: {e}", flush=True)
 
             self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
 
-            # ★ 通过 HTTP 服务加载页面（不是 file://）
+            # ★ 通过 HTTP 服务加载页面
             url = QUrl(f"http://127.0.0.1:{port}/live2d_pet.html")
             self._web.load(url)
             print(f"[DesktopPet] 加载页面: {url.toString()}", flush=True)
@@ -179,28 +255,6 @@ class DesktopPet(QWidget):
             print("[DesktopPet] 页面加载完成", flush=True)
         else:
             print("[DesktopPet] 页面加载失败", flush=True)
-
-    # ────────────────── 鼠标拖动 ──────────────────
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.pos()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = None
-            self._save_position()
-            event.accept()
-
-    def mouseDoubleClickEvent(self, event):
-        if self._web:
-            self._web.page().runJavaScript("switchModel()")
 
     # ────────────────── 右键菜单 ──────────────────
 
