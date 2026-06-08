@@ -7,72 +7,206 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent}
-/* 调整看板娘位置和大小 */
-#waifu{
-  position:relative!important;
-  width:100%!important;
-  height:100%!important;
-  bottom:auto!important;
-  left:auto!important;
+canvas{display:block;position:absolute;top:0;left:0}
+#status{
+  position:absolute;top:4px;right:4px;
+  padding:1px 6px;border-radius:6px;
+  font:9px/1.4 sans-serif;color:#8b949e;
+  background:rgba(22,27,34,0.6);
+  border:1px solid #30363d;
+  opacity:0;transition:opacity 0.3s;
+  pointer-events:none;z-index:999;
 }
-#waifu-tool{
-  display:none!important;
-}
-#waifu-tips{
-  border:none!important;box-shadow:none!important;
-  background:rgba(22,27,34,0.85)!important;
-  color:#c9d1d9!important;font-size:12px!important;
-  border-radius:8px!important;
-}
+#status.show{opacity:1}
 </style>
 </head>
 <body>
+<canvas id="canvas"></canvas>
+<div id="status"></div>
 
-<!-- live2d-widgets: 一行代码加载 Live2D 看板娘 -->
-<script src="https://fastly.jsdelivr.net/npm/live2d-widgets@1.0.0/dist/autoload.js"></script>
+<!-- PixiJS v6 -->
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+<!-- Cubism 2 Core -->
+<script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+<!-- Cubism 4 Core -->
+<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+<!-- pixi-live2d-display (Cubism 2+4 全支持版) -->
+<script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/cubism4.min.js"></script>
 
 <script>
 (function () {
   "use strict";
 
+  // 暴露 PIXI 全局变量（pixi-live2d-display 需要）
+  window.PIXI = PIXI;
+  var PIXI_L2D = PIXI.live2d;
+
+  var canvas = document.getElementById("canvas");
+  var app = null;
+  var model = null;
   var currentEmotion = "neutral";
   var speaking = false;
+  var modelIndex = 0;
+
+  // ── 模型列表 ──
+  // 使用 pixi-live2d-display 官方测试资源（CDN 稳定）
+  var MODELS = [
+    {
+      name: "Shizuku",
+      url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/shizuku/shizuku.model.json",
+      scale: 0.15,
+    },
+    {
+      name: "Haru",
+      url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru_greeter_t03.model3.json",
+      scale: 0.15,
+    },
+    {
+      name: "Hiyori",
+      url: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json",
+      scale: 0.15,
+    },
+  ];
+
+  // ── 初始化 PixiJS ──
+  function initApp() {
+    app = new PIXI.Application({
+      view: canvas,
+      transparent: true,
+      autoStart: true,
+      resizeTo: window,
+      backgroundAlpha: 0,
+    });
+
+    // 从 localStorage 恢复模型选择
+    var saved = localStorage.getItem("live2d_model_index");
+    if (saved !== null) modelIndex = parseInt(saved) % MODELS.length;
+
+    loadModel();
+  }
+
+  // ── 加载模型 ──
+  function loadModel() {
+    var cfg = MODELS[modelIndex];
+    showStatus("加载: " + cfg.name);
+    console.log("[Live2D] 加载模型:", cfg.name, cfg.url);
+
+    PIXI_L2D.Live2DModel.from(cfg.url, { autoInteract: false }).then(function (m) {
+      if (model) {
+        app.stage.removeChild(model);
+        model.destroy();
+      }
+      model = m;
+
+      // 适配画布大小
+      fitModel();
+
+      app.stage.addChild(model);
+
+      // 鼠标跟踪（眼睛跟随）
+      canvas.addEventListener("mousemove", function (e) {
+        if (model) model.focus(e.clientX, e.clientY);
+      });
+
+      // 点击交互
+      model.on("hit", function (areas) {
+        console.log("[Live2D] 点击区域:", areas);
+        if (areas.indexOf("head") >= 0) {
+          try { model.motion("tap_head"); } catch (e) {}
+        } else if (areas.indexOf("body") >= 0) {
+          try { model.motion("tap_body"); } catch (e) {}
+        }
+      });
+
+      // 播放待机动作
+      try { model.motion("idle"); } catch (e) {}
+
+      showStatus(cfg.name);
+      console.log("[Live2D] 模型加载成功:", cfg.name);
+    }).catch(function (e) {
+      console.error("[Live2D] 加载失败:", e);
+      showStatus("加载失败");
+    });
+  }
+
+  // ── 适配模型到画布 ──
+  function fitModel() {
+    if (!model) return;
+    var w = canvas.clientWidth;
+    var h = canvas.clientHeight;
+    var s = Math.min(w / model.width, h / model.height) * 0.9;
+    model.scale.set(s);
+    model.x = (w - model.width * s) / 2;
+    model.y = (h - model.height * s) / 2;
+  }
+
+  // ── 切换模型 ──
+  window.switchModel = function () {
+    modelIndex = (modelIndex + 1) % MODELS.length;
+    localStorage.setItem("live2d_model_index", modelIndex);
+    loadModel();
+  };
 
   // ── 对外 API（兼容 VRM 接口） ──
   window.setEmotion = function (emotion, intensity) {
     currentEmotion = emotion;
-    if (speaking) return;
-    // live2d-widgets 内置了提示语系统
-    var labels = {
-      neutral: "待机中~", happy: "好开心!", sad: "有点难过...",
-      angry: "哼! 生气了!", surprised: "诶?!", thinking: "让我想想...",
-      love: "好喜欢~",
+    if (speaking || !model) return;
+
+    // 尝试播放表情
+    try { model.expression(emotion); } catch (e) {}
+
+    // 尝试播放动作
+    var motionMap = {
+      happy: "tap_body", sad: "tap_body", angry: "tap_body",
+      surprised: "tap_head", thinking: "idle", love: "tap_body",
     };
-    // 尝试调用内置的 showMessage
-    if (labels[emotion] && typeof showMessage === "function") {
-      try { showMessage(labels[emotion], 3000, 0); } catch (e) {}
+    var motion = motionMap[emotion];
+    if (motion) {
+      try { model.motion(motion); } catch (e) {}
     }
+    showStatus(emotion);
   };
 
   window.setSpeaking = function (isSpeaking) {
     speaking = isSpeaking;
+    if (!model) return;
     if (isSpeaking) {
-      if (typeof showMessage === "function") {
-        try { showMessage("...", 60000, 0); } catch (e) {}
-      }
+      try { model.motion("tap_body"); } catch (e) {}
+      showStatus("说话中");
     } else {
-      if (typeof showMessage === "function") {
-        try { showMessage("", 0, 0); } catch (e) {}
-      }
+      try { model.motion("idle"); } catch (e) {}
       window.setEmotion(currentEmotion);
     }
   };
 
-  // 切换模型（live2d-widgets 内置了切换功能）
-  window.switchModel = function () {
-    var btn = document.querySelector("#waifu-tool .fa-random");
-    if (btn) btn.click();
-  };
+  // ── 状态提示 ──
+  var statusTimer = null;
+  function showStatus(text) {
+    var el = document.getElementById("status");
+    var labels = {
+      neutral: "待机", happy: "开心", sad: "难过",
+      angry: "生气", surprised: "惊讶", thinking: "思考",
+      love: "喜欢", "说话中": "说话中",
+    };
+    el.textContent = labels[text] || text;
+    el.classList.add("show");
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function () { el.classList.remove("show"); }, 2000);
+  }
+
+  // ── 窗口大小变化 ──
+  window.addEventListener("resize", function () { fitModel(); });
+
+  // ── 启动 ──
+  // 等待所有脚本加载完成
+  function tryInit() {
+    if (typeof PIXI !== "undefined" && PIXI.live2d) {
+      initApp();
+    } else {
+      setTimeout(tryInit, 300);
+    }
+  }
+  tryInit();
 })();
 </script>
 </body>

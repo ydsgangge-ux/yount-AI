@@ -616,21 +616,20 @@ class ChatPage(QWidget):
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(0)
 
-        # VRM 面板（模块化加载，失败则不显示）
+        # 桌面宠物（悬浮在桌面上，不嵌在主窗口内）
         self.vrm_widget = None
         try:
-            from vrm_module import VRM_AVAILABLE, vrm_widget_class
+            from vrm_module import desktop_pet_class
             from desktop.config import load_config
             _cfg = load_config()
-            if VRM_AVAILABLE and _cfg.get("vrm_enabled", True):
-                self.vrm_widget = vrm_widget_class(
-                    parent=right_col,
-                    width=_cfg.get("vrm_width", 220),
-                    height=_cfg.get("vrm_height", 220),
+            if desktop_pet_class and _cfg.get("vrm_enabled", True):
+                self.vrm_widget = desktop_pet_class(
+                    width=_cfg.get("vrm_width", 260),
+                    height=_cfg.get("vrm_height", 380),
                 )
-                right_lay.addWidget(self.vrm_widget)
+                self.vrm_widget.show()
         except Exception as e:
-            print(f"[VRM] ChatPage 加载跳过: {e}")
+            print(f"[DesktopPet] 桌面宠物加载跳过: {e}")
 
         # 工具面板
         self.tool_panel = ToolPanel()
