@@ -2,9 +2,8 @@
 desktop_pet.py — 桌面悬浮宠物窗口
 
 无边框、透明背景、始终置顶。
-左键按住拖动移动，右键菜单操作。
-
-关键：必须通过 HTTP 服务加载页面，file:// 协议无法加载远程模型。
+顶部中央有 ~1cm 拖动块，鼠标悬停变色提示，按住拖动。
+其余区域鼠标事件直通 Live2D（眼睛跟踪 / 点击互动正常）。
 """
 
 import os
@@ -13,8 +12,8 @@ import threading
 import http.server
 import functools
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMenu
-from PyQt6.QtCore import Qt, QUrl, QTimer, QEvent
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QUrl, QTimer, QEvent, QSize
+from PyQt6.QtGui import QColor, QCursor, QPainter, QFont
 
 
 def _is_webengine_available():
@@ -57,10 +56,97 @@ def _ensure_http_server():
         return None
 
 
+# ────────────────── 拖动块 ──────────────────
+
+class _DragHandle(QWidget):
+    """
+    桌面宠物顶部中央的小拖动块。
+    - 悬停时变亮 + 鼠标变十字箭头
+    - 左键按住拖动窗口
+    - 右键弹出菜单
+    """
+    HANDLE_SIZE = 36  # ~1cm（96dpi 下约 0.95cm）
+
+    def __init__(self, pet_widget):
+        super().__init__(pet_widget)
+        self._pet = pet_widget
+        self._hovered = False
+        self._drag_pos = None
+
+        hs = self.HANDLE_SIZE
+        self.setGeometry((pet_widget.width() - hs) // 2, 4, hs, hs)
+        self.setMouseTracking(True)
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+
+        self.setStyleSheet("""
+            _DragHandle {
+                background: rgba(48,54,61,0.5);
+                border: 1px solid rgba(139,148,158,0.4);
+                border-radius: 18px;
+            }
+            _DragHandle:hover {
+                background: rgba(88,166,255,0.35);
+                border: 1px solid rgba(88,166,255,0.7);
+            }
+        """)
+
+    # ── 画四条小点装饰 ──
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(139, 148, 158, 180 if self._hovered else 100)
+        p.setPen(color)
+        hs = self.HANDLE_SIZE
+        cx, cy = hs // 2, hs // 2
+        for i in range(4):
+            x = cx - 6 + i * 4
+            p.drawPoint(x, cy)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        self._drag_pos = None
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # ★ OS 系统级拖动
+            win = self._pet.windowHandle()
+            if win is not None:
+                try:
+                    win.startSystemMove()
+                    event.accept()
+                    return
+                except Exception:
+                    pass
+            # 回退：手动拖动
+            self._drag_pos = event.globalPosition().toPoint() - self._pet.pos()
+            event.accept()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._pet._show_menu(event.globalPosition().toPoint())
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None:
+            self._pet.move(event.globalPosition().toPoint() - self._drag_pos)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self._drag_pos = None
+            self._pet._save_position()
+
+
+# ────────────────── 主窗口 ──────────────────
+
 class DesktopPet(QWidget):
     """
     桌面悬浮宠物 — 无边框透明窗口，浮在所有窗口之上。
-    左键按住拖动移动，右键菜单操作。
+    顶部拖动块控制移动，主体区域鼠标事件透传 Live2D。
     """
 
     DEFAULT_WIDTH  = 260
@@ -98,59 +184,16 @@ class DesktopPet(QWidget):
         layout.addWidget(self._placeholder)
 
         self._web = None
+        self._handle = None
         self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
         self._load_timer.timeout.connect(self._try_load_webengine)
         self._load_timer.start(500)
 
-        # ── 拖动状态 ──
-        self._drag_pos = None
-
         # ── 恢复上次位置 ──
         self._restore_position()
 
         print("[DesktopPet] 桌面宠物已创建", flush=True)
-
-    # ────────────────── 事件过滤器：拦截 QWebEngineView 的鼠标事件 ──
-
-    def eventFilter(self, obj, event):
-        """
-        拦截 QWebEngineView 的鼠标事件：
-        - 左键按下 → 开始拖动
-        - 左键移动 → 拖动窗口
-        - 左键松开 → 结束拖动
-        - 右键 → 弹出菜单
-        其他事件正常传递给 QWebEngineView（如鼠标移动用于眼睛跟踪）
-        """
-        if obj is self._web:
-            etype = event.type()
-
-            # 左键按下 → 开始拖动
-            if etype == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._drag_pos = event.globalPosition().toPoint() - self.pos()
-                    return True  # 吞掉事件，不传给 WebEngine
-
-            # 左键移动 → 拖动窗口
-            elif etype == QEvent.Type.MouseMove:
-                if self._drag_pos is not None:
-                    self.move(event.globalPosition().toPoint() - self._drag_pos)
-                    return True  # 吞掉事件
-                # 没在拖动时，让事件传给 WebEngine（眼睛跟踪）
-
-            # 左键松开 → 结束拖动
-            elif etype == QEvent.Type.MouseButtonRelease:
-                if event.button() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
-                    self._drag_pos = None
-                    self._save_position()
-                    return True
-
-            # 右键 → 弹出菜单
-            elif etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
-                self._show_menu(event.globalPosition().toPoint())
-                return True
-
-        return super().eventFilter(obj, event)
 
     # ────────────────── WebEngine 加载 ──────────────────
 
@@ -195,20 +238,30 @@ class DesktopPet(QWidget):
             except Exception as e:
                 print(f"[DesktopPet] 透明背景设置失败: {e}", flush=True)
 
-            # ★ 安装事件过滤器：拦截鼠标事件实现拖动和右键菜单
-            self._web.installEventFilter(self)
+            # ★ 右键菜单：CustomContextMenu 信号（防 Chrome 默认菜单）
+            try:
+                self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                self._web.customContextMenuRequested.connect(self._on_web_menu)
+            except Exception:
+                pass
 
-            # ★ 通过 HTTP 服务加载页面
+            # ★ 加载页面
             url = QUrl(f"http://127.0.0.1:{port}/live2d_pet.html")
             self._web.load(url)
             print(f"[DesktopPet] 加载页面: {url.toString()}", flush=True)
 
             self._web.loadFinished.connect(self._on_load_finished)
 
+            # 交换占位标签 → QWebEngineView
             layout = self.layout()
             layout.removeWidget(self._placeholder)
             self._placeholder.setParent(None)
             layout.addWidget(self._web)
+
+            # ★ 顶部拖动块（在 QWebEngineView 之上）
+            self._handle = _DragHandle(self)
+            self._handle.show()
+            self._handle.raise_()
 
             print("[DesktopPet] WebEngine 加载成功", flush=True)
 
@@ -224,8 +277,13 @@ class DesktopPet(QWidget):
 
     # ────────────────── 右键菜单 ──────────────────
 
+    def _on_web_menu(self, pos):
+        """QWebEngineView 右键信号 → 弹出菜单"""
+        global_pos = self._web.mapToGlobal(pos)
+        self._show_menu(global_pos)
+
     def contextMenuEvent(self, event):
-        """Widget 自身的右键菜单（占位标签阶段）"""
+        """占位标签阶段的右键菜单"""
         self._show_menu(event.globalPos())
 
     def _show_menu(self, global_pos):
@@ -235,7 +293,6 @@ class DesktopPet(QWidget):
             "padding:4px;}"
             "QMenu::item:selected{background:#21262d;}"
         )
-
         act_switch = menu.addAction("切换模型")
         menu.addSeparator()
         act_hide  = menu.addAction("隐藏宠物")
