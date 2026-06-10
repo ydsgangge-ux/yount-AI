@@ -830,6 +830,16 @@ class AGIApp:
             self.agent._proactive_context = self._pending_proactive_msg
             self._pending_proactive_msg = None
 
+        # 桌面宠物: 思考中
+        pet = getattr(self.main_win, "vrm_widget", None)
+        if pet:
+            try:
+                from vrm_module.emotion_bridge import translate
+                name, val = translate("curious", 0.5)
+                pet.set_emotion(name, val)
+            except Exception:
+                pass
+
         self.float_win.set_thinking(True)
         worker = AGIWorker(self.agent, text)
 
@@ -840,6 +850,19 @@ class AGIApp:
                 e.get("primary", "neutral"),
                 e.get("intensity", 0.3)
             )
+            # 桌面宠物: 根据 AI 回复情绪更新表情
+            pet = getattr(self.main_win, "vrm_widget", None)
+            if pet:
+                try:
+                    from vrm_module.emotion_bridge import translate
+                    name, val = translate(
+                        e.get("primary", "neutral"),
+                        e.get("intensity", 0)
+                    )
+                    pet.set_emotion(name, val)
+                    pet.set_speaking(False)
+                except Exception:
+                    pass
             emoji = _emotion_emoji(e)
             resp = r.get("response", "…")
             self.float_win.add_message(f"{emoji} {resp}" if emoji else resp)
@@ -847,6 +870,14 @@ class AGIApp:
         def on_err(err):
             self.float_win.set_thinking(False)
             self.float_win.add_message(f"❌ {err}")
+            # 桌面宠物: 错误时恢复 neutral
+            pet = getattr(self.main_win, "vrm_widget", None)
+            if pet:
+                try:
+                    pet.set_speaking(False)
+                    pet.set_emotion("neutral", 0.5)
+                except Exception:
+                    pass
 
         worker.finished.connect(on_done)
         worker.error.connect(on_err)
