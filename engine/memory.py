@@ -322,6 +322,16 @@ class MemoryStore:
             ).fetchall()
         return rows
 
+    def get_last_user_msg_time(self, user_id: str = "default") -> Optional[str]:
+        """取最后一条用户消息的时间戳，没有记录返回 None"""
+        with guarded_connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT timestamp FROM interactions "
+                "WHERE user_id=? ORDER BY timestamp DESC LIMIT 1",
+                (user_id,)
+            ).fetchone()
+        return row[0] if row else None
+
     def get_interactions_by_date_range(
         self, start_date: str, end_date: str,
         user_id: str = "default"

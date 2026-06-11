@@ -55,7 +55,7 @@ PERCEPTION_PROMPT = """你是{name}，你是一个有真实身体和生活的普
 你此刻的感受：{self_perception}
 
 {personality}
-
+{time_gap}
 用户说："{user_input}"
 
 请以 JSON 格式输出你的感知结果：
@@ -195,6 +195,7 @@ class ConsciousnessAgent:
         self.conversation_history: List[Dict] = []
         self.current_emotion = EmotionState()
         self._history_restored = False  # 延迟到 process() 拿到正确 user_id 再恢复
+        self._last_user_msg_time: Optional[str] = None  # 上次用户发言时间（用于时间差感知）
 
         # 注入 MemoryStore 到 tool 系统，供 search_memories_by_date 使用
         try:
@@ -285,7 +286,12 @@ class ConsciousnessAgent:
             self._log("SimLife", "simlife_client 未初始化 (None)")
 
         # ① 感知（两步：先自我感知，再感知用户）
-        perception = self._perceive(user_input, simlife_context=simlife_context)
+        # 计算时间差：上次用户发消息距现在多久了
+        time_gap = self._format_time_gap(current_uid)
+        if time_gap:
+            self._log("时间感知", time_gap.strip(" \n（）()"))
+        perception = self._perceive(user_input, simlife_context=simlife_context,
+                                    time_gap=time_gap)
         emotion = EmotionState(
             primary=EmotionType.from_str(
                 perception.get("emotion", {}).get("primary", "neutral")
@@ -674,6 +680,9 @@ class ConsciousnessAgent:
         except Exception:
             pass
 
+        # 更新上次用户发言时间（用于下次感知时间差）
+        self._last_user_msg_time = datetime.now().isoformat()
+
         return {
             "id":               interaction_id,
             "user_input":       user_input,
@@ -756,7 +765,40 @@ class ConsciousnessAgent:
 
         return user_input, file_context
 
-    def _perceive(self, user_input: str, simlife_context: str = "") -> Dict:
+    def _format_time_gap(self, user_id: str = "default") -> str:
+        """计算距离上次用户发言的时间差，返回格式化提示字符串（空串表示无提示）"""
+        last_time_str = self._last_user_msg_time
+        if last_time_str is None:
+            try:
+                last_time_str = self.memory.store.get_last_user_msg_time(user_id)
+            except Exception:
+                pass
+        if not last_time_str:
+            return ""
+        try:
+            from datetime import timedelta
+            last_time = datetime.fromisoformat(last_time_str)
+            now = datetime.now()
+            delta = now - last_time
+        except Exception:
+            return ""
+        if delta < timedelta(minutes=30):
+            return ""
+        elif delta < timedelta(hours=2):
+            mins = int(delta.total_seconds() / 60)
+            return f"\n（距离上次对话已过去 {mins} 分钟）"
+        elif delta < timedelta(days=1):
+            hours = int(delta.total_seconds() / 3600)
+            return f"\n（距离上次对话已过去 {hours} 小时）"
+        elif delta < timedelta(days=7):
+            days = delta.days
+            return f"\n（距离上次对话已过去 {days} 天）"
+        else:
+            days = delta.days
+            return f"\n（距离上次对话已过去 {days} 天，你们已经很久没聊了）"
+
+    def _perceive(self, user_input: str, simlife_context: str = "",
+                  time_gap: str = "") -> Dict:
         # 第一步：自我感知（感受自己的身体和当前生活状态）
         self_perception = ""
         if simlife_context:
@@ -779,7 +821,8 @@ class ConsciousnessAgent:
             name=self.personality.name,
             self_perception=self_perception or "（暂时没有特别的感觉）",
             personality=self.personality.to_prompt_description(),
-            user_input=user_input
+            user_input=user_input,
+            time_gap=time_gap,
         )
         raw = self.b.generate(prompt, max_tokens=500, temperature=0.4, thinking=False)
 
