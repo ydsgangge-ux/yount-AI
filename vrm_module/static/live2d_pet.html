@@ -19,11 +19,23 @@ canvas{display:block;position:absolute;top:0;left:0}
   pointer-events:none;z-index:999;
 }
 #bubble.show{opacity:1}
+#switch-btn{
+  position:absolute;bottom:10px;right:10px;
+  width:32px;height:32px;border-radius:50%;
+  background:rgba(22,27,34,0.85);
+  border:1px solid #30363d;
+  color:#c9d1d9;font-size:16px;
+  cursor:pointer;z-index:999;
+  display:flex;align-items:center;justify-content:center;
+  transition:background 0.2s;
+}
+#switch-btn:hover{background:#21262d}
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <div id="bubble"></div>
+<button id="switch-btn">↻</button>
 
 <!--
   正确的库加载顺序：
@@ -84,6 +96,10 @@ canvas{display:block;position:absolute;top:0;left:0}
     {
       name: "Rice",
       url: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Rice/Rice.model3.json",
+    },
+    {
+      name: "Epsilon",
+      url: "Epsilon/runtime/Epsilon_free.model3.json",
     },
   ];
 
@@ -264,6 +280,20 @@ canvas{display:block;position:absolute;top:0;left:0}
   };
 
   window.addEventListener("resize", function () { fitModel(); });
+
+  // ── 键盘快捷键：S 切换模型 ──
+  window.addEventListener("keydown", function (e) {
+    if (e.key === "s" || e.key === "S") {
+      showBubble("切换模型...", 5000);
+      window.switchModel();
+    }
+  });
+
+  // ── 按钮切换模型 ──
+  document.getElementById("switch-btn").addEventListener("click", function () {
+    showBubble("切换模型...", 5000);
+    window.switchModel();
+  });
 
   // ── 启动 ──
   function tryInit() {
