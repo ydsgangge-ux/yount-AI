@@ -36,7 +36,7 @@
 - **Voice Synthesis** — Microsoft Edge TTS, multiple voices
 - **Face Recognition** — Multi-engine (InsightFace / face_recognition / OpenCV), multi-user identity
 - **Desktop Integration** — System tray, global hotkeys, floating window, screenshot OCR, auto-start
-- **VRM Virtual Avatar** — Embedded VRM 3D character panel with emotion sync (20 emotion mappings), speaking animation, breathing/blink lifelike animations, holographic visual style. Supports VRM 0.x / 1.0 models. Modular loading with graceful degradation
+- **Desktop Pet (Live2D + VRM)** — Dual-mode virtual avatar: ① **Live2D Desktop Pet** (always-on-top, 8 models, one-click import, emotion-aware联动, eye tracking, click interaction, drag handle, context menu) ② **VRM 3D Panel** (in-chat display, 20+ expression mappings, speaking animation, breathing/blink). Pet emotion changes with AI responses. Graceful degradation when dependencies missing
 
 ---
 
@@ -129,16 +129,19 @@ agi_app/
 │   │   └── generate_world_prompt.md     # Prompt template for world generation
 │   └── setup.py             # Standalone setup launcher
 │
-├── vrm_module/              # VRM Virtual Avatar Module (optional)
+├── vrm_module/              # Virtual Avatar Module (Desktop Pet + VRM, optional)
 │   ├── __init__.py          # Safe loading entry (exception-catch all)
+│   ├── desktop_pet.py       # Desktop pet window (Live2D, always-on-top)
 │   ├── vrm_widget.py        # PyQt6 QWebEngineView component
-│   ├── emotion_bridge.py    # Emotion mapping (AGI emotions → VRM BlendShape)
-│   ├── static/              # Three.js rendering assets
+│   ├── emotion_bridge.py    # Emotion mapping (AGI → Live2D / VRM BlendShape)
+│   ├── static/              # Frontend rendering assets
+│   │   ├── live2d_pet.html  # Live2D desktop pet rendering page (primary)
 │   │   ├── vrm_viewer.html  # Three.js + three-vrm rendering page
+│   │   ├── lib/             # Live2D runtime libraries
+│   │   ├── Epsilon/         # Local Live2D model directory
 │   │   ├── three.module.js  # Three.js ES Module (offline)
-│   │   ├── three-vrm.module.js  # three-vrm ES Module (offline)
-│   │   └── model.vrm        # VRM model file (user-provided)
-│   └── test_server.py       # Browser test server
+│   │   └── three-vrm.module.js  # three-vrm ES Module (offline)
+│   └── test_server.py       # Browser test server (nav page → all test pages)
 │
 └── ui/                      # UI Layer (PyQt6)
     ├── main_window.py       # Main window (7 functional tabs)
@@ -304,9 +307,44 @@ Missing optional dependencies gracefully degrade — core features still work.
 
 ---
 
+## Desktop Pet (Live2D)
+
+The Live2D desktop pet replaces the VRM panel as the default virtual avatar. It renders with **Live2D** technology, with interaction and emotion awareness:
+
+| Feature | Description |
+|---------|-------------|
+| **Desktop Display** | Independent always-on-top window, drag handle + context menu |
+| **Interaction** | Eye tracking (follows mouse), click for random messages |
+| **Emotion Sync** | Auto-switch expressions based on AI response (happy/sad/angry/surprised/curious) |
+| **Model Switching** | Context menu / `S` key shortcut |
+| **One-Click Import** | `python import_model.py <model-folder>` |
+
+### Pre-installed Models
+
+| Model | Source |
+|-------|--------|
+| Haru / Shizuku | pixi-live2d-display |
+| Mao / Hiyori / Natori / Ren / Rice | Live2D CubismWebSamples |
+| Epsilon | Local import |
+
+### Adding New Models
+
+```bash
+python import_model.py /path/to/model/folder
+# Refresh browser or restart app to see the new model
+```
+
+### Browser Testing
+
+```bash
+python vrm_module/test_server.py
+# Open http://localhost:8899/live2d_pet.html
+# Click bottom-right ↻ to switch | F12 console for logs
+```
+
 ## VRM Virtual Avatar
 
-Displays a 3D virtual character on the right side of the chat panel, with real-time emotion changes during conversation.
+In addition to the Live2D desktop pet, the VRM 3D model mode is still available (right chat panel).
 
 ### Prerequisites
 
@@ -319,13 +357,15 @@ Displays a 3D virtual character on the right side of the chat panel, with real-t
 - [VRoid Studio](https://vroid.com/studio) (free character creator)
 - [VRoid Hub](https://hub.vroid.com) (free commercial-use models)
 
-### Testing
+### Expression Mapping
 
-```bash
-python vrm_module/test_server.py
-# Open http://localhost:8899 in browser
-# Console test: setEmotion("happy", 0.9) / setSpeaking(true)
-```
+| AGI Emotion | VRM Expression | Intensity |
+|-------------|----------------|-----------|
+| happy / love / gratitude | happy | 0.7~1.0 |
+| sad / anxious / nostalgic | sad | 0.3~0.7 |
+| angry | angry | 0.6 |
+| surprised / curious | surprised | 0.4~1.0 |
+| neutral / calm / trust | neutral | 0.7~1.0 |
 
 ---
 

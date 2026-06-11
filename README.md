@@ -36,7 +36,7 @@
 - **语音合成** — Microsoft Edge TTS，多种语音
 - **人脸识别** — 多引擎（InsightFace / face_recognition / OpenCV），多用户身份
 - **桌面集成** — 系统托盘、全局热键、悬浮窗、截图 OCR、开机自启
-- **VRM 虚拟形象** — 内嵌 VRM 3D 虚拟角色面板，支持表情联动（20 种情绪映射）、说话动画、呼吸/眨眼生命感动画、全息视觉风格。支持 VRM 0.x / 1.0 模型，模块化加载，缺失时优雅降级
+- **桌面宠物（Live2D + VRM）** — 双模式虚拟形象：① **Live2D 桌面宠物**（常驻桌面，8 个模型可选，一键导入新模型，情绪感知联动，眼睛跟踪鼠标，点击互动，小拖动块设计，右键菜单切换/隐藏）② **VRM 3D 面板**（内嵌对话界面，20+ 表情映射，说话动画，呼吸/眨眼）。宠物情绪随 AI 回复实时变化，缺失时优雅降级
 
 ---
 
@@ -85,6 +85,7 @@ agi_app/
 ├── install.bat / install.sh # 一键安装脚本
 ├── launch.bat / launch.sh   # 启动脚本
 ├── setup_comfyui.py         # ComfyUI 自动检测与配置工具
+├── import_model.py          # Live2D 模型一键导入脚本
 ├── workflow_api.json        # ComfyUI workflow（模型/LoRA/采样参数）
 ├── build.py                 # PyInstaller 打包脚本
 ├── requirements.txt         # Python 依赖
@@ -131,16 +132,19 @@ agi_app/
 │   │   └── generate_world_prompt.md     # 用户生成世界观的 Prompt 模板
 │   └── setup.py             # 独立启动器
 │
-├── vrm_module/              # VRM 虚拟形象模块（可选）
+├── vrm_module/              # 虚拟形象模块（桌面宠物 + VRM，可选）
 │   ├── __init__.py          # 安全加载入口（异常全拦截）
+│   ├── desktop_pet.py       # 桌面萌宠窗口（Live2D 常驻桌面）
 │   ├── vrm_widget.py        # PyQt6 QWebEngineView 组件
-│   ├── emotion_bridge.py    # 情绪映射（AGI 情绪 → VRM BlendShape）
-│   ├── static/              # Three.js 渲染资源
+│   ├── emotion_bridge.py    # 情绪映射（AGI 情绪 → VRM BlendShape / Live2D表情）
+│   ├── static/              # 前端渲染资源
+│   │   ├── live2d_pet.html  # Live2D 桌面萌宠渲染页面（主）
 │   │   ├── vrm_viewer.html  # Three.js + three-vrm 渲染页面
+│   │   ├── lib/             # Live2D 运行时库
+│   │   ├── Epsilon/         # 本地 Live2D 模型（用户可自行添加）
 │   │   ├── three.module.js  # Three.js ES Module（离线）
-│   │   ├── three-vrm.module.js  # three-vrm ES Module（离线）
-│   │   └── model.vrm        # VRM 模型文件（用户自行放置）
-│   └── test_server.py       # 浏览器测试服务器
+│   │   └── three-vrm.module.js  # three-vrm ES Module（离线）
+│   └── test_server.py       # 浏览器测试服务器（导航页 → 所有测试页）
 │
 └── ui/                      # UI 层（PyQt6）
     ├── main_window.py       # 主窗口（7 个功能标签页）
@@ -345,9 +349,44 @@ pip install PyQt6-WebEngine
 
 ---
 
+## 桌面宠物（Live2D）
+
+桌面宠物体现已取代原有 VRM 面板，作为默认虚拟形象。使用 **Live2D** 技术渲染，带交互和情绪感知：
+
+| 功能 | 说明 |
+|------|------|
+| **桌面显示** | 独立小窗口常驻桌面，顶部小拖动块拖拽/右键菜单 |
+| **交互** | 眼睛跟随鼠标、点击出现互动文案 |
+| **情绪联动** | AI 回复时自动切换表情（喜/怒/哀/惊/好奇/思考）|
+| **模型切换** | 右键菜单 / 快捷键 `S` 切换模型 |
+| **一键导入** | `python import_model.py 模型文件夹` |
+
+### 预置模型
+
+| 模型 | 来源 |
+|------|------|
+| Haru / Shizuku | pixi-live2d-display 测试资源 |
+| Mao / Hiyori / Natori / Ren / Rice | Live2D CubismWebSamples 官方示例 |
+| Epsilon | 本地模型（已导入） |
+
+### 添加新模型
+
+```bash
+python import_model.py 下载的模型文件夹路径
+# 刷新浏览器预览，或重启应用
+```
+
+### 浏览器测试
+
+```bash
+python vrm_module/test_server.py
+# 浏览器打开 http://localhost:8899/live2d_pet.html
+# 点右下角 ↻ 切换模型 | F12 控制台看日志
+```
+
 ## VRM 虚拟形象
 
-在对话界面右侧显示 3D 虚拟角色，情绪随对话实时变化。
+除 Live2D 桌面宠物外，还保留了 VRM 3D 模型模式（对话界面右侧面板）。
 
 ### 启用条件
 
@@ -360,13 +399,15 @@ pip install PyQt6-WebEngine
 - [VRoid Studio](https://vroid.com/studio)（免费捏脸工具）
 - [VRoid Hub](https://hub.vroid.com)（免费可商用模型）
 
-### 测试方法
+### 表情映射
 
-```bash
-python vrm_module/test_server.py
-# 浏览器打开 http://localhost:8899
-# 控制台测试：setEmotion("happy", 0.9) / setSpeaking(true)
-```
+| AGI 情绪 | VRM 表情 | 强度 |
+|----------|----------|------|
+| happy / love / gratitude | happy | 0.7~1.0 |
+| sad / anxious / nostalgic | sad | 0.3~0.7 |
+| angry | angry | 0.6 |
+| surprised / curious | surprised | 0.4~1.0 |
+| neutral / calm / trust | neutral | 0.7~1.0 |
 
 ---
 
