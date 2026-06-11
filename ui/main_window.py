@@ -5974,7 +5974,7 @@ class MainWindow(QMainWindow):
         self._status_mode.setText("🔄 处理中…")
 
         # 桌面宠物: 用户发消息 → 好奇表情 + 开始说话动画
-        vrm = self.vrm_widget
+        vrm = getattr(self, "vrm_widget", None)
         if vrm:
             try:
                 from vrm_module.emotion_bridge import translate
@@ -6059,7 +6059,7 @@ class MainWindow(QMainWindow):
                 f"({int(e.get('intensity',0)*10)}/10)"
             )
             # 桌面宠物: 更新表情
-            vrm = self.vrm_widget
+            vrm = getattr(self, "vrm_widget", None)
             if vrm:
                 try:
                     from vrm_module.emotion_bridge import translate
@@ -6073,7 +6073,7 @@ class MainWindow(QMainWindow):
                     pass
         else:
             # 桌面宠物: 无情绪时回到 idle
-            vrm = self.vrm_widget
+            vrm = getattr(self, "vrm_widget", None)
             if vrm:
                 try:
                     vrm.set_speaking(False)
@@ -6099,7 +6099,7 @@ class MainWindow(QMainWindow):
         self.chat_page.add_ai_message(f"❌ 错误: {err}")
         self._status_mode.setText("就绪")
         # 桌面宠物: 错误时恢复 idle
-        vrm = self.vrm_widget
+        vrm = getattr(self, "vrm_widget", None)
         if vrm:
             try:
                 vrm.set_speaking(False)
