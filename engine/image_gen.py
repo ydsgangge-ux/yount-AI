@@ -9,6 +9,7 @@ import time
 import random
 import urllib.request
 import urllib.parse
+import urllib.error
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple
@@ -246,21 +247,20 @@ def build_image_prompt(personality: dict, image_type: str = None, simlife_contex
     return prompt, image_type
 
 
-def generate_image_url(prompt: str, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT) -> str:
-    encoded = urllib.parse.quote(prompt)
-    return f"{_BASES[0]}/{encoded}?width={width}&height={height}&nologo=true&nofeed=true"
+def generate_image_url(prompt: str, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT) -> tuple:
+    return prompt, width, height  # 改为返回原始值，由 download_image 统一构建 URL
 
 
-def download_image(url: str, save_path: str = None) -> Optional[str]:
+def download_image(prompt: str, width: int = DEFAULT_WIDTH,
+                   height: int = DEFAULT_HEIGHT, save_path: str = None) -> Optional[str]:
+    """从 pollinations.ai 下载图片，返回保存路径或 None"""
     if save_path is None:
         save_path = str(
             get_image_dir()
             / f"gen_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
         )
 
-    encoded = urllib.parse.quote(url.split("/")[-1].split("?")[0])
-    query = url.split("?", 1)[1] if "?" in url else ""
-
+    encoded = urllib.parse.quote(prompt)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "image/*",
@@ -268,24 +268,36 @@ def download_image(url: str, save_path: str = None) -> Optional[str]:
 
     for base in _BASES:
         try:
-            full_url = f"{base}/{encoded}?{query}" if query else f"{base}/{encoded}"
+            full_url = f"{base}/{encoded}?width={width}&height={height}&nologo=true&nofeed=true"
             req = urllib.request.Request(full_url, headers=headers)
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 ct = resp.headers.get("Content-Type", "")
                 if "image" not in ct:
+                    print(f"[图片生成] {base} 返回非图片 Content-Type: {ct}")
                     continue
                 data = resp.read()
                 if len(data) < 1000:
+                    print(f"[图片生成] {base} 返回数据过小: {len(data)} bytes")
                     continue
                 with open(save_path, "wb") as f:
                     f.write(data)
                 print(f"[图片生成] 已保存: {save_path} ({len(data)//1024}KB)")
                 return save_path
+        except urllib.error.HTTPError as e:
+            status = e.code
+            body = e.read().decode("utf-8", errors="replace")[:200]
+            if status == 402:
+                print(f"[图片生成] ⚠️ Pollinations 免费额度已用完（HTTP 402），请使用 ComfyUI 本地生成")
+            elif status == 401:
+                print(f"[图片生成] ⚠️ Pollinations 需要 API Key（HTTP 401）")
+            else:
+                print(f"[图片生成] 域名 {base} HTTP {status}: {body}")
+            continue
         except Exception as e:
-            print(f"[图片生成] 域名 {base} 失败: {e}")
+            print(f"[图片生成] 域名 {base} 请求失败: {e}")
             continue
 
-    print("[图片生成] 所有域名均失败")
+    print("[图片生成] ❌ 所有 Pollinations 域名均失败，建议使用 ComfyUI 本地图片生成")
     return None
 
 
@@ -296,9 +308,8 @@ def generate_and_download(personality: dict, simlife_context: str = None) -> Opt
     返回 (prompt, image_path, image_type) 或 None
     """
     prompt, image_type = build_image_prompt(personality, simlife_context=simlife_context)
-    url = generate_image_url(prompt)
     print(f"[图片生成] {image_type}: {prompt[:80]}...")
-    image_path = download_image(url)
+    image_path = download_image(prompt)
     if image_path:
         return (prompt, image_path, image_type)
     return None

@@ -1243,7 +1243,7 @@ def get_news_sources(country: str = "", language: str = "", category: str = "") 
 )
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, use_simlife_scene: bool = False) -> Dict:
     try:
-        from engine.image_gen import generate_image_url, download_image, get_image_dir
+        from engine.image_gen import download_image, get_image_dir
         from pathlib import Path
         from datetime import datetime
         import uuid
@@ -1259,11 +1259,10 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, use_simli
             except Exception:
                 pass
 
-        url = generate_image_url(prompt, width=width, height=height)
         filename = f"tool_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.png"
         save_path = str(get_image_dir() / filename)
 
-        image_path = download_image(url, save_path)
+        image_path = download_image(prompt, width=width, height=height, save_path=save_path)
         if image_path:
             return {
                 "ok": True,
