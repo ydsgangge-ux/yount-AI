@@ -538,6 +538,10 @@ class AGIApp:
 
         idle_minutes = (time.time() - self._last_chat_time) / 60
 
+        # debug: 记录当前状态
+        if self._proactive_count_today == 0:
+            print(f"[主动调试] last_chat={self._last_chat_time:.0f} idle={idle_minutes:.0f}min simlife_sleep={self._is_simlife_sleeping()}", flush=True)
+
         # 空闲不足30分钟，重置计划
         if idle_minutes < 30:
             self._proactive_wait_minutes = None

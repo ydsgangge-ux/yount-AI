@@ -246,7 +246,7 @@ class DesktopPet(QWidget):
                 pass
 
             # ★ 加载页面
-            url = QUrl(f"http://127.0.0.1:{port}/live2d_pet.html")
+            url = QUrl(f"http://127.0.0.1:{port}/live2d_pet.html?mode=desktop")
             self._web.load(url)
             print(f"[DesktopPet] 加载页面: {url.toString()}", flush=True)
 
