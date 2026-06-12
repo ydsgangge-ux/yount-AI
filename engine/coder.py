@@ -6,6 +6,7 @@
 import os
 import csv
 import json
+import re
 import uuid
 import shutil
 import subprocess
@@ -251,12 +252,12 @@ class CodingAgent:
 
             # ① 写代码（首轮全写，后续只修改有问题的部分）
             if i == 1:
-                self.on_progress("✍️  正在生成代码…", "write")
-                code_files = self._write_code(task, language, prev_error=None, context=context)
+                self.on_progress(f"✍️  第 {i} 轮：正在生成代码…", "write")
+                code_files, write_reasoning = self._write_code(task, language, prev_error=None, context=context)
             else:
                 prev = session.iterations[-1]
-                self.on_progress(f"🔧 正在修复错误…", "fix")
-                code_files = self._fix_code(
+                self.on_progress(f"🔧 第 {i} 轮：正在修复错误…", "fix")
+                code_files, fix_reasoning = self._fix_code(
                     task, language,
                     prev.code, prev.run_result, prev.fix_reasoning
                 )
@@ -276,9 +277,9 @@ class CodingAgent:
                 f"返回码: {run_result['returncode']}", "info"
             )
             if run_result.get("stdout"):
-                self.on_progress(f"输出:\n{run_result['stdout'][:500]}", "stdout")
+                self.on_progress(f"输出:\n{run_result['stdout']}", "stdout")
             if run_result.get("stderr"):
-                self.on_progress(f"错误:\n{run_result['stderr'][:500]}", "stderr")
+                self.on_progress(f"错误:\n{run_result['stderr']}", "stderr")
 
             # ④ 判断是否通过
             passed = self._judge_pass(run_result, language, code_files)
@@ -324,8 +325,8 @@ class CodingAgent:
     # 代码生成
     # ══════════════════════════════════════════════
     def _write_code(self, task: str, language: str,
-                    prev_error: str = None, context: str = "") -> Dict[str, str]:
-        """让 LLM 写代码，返回 {filename: content} 字典"""
+                    prev_error: str = None, context: str = "") -> tuple[Dict[str, str], str]:
+        """让 LLM 写代码，返回 (code_files, description) 元组"""
 
         lang_hints = {
             "python":     "使用 Python 3，标准库优先，尽量不用第三方包",
@@ -366,12 +367,31 @@ class CodingAgent:
 
         raw = self.llm.generate(prompt, max_tokens=self.MAX_TOKENS_MAP.get(language, self.DEFAULT_MAX_TOKENS),
                                 temperature=0.3, model=self.model or None)
-        return self._parse_code_json(raw)
+        files = self._parse_code_json(raw)
+        # 提取描述信息
+        description = ""
+        text = raw.strip()
+        text = re.sub(r"```(?:json)?\s*", "", text)
+        text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE)
+        try:
+            data = json.loads(text)
+            description = data.get("description", "")
+        except Exception:
+            m = re.search(r'\{[\s\S]*\}', text)
+            if m:
+                try:
+                    data = json.loads(m.group())
+                    description = data.get("description", "")
+                except Exception:
+                    pass
+        if description:
+            self.on_progress(f"📝 方案说明：{description[:200]}", "info")
+        return files, description
 
     def _fix_code(self, task: str, language: str,
                   prev_code: Dict[str, str],
-                  run_result: Dict, prev_reasoning: str) -> Dict[str, str]:
-        """根据错误修改代码"""
+                  run_result: Dict, prev_reasoning: str) -> tuple[Dict[str, str], str]:
+        """根据错误修改代码，返回 (code_files, fix_summary) 元组"""
 
         files_text = "\n\n".join(
             f"=== {fname} ===\n{content}"
@@ -407,7 +427,26 @@ class CodingAgent:
 
         raw = self.llm.generate(prompt, max_tokens=self.MAX_TOKENS_MAP.get(language, self.DEFAULT_MAX_TOKENS),
                                 temperature=0.2, model=self.model or None)
-        return self._parse_code_json(raw)
+        files = self._parse_code_json(raw)
+        # 提取修复摘要
+        fix_summary = ""
+        text = raw.strip()
+        text = re.sub(r"```(?:json)?\s*", "", text)
+        text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE)
+        try:
+            data = json.loads(text)
+            fix_summary = data.get("fix_summary", "") or data.get("description", "")
+        except Exception:
+            m = re.search(r'\{[\s\S]*\}', text)
+            if m:
+                try:
+                    data = json.loads(m.group())
+                    fix_summary = data.get("fix_summary", "") or data.get("description", "")
+                except Exception:
+                    pass
+        if fix_summary:
+            self.on_progress(f"🔧 修复说明：{fix_summary[:200]}", "fix")
+        return files, fix_summary
 
     def _analyse_error(self, task: str, code: Dict[str, str],
                        run_result: Dict) -> str:
@@ -597,7 +636,6 @@ class CodingAgent:
     # ══════════════════════════════════════════════
     def _parse_code_json(self, raw: str) -> Dict[str, str]:
         """解析 LLM 返回的代码 JSON"""
-        import re
 
         # 尝试提取 JSON
         text = raw.strip()
