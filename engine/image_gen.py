@@ -248,12 +248,16 @@ def build_image_prompt(personality: dict, image_type: str = None, simlife_contex
 
 
 def generate_image_url(prompt: str, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT) -> tuple:
-    return prompt, width, height  # 改为返回原始值，由 download_image 统一构建 URL
+    return prompt, width, height  # 由 download_image 统一构建 URL
 
 
 def download_image(prompt: str, width: int = DEFAULT_WIDTH,
                    height: int = DEFAULT_HEIGHT, save_path: str = None) -> Optional[str]:
-    """从 pollinations.ai 下载图片，返回保存路径或 None"""
+    """从 pollinations.ai 下载图片，返回保存路径或 None
+    
+    ※ 注意：不加 query 参数（如 width/height/nologo/nofeed），
+      加上会触发 HTTP 402 收费限制，不带参数才能免费出图。
+    """
     if save_path is None:
         save_path = str(
             get_image_dir()
@@ -268,7 +272,7 @@ def download_image(prompt: str, width: int = DEFAULT_WIDTH,
 
     for base in _BASES:
         try:
-            full_url = f"{base}/{encoded}?width={width}&height={height}&nologo=true&nofeed=true"
+            full_url = f"{base}/{encoded}"
             req = urllib.request.Request(full_url, headers=headers)
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 ct = resp.headers.get("Content-Type", "")
