@@ -59,8 +59,6 @@ def _archive_yesterday_story(world_state, old_date: str):
         return
     STORY_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     archive_path = STORY_ARCHIVE_DIR / f"{old_date}.json"
-    if archive_path.exists():
-        return  # 已存档，不覆盖
 
     # 提取 day_plan（含展开的剧情）
     plan_data = []
