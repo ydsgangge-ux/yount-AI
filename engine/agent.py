@@ -249,8 +249,14 @@ class ConsciousnessAgent:
         is_guest  = self.auth and self.auth.is_guest()
         current_uid = user_id or (self.auth.user_id if self.auth and self.auth.is_verified()
                        else "default")
-        current_user_name = (self.auth.current_name if self.auth and self.auth.current_name
-                             else current_uid)
+        current_user_name = current_uid
+        if self.auth and current_uid and current_uid != "default":
+            try:
+                u = self.auth.get_user(current_uid)
+                if u and u.name:
+                    current_user_name = u.name
+            except Exception:
+                pass
 
         # 延迟恢复对话历史（拿到正确的 user_id 后再查）
         self._restore_recent_conversation(user_id=current_uid)
