@@ -206,17 +206,25 @@ FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
 def _load_config() -> dict:
     config_path = DATA_DIR / "simlife_config.json"
     if config_path.exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            content = config_path.read_text(encoding="utf-8").strip()
+            if content:
+                return json.loads(content)
+        except (json.JSONDecodeError, OSError):
+            pass
     return {}
 
 
 def _load_character_card() -> Optional[CharacterCard]:
     path = DATA_DIR / "character_card.json"
     if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return CharacterCard(**data)
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                data = json.loads(content)
+                return CharacterCard(**data)
+        except (json.JSONDecodeError, KeyError, TypeError, OSError) as e:
+            print(f"[SimLife] character_card.json 损坏: {e}")
     return None
 
 
@@ -230,9 +238,13 @@ def _save_character_card(card: CharacterCard):
 def _load_world_state() -> WorldState:
     path = DATA_DIR / "world_state.json"
     if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return WorldState(**data)
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                data = json.loads(content)
+                return WorldState(**data)
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"[SimLife] world_state.json 损坏，重新初始化: {e}")
     return WorldState()
 
 
@@ -1116,6 +1128,28 @@ def api_status():
     }
 
 
+# ── 调试 API ──────────────────────────────────────────
+
+@app.post("/api/debug/force-next-day")
+def api_debug_force_next_day():
+    """调试用：强制将 today_date 设为前一天，下次 tick 会触发新天流程"""
+    global world_state
+    if not world_state:
+        raise HTTPException(400, "世界未初始化")
+    from datetime import timedelta
+    old = world_state.today_date
+    try:
+        d = datetime.strptime(old, "%Y-%m-%d") - timedelta(days=1)
+        world_state.today_date = d.strftime("%Y-%m-%d")
+    except Exception:
+        world_state.today_date = "2000-01-01"
+    _save_world_state(world_state)
+    return {
+        "status": "ok",
+        "message": f"已重置日期为 {world_state.today_date}，下次请求 /api/world/state 将触发新天流程",
+    }
+
+
 # ── 剧情存档 API ─────────────────────────────────────
 
 @app.get("/api/story/archive")
@@ -1240,8 +1274,12 @@ USER_PROFILE_PATH = DATA_DIR / "user_profile.json"
 def _load_user_profile() -> dict:
     """加载用户在世界中的身份信息"""
     if USER_PROFILE_PATH.exists():
-        with open(USER_PROFILE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            content = USER_PROFILE_PATH.read_text(encoding="utf-8").strip()
+            if content:
+                return json.loads(content)
+        except (json.JSONDecodeError, OSError):
+            pass
     return {"entered": False}
 
 
