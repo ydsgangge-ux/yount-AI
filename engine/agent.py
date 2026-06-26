@@ -249,6 +249,8 @@ class ConsciousnessAgent:
         is_guest  = self.auth and self.auth.is_guest()
         current_uid = user_id or (self.auth.user_id if self.auth and self.auth.is_verified()
                        else "default")
+        current_user_name = (self.auth.current_name if self.auth and self.auth.current_name
+                             else current_uid)
 
         # 延迟恢复对话历史（拿到正确的 user_id 后再查）
         self._restore_recent_conversation(user_id=current_uid)
@@ -623,7 +625,8 @@ class ConsciousnessAgent:
                 importance=storage_decision.get("importance", 0.5),
                 tags=perception.get("topic_tags", []),
                 source="conversation",
-                user_id=current_uid
+                user_id=current_uid,
+                user_name=current_user_name,
             )
             self._log(
                 "存储",

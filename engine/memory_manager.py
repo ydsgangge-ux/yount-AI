@@ -135,7 +135,7 @@ class HierarchicalMemoryManager:
         self, content: str, modality: MemoryModality,
         emotion: EmotionState, importance: float,
         tags: List[str] = None, source: str = "conversation",
-        user_id: str = "default",
+        user_id: str = "default", user_name: str = "",
         raw_content: str = None   # 原始对话内容，细节层用这个
     ) -> Dict[str, str]:
         stored_ids = {}
@@ -149,9 +149,10 @@ class HierarchicalMemoryManager:
                 id=f"{base_id}_detail", content=detail_text,
                 modality=modality, level=MemoryLevel.DETAIL,
                 emotion=emotion, importance=importance,
-                tags=tags, source=source
+                tags=tags, source=source,
+                user_id=user_id, user_name=user_name
             )
-            stored_ids["detail"] = self.store.add(n, user_id=user_id)
+            stored_ids["detail"] = self.store.add(n, user_id=user_id, user_name=user_name)
 
         # 细纲层 — 存摘要的前500字
         if importance >= 0.4 or emotion.is_moderate():
@@ -160,9 +161,10 @@ class HierarchicalMemoryManager:
                 id=f"{base_id}_outline", content=outline_content,
                 modality=modality, level=MemoryLevel.OUTLINE,
                 emotion=emotion, importance=importance,
-                tags=tags, source=source
+                tags=tags, source=source,
+                user_id=user_id, user_name=user_name
             )
-            stored_ids["outline"] = self.store.add(n, user_id=user_id)
+            stored_ids["outline"] = self.store.add(n, user_id=user_id, user_name=user_name)
 
         # 大纲层（精炼摘要，是检索的入口）
         summary_content = self._make_summary(content, tags, importance, emotion)
@@ -170,9 +172,10 @@ class HierarchicalMemoryManager:
             id=f"{base_id}_summary", content=summary_content,
             modality=modality, level=MemoryLevel.SUMMARY,
             emotion=emotion, importance=importance,
-            tags=tags, source=source
+            tags=tags, source=source,
+            user_id=user_id, user_name=user_name
         )
-        stored_ids["summary"] = self.store.add(n, user_id=user_id)
+        stored_ids["summary"] = self.store.add(n, user_id=user_id, user_name=user_name)
 
         # 关联网络
         if self.net and tags:
@@ -232,12 +235,16 @@ class HierarchicalMemoryManager:
 
         lines = ["【长期记忆检索结果】"]
 
+        # 辅助：提取用户标签
+        def _user_tag(n: MemoryNode) -> str:
+            return f"（{n.user_name}）" if n.user_name else ""
+
         # ── 大纲导航图（所有命中的大纲）──────
         summaries = results.get("summary", [])
         if summaries:
             lines.append(f"\n▌ 记忆大纲（{len(summaries)} 条命中）")
             for i, (node, score) in enumerate(summaries, 1):
-                lines.append(f"  {i}. {node.content}")
+                lines.append(f"  {i}. {node.content}{_user_tag(node)}")
 
         # ── 定向展开的细节（最重要的部分）────
         directed = results.get("directed_expand", [])
@@ -257,12 +264,12 @@ class HierarchicalMemoryManager:
             for node in outline_nodes[:6]:
                 e = node.emotion
                 e_str = f" [{e.primary.value}·{e.intensity:.1f}]" if e.intensity >= 0.5 else ""
-                lines.append(f"  · {node.content[:500]}{e_str}")
+                lines.append(f"  · {node.content[:500]}{_user_tag(node)}{e_str}")
 
         if detail_nodes:
             lines.append(f"\n▌ 深度记忆（高重要性，{len(detail_nodes)} 条）")
             for node in detail_nodes[:3]:
-                lines.append(f"  ▪ {node.content[:800]}")
+                lines.append(f"  ▪ {node.content[:800]}{_user_tag(node)}")
 
         # ── 关联网络触发的记忆 ────────────────
         ripples = results.get("ripples", [])

@@ -109,6 +109,8 @@ class MemoryNode:
     tags: List[str] = field(default_factory=list)
     associations: List[str] = field(default_factory=list)  # 关联节点ID
     source: str = "conversation"          # 来源
+    user_id: str = ""                     # 关联的用户ID（空=通用知识）
+    user_name: str = ""                   # 用户名（便于LLM识别）
     embedding: Optional[List[float]] = None  # 向量
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_accessed: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -126,6 +128,8 @@ class MemoryNode:
             "tags": self.tags,
             "associations": self.associations,
             "source": self.source,
+            "user_id": self.user_id,
+            "user_name": self.user_name,
             "embedding": self.embedding,
             "created_at": self.created_at,
             "last_accessed": self.last_accessed,
@@ -145,6 +149,8 @@ class MemoryNode:
             tags=d.get("tags", []),
             associations=d.get("associations", []),
             source=d.get("source", "conversation"),
+            user_id=d.get("user_id", ""),
+            user_name=d.get("user_name", ""),
             embedding=d.get("embedding"),
             created_at=d.get("created_at", datetime.now().isoformat()),
             last_accessed=d.get("last_accessed", datetime.now().isoformat()),

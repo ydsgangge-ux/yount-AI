@@ -160,11 +160,14 @@ class MemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_user ON memories(user_id)")
             conn.commit()
 
-        # 迁移：旧数据库没有 user_id 列时自动添加
+        # 迁移：旧数据库没有 user_id / user_name 列时自动添加
         with guarded_connect(self.db_path) as conn:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()]
             if "user_id" not in cols:
                 conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT DEFAULT 'default'")
+                conn.commit()
+            if "user_name" not in cols:
+                conn.execute("ALTER TABLE memories ADD COLUMN user_name TEXT DEFAULT ''")
                 conn.commit()
 
         # 迁移：interactions 表添加 user_id 列 + 索引
@@ -176,7 +179,7 @@ class MemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)")
 
-    def add(self, node: MemoryNode, user_id: str = "default") -> str:
+    def add(self, node: MemoryNode, user_id: str = "default", user_name: str = "") -> str:
         """添加记忆节点"""
         if not node.id:
             node.id = str(uuid.uuid4())
@@ -184,20 +187,40 @@ class MemoryStore:
             node.embedding = get_embedding(node.content)
 
         with guarded_connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO memories VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                node.id, node.content, node.modality.value, node.level.value,
-                json.dumps(node.emotion.to_dict()),
-                node.importance,
-                json.dumps(node.tags),
-                json.dumps(node.associations),
-                node.source,
-                json.dumps(node.embedding),
-                node.created_at, node.last_accessed,
-                node.access_count, node.decay_factor,
-                user_id
-            ))
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()]
+            if "user_name" in cols:
+                conn.execute("""
+                    INSERT OR REPLACE INTO memories
+                    (id,content,modality,level,emotion_json,importance,tags_json,associations_json,
+                     source,embedding_json,created_at,last_accessed,access_count,decay_factor,user_id,user_name)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    node.id, node.content, node.modality.value, node.level.value,
+                    json.dumps(node.emotion.to_dict()),
+                    node.importance,
+                    json.dumps(node.tags),
+                    json.dumps(node.associations),
+                    node.source,
+                    json.dumps(node.embedding),
+                    node.created_at, node.last_accessed,
+                    node.access_count, node.decay_factor,
+                    user_id, user_name
+                ))
+            else:
+                conn.execute("""
+                    INSERT OR REPLACE INTO memories VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    node.id, node.content, node.modality.value, node.level.value,
+                    json.dumps(node.emotion.to_dict()),
+                    node.importance,
+                    json.dumps(node.tags),
+                    json.dumps(node.associations),
+                    node.source,
+                    json.dumps(node.embedding),
+                    node.created_at, node.last_accessed,
+                    node.access_count, node.decay_factor,
+                    user_id
+                ))
             conn.commit()
         return node.id
 
@@ -495,6 +518,7 @@ class MemoryStore:
         if not row:
             return None
         try:
+            user_name = row[15] if len(row) > 15 else ""
             return MemoryNode(
                 id=row[0], content=row[1],
                 modality=MemoryModality(row[2]),
@@ -504,6 +528,8 @@ class MemoryStore:
                 tags=json.loads(row[6] or "[]"),
                 associations=json.loads(row[7] or "[]"),
                 source=row[8] or "conversation",
+                user_id=row[14] if len(row) > 14 else "default",
+                user_name=user_name,
                 embedding=json.loads(row[9]) if row[9] else None,
                 created_at=row[10], last_accessed=row[11],
                 access_count=row[12], decay_factor=row[13]
