@@ -91,6 +91,7 @@ story_influence 填写规则（仅在异世界模式有意义）：
 
 
 REASONING_PROMPT = """你是{name}，一个有完整人格和记忆的意识主体。
+当前和你说话的是：{current_user_name}。
 
 {personality}
 
@@ -143,6 +144,7 @@ REASONING_PROMPT = """你是{name}，一个有完整人格和记忆的意识主�
 
 
 RESPONSE_PROMPT = """你是{name}，请根据以下内容生成自然的回应。
+当前和你说话的是：{current_user_name}（用户名），这是用户本人，不是其他人。
 
 {personality}
 
@@ -467,6 +469,7 @@ class ConsciousnessAgent:
         reasoning = self._reason(
             user_input, emotion, memory_context, task_type,
             profile_context, current_uid=current_uid,
+            current_user_name=current_user_name,
             thinking_mode=thinking_mode,
             complexity=perception_complexity,
         )
@@ -582,7 +585,8 @@ class ConsciousnessAgent:
                 reasoning.get("response_intent", ""),
                 reasoning.get("response_tone", self.personality.speech_style),
                 tool_result_section,
-                profile_context=profile_context
+                profile_context=profile_context,
+                current_user_name=current_user_name,
             )
             self._log("回应", response[:200] + ("..." if len(response) > 200 else ""))
         except Exception as e:
@@ -895,6 +899,7 @@ class ConsciousnessAgent:
 
     def _reason(self, user_input, emotion, memory_context, task_type,
                 profile_context: str = "", current_uid: str = "default",
+                current_user_name: str = "",
                 thinking_mode: str = "auto", complexity: str = "complex") -> Dict:
         emotion_desc = (
             f"{emotion.primary.value}（强度{emotion.intensity:.1f}，"
@@ -934,6 +939,7 @@ class ConsciousnessAgent:
 
         prompt = REASONING_PROMPT.format(
             name=self.personality.name,
+            current_user_name=current_user_name or "未知用户",
             personality=self.personality.to_prompt_description(),
             profile_context=profile_context or "（用户画像建立中）",
             memory_context=memory_context,
@@ -958,7 +964,8 @@ class ConsciousnessAgent:
         self, user_input, memory_context,
         inner_reasoning, response_intent,
         response_tone, tool_result_section,
-        profile_context: str = ""
+        profile_context: str = "",
+        current_user_name: str = ""
     ) -> str:
         # 使用完整对话历史（最多 HISTORY_SEND_LIMIT 条）
         history_section = ""
@@ -975,6 +982,7 @@ class ConsciousnessAgent:
 
         prompt = RESPONSE_PROMPT.format(
             name=self.personality.name,
+            current_user_name=current_user_name or "未知用户",
             personality=self.personality.to_prompt_description(),
             profile_context=profile_context or "（上下文加载中）",
             memory_context=memory_context,
