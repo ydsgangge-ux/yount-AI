@@ -244,9 +244,6 @@ def on_chat_message(data):
         return
 
     user_id = info["user_id"]
-    user = _auth_manager.get_user(user_id) if _auth_manager else None
-    if _auth_manager and user:
-        _auth_manager.login(user)
 
     chats = _load_chats(user_id)
     chat = None

@@ -144,16 +144,11 @@ async def chat(req: ChatRequest, current: dict = Depends(_get_current_user)):
         raise HTTPException(status_code=503, detail="AGI引擎未就绪")
 
     user_id = current["user_id"]
-    user    = _auth_manager.get_user(user_id) if _auth_manager else None
-
-    # 临时切换 auth 为该用户，让 agent.process() 读到正确的 user_id
-    if _auth_manager and user:
-        _auth_manager.login(user)
 
     try:
         import asyncio
         loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _agent.process, req.message)
+        result = await loop.run_in_executor(None, _agent.process, req.message, user_id)
         reply  = result.get("response", str(result))
     except Exception as e:
         reply = f"引擎错误：{e}"

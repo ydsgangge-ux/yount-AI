@@ -336,7 +336,7 @@ class ConsciousnessAgent:
                 summary_k=MEMORY_SUMMARY_K,
                 outline_k=MEMORY_OUTLINE_K,
                 detail_k=MEMORY_DETAIL_K,
-                user_id=current_uid,
+                user_id=None,
             )
             memory_context = self.memory.format_for_prompt(search_results)
 
@@ -399,6 +399,11 @@ class ConsciousnessAgent:
         profile_context = ""
         if simlife_context:
             profile_context = simlife_context
+
+        # 当前用户身份（非游客时注入，让 LLM 知道和谁在说话）
+        if not is_guest:
+            user_label = f"\n【当前对话用户】{current_user_name}（ID: {current_uid}）"
+            profile_context = profile_context + user_label if profile_context else user_label
 
         # 用户画像上下文（游客模式下屏蔽，按 user_id 加载）
         if not is_guest and self.profile:
@@ -1007,12 +1012,10 @@ class ConsciousnessAgent:
 
         # 1. 记忆里有未完成的事
         try:
-            current_uid = (self.auth.user_id if self.auth and self.auth.is_verified()
-                           else "default")
             recent = self.memory.hierarchical_search(
                 "未完成 待办 之后 下次 改天",
                 summary_k=3, outline_k=2, detail_k=1,
-                user_id=current_uid
+                user_id=None,
             )
             mem_text = self.memory.format_for_prompt(recent)
             if mem_text and len(mem_text) > 20:
