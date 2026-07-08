@@ -10,6 +10,7 @@ import json
 import math
 import hashlib
 import uuid
+import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,7 +21,17 @@ from engine.models import (
 )
 
 
-def cosine_similarity(a: List[float], b: List[float]) -> float:
+def _embedding_to_blob(vec: List[float]) -> bytes:
+    """向量 → float32 二进制 BLOB"""
+    return np.array(vec, dtype=np.float32).tobytes()
+
+
+def _blob_to_embedding(blob: bytes) -> List[float]:
+    """float32 二进制 BLOB → 向量列表"""
+    return np.frombuffer(blob, dtype=np.float32).tolist()
+
+
+def cosine_similarity(a, b) -> float:
     """余弦相似度"""
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -179,6 +190,32 @@ class MemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)")
 
+        # 迁移：embedding_blob 列（JSON → 二进制 BLOB，加速检索）
+        with guarded_connect(self.db_path) as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()]
+            if "embedding_blob" not in cols:
+                conn.execute("ALTER TABLE memories ADD COLUMN embedding_blob BLOB")
+                conn.commit()
+                print("[Memory] 已添加 embedding_blob 列")
+
+            # 灌入现有数据的 BLOB（从 embedding_json 转换）
+            rows = conn.execute(
+                "SELECT id, embedding_json FROM memories WHERE embedding_blob IS NULL AND embedding_json IS NOT NULL"
+            ).fetchall()
+            migrated = 0
+            for mid, emb_json in rows:
+                if emb_json:
+                    try:
+                        vec = json.loads(emb_json)
+                        blob = _embedding_to_blob(vec)
+                        conn.execute("UPDATE memories SET embedding_blob=? WHERE id=?", (blob, mid))
+                        migrated += 1
+                    except Exception:
+                        pass
+            if migrated > 0:
+                conn.commit()
+                print(f"[Memory] embedding_blob 迁移完成: {migrated} 条")
+
     def add(self, node: MemoryNode, user_id: str = "default", user_name: str = "") -> str:
         """添加记忆节点"""
         if not node.id:
@@ -186,9 +223,31 @@ class MemoryStore:
         if node.embedding is None:
             node.embedding = get_embedding(node.content)
 
+        # 双写：embedding_json（回滚保险）+ embedding_blob（加速检索）
+        emb_json = json.dumps(node.embedding)
+        emb_blob = _embedding_to_blob(node.embedding) if node.embedding else None
+
         with guarded_connect(self.db_path) as conn:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()]
-            if "user_name" in cols:
+            if "embedding_blob" in cols:
+                conn.execute("""
+                    INSERT OR REPLACE INTO memories
+                    (id,content,modality,level,emotion_json,importance,tags_json,associations_json,
+                     source,embedding_json,created_at,last_accessed,access_count,decay_factor,user_id,user_name,embedding_blob)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    node.id, node.content, node.modality.value, node.level.value,
+                    json.dumps(node.emotion.to_dict()),
+                    node.importance,
+                    json.dumps(node.tags),
+                    json.dumps(node.associations),
+                    node.source,
+                    emb_json,
+                    node.created_at, node.last_accessed,
+                    node.access_count, node.decay_factor,
+                    user_id, user_name, emb_blob
+                ))
+            elif "user_name" in cols:
                 conn.execute("""
                     INSERT OR REPLACE INTO memories
                     (id,content,modality,level,emotion_json,importance,tags_json,associations_json,
@@ -201,7 +260,7 @@ class MemoryStore:
                     json.dumps(node.tags),
                     json.dumps(node.associations),
                     node.source,
-                    json.dumps(node.embedding),
+                    emb_json,
                     node.created_at, node.last_accessed,
                     node.access_count, node.decay_factor,
                     user_id, user_name
@@ -216,7 +275,7 @@ class MemoryStore:
                     json.dumps(node.tags),
                     json.dumps(node.associations),
                     node.source,
-                    json.dumps(node.embedding),
+                    emb_json,
                     node.created_at, node.last_accessed,
                     node.access_count, node.decay_factor,
                     user_id
@@ -519,6 +578,12 @@ class MemoryStore:
             return None
         try:
             user_name = row[15] if len(row) > 15 else ""
+            # 优先从 embedding_blob 读取（快），回退到 embedding_json（兼容旧数据）
+            embedding = None
+            if len(row) > 16 and row[16]:
+                embedding = _blob_to_embedding(row[16])
+            elif row[9]:
+                embedding = json.loads(row[9])
             return MemoryNode(
                 id=row[0], content=row[1],
                 modality=MemoryModality(row[2]),
@@ -530,7 +595,7 @@ class MemoryStore:
                 source=row[8] or "conversation",
                 user_id=row[14] if len(row) > 14 else "default",
                 user_name=user_name,
-                embedding=json.loads(row[9]) if row[9] else None,
+                embedding=embedding,
                 created_at=row[10], last_accessed=row[11],
                 access_count=row[12], decay_factor=row[13]
             )
