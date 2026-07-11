@@ -17,7 +17,8 @@ const Game = {
     UI.init();
 
     const canvas = document.getElementById('game-canvas');
-    this.renderer = new Renderer(canvas);
+    const charCanvas = document.getElementById('char-canvas');
+    this.renderer = new Renderer(canvas, charCanvas);
 
     try {
       const resp = await fetch(API_BASE + '/api/character');
@@ -57,6 +58,7 @@ const Game = {
 
     const pixel = this.character.pixel_appearance || {};
     const mainChar = {
+      gender: pixel.gender || 'female',
       hairColor: pixel.hair_color || '#4A3728',
       outfitColor: pixel.default_outfit_color || '#F5F0E8',
     };
@@ -80,7 +82,9 @@ const Game = {
       this.currentScene || 'HOME_EVENING',
       mainChar,
       activeNpcs,
-      bgCount
+      bgCount,
+      this._isStoryMode || false,
+      this._bgHint || null
     );
 
     requestAnimationFrame(() => this.render());
@@ -97,6 +101,8 @@ const Game = {
 
       const sceneChanged = state.scene !== this.currentScene;
       const isStoryMode = state.is_story_mode || false;
+      this._isStoryMode = isStoryMode;
+      this._bgHint = state.bg_hint || null;
 
       const now = new Date();
       const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];

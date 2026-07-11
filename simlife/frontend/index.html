@@ -56,16 +56,26 @@ body {
   background: #0a0a15;
   min-height: 0;
   position: relative;
+  gap: 0;
 }
-#game-canvas {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-  width: 960px;
-  height: 540px;
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 200px);
+#game-wrapper {
+  display: flex;
   border-radius: 4px;
   box-shadow: 0 0 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+#game-canvas {
+  image-rendering: auto;
+  height: 540px;
+  max-height: calc(100vh - 200px);
+  display: block;
+}
+#char-canvas {
+  image-rendering: auto;
+  height: 540px;
+  max-height: calc(100vh - 200px);
+  display: block;
+  background: #ffffff;
 }
 
 /* 状态栏 */
@@ -604,7 +614,10 @@ body {
   </div>
 
   <div id="game-area">
-    <canvas id="game-canvas" width="640" height="360"></canvas>
+    <div id="game-wrapper">
+      <canvas id="game-canvas" width="640" height="360"></canvas>
+      <canvas id="char-canvas" width="256" height="512"></canvas>
+    </div>
   </div>
 
   <div id="status-bar">

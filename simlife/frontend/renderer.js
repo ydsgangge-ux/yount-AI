@@ -1,16 +1,131 @@
 /**
- * SimLife Canvas 渲染器 v2
- * 640x360 画布，精细卡通风格
+ * SimLife Canvas 渲染器 v7
+ * 左边场景 canvas (640x360)：ComfyUI 场景图
+ * 右边人物 canvas (256x512)：ComfyUI 角色立绘
+ * 支持现代世界 + 异世界（fantasy）两套素材
  */
 
-const TILE = 16;
 const W = 640;
 const H = 360;
+const CHAR_W = 256;
+const CHAR_H = 512;
+
+// ── 现代世界 场景背景图映射 ──────────────────────────────
+const BG_MAP = {
+  'HOME_SLEEPING': 'home_sleeping.png',
+  'HOME_MORNING': 'home_morning.png',
+  'HOME_EVENING': 'home_evening.png',
+  'HOME_WEEKEND_LAZY': 'home_sleeping.png',
+  'HOME_WORKING': 'home_working.png',
+  'COMMUTE_TO_WORK': 'commute_subway.png',
+  'COMMUTE_TO_HOME': 'commute_subway_night.png',
+  'OFFICE_WORKING': 'office_working.png',
+  'OFFICE_MEETING': 'office_meeting.png',
+  'OFFICE_LUNCH': 'office_lunch.png',
+  'CAFE': 'cafe.png',
+  'PARK': 'park.png',
+  'SUPERMARKET': 'supermarket.png',
+  'STREET_WANDERING': 'street.png',
+  'FRIEND_HANGOUT': 'cafe_warm.png',
+  'OVERTIME': 'office_night.png',
+  'CAFE_WORKING': 'cafe_working.png',
+  'OUTDOOR_WORKING': 'outdoor_working.png',
+  'STUDIO_WORKING': 'studio_working.png',
+  'AIRPORT': 'airport.png',
+  'TOURING': 'touring.png',
+  'HOTEL': 'hotel.png',
+  'LOCAL_FOOD': 'local_food.png',
+  'SCENIC_DRIVE': 'scenic_drive.png',
+  'RESTAURANT_LOCAL': 'restaurant.png',
+  'TRAIN_STATION': 'train_station.png',
+};
+
+// ── 异世界 场景背景图映射（bg_hint → 文件名） ────────────
+const FANTASY_BG_MAP = {
+  'town_square': 'town_square.png',
+  'tavern': 'tavern.png',
+  'forest': 'forest.png',
+  'castle': 'castle.png',
+  'magic_academy': 'magic_academy.png',
+  'dungeon': 'dungeon.png',
+  'market': 'market.png',
+  'plains': 'plains.png',
+  'lakeside': 'lakeside.png',
+  'mountain_pass': 'mountain_pass.png',
+  'shrine': 'shrine.png',
+  'night_camp': 'night_camp.png',
+};
+
+// ── 角色立绘映射 ──────────────────────────────
+const CHAR_MAP = {
+  modern: {
+    female: {
+      idle: 'char_female_idle.png', walk: 'char_female_walk.png',
+      sit: 'char_female_sit.png', talk: 'char_female_talk.png', think: 'char_female_think.png',
+    },
+    male: {
+      idle: 'char_male_idle.png', walk: 'char_male_walk.png',
+      sit: 'char_male_sit.png', talk: 'char_male_talk.png', think: 'char_male_think.png',
+    },
+  },
+  fantasy: {
+    female: {
+      idle: 'char_female_idle.png', walk: 'char_female_walk.png',
+      sit: 'char_female_sit.png', talk: 'char_female_talk.png', think: 'char_female_think.png',
+    },
+    male: {
+      idle: 'char_male_idle.png', walk: 'char_male_walk.png',
+      sit: 'char_male_sit.png', talk: 'char_male_talk.png', think: 'char_male_think.png',
+    },
+  },
+};
+
+// ── 现代世界 场景 → 主角动作 ──────────────────────────────
+const SCENE_ACTION = {
+  'HOME_SLEEPING': 'sleep', 'HOME_MORNING': 'idle', 'HOME_EVENING': 'sit',
+  'HOME_WEEKEND_LAZY': 'sleep', 'HOME_WORKING': 'think',
+  'COMMUTE_TO_WORK': 'walk', 'COMMUTE_TO_HOME': 'walk',
+  'OFFICE_WORKING': 'think', 'OFFICE_MEETING': 'talk', 'OFFICE_LUNCH': 'sit',
+  'CAFE_WORKING': 'think', 'OUTDOOR_WORKING': 'think', 'STUDIO_WORKING': 'think',
+  'CAFE': 'sit', 'PARK': 'walk', 'SUPERMARKET': 'walk', 'STREET_WANDERING': 'walk',
+  'FRIEND_HANGOUT': 'talk', 'OVERTIME': 'think',
+  'AIRPORT': 'walk', 'TOURING': 'walk', 'HOTEL': 'sit',
+  'LOCAL_FOOD': 'sit', 'TRAIN_STATION': 'walk', 'SCENIC_DRIVE': 'sit', 'RESTAURANT_LOCAL': 'sit',
+};
+
+// ── 异世界 场景关键词 → 动作 ──────────────────────────────
+const FANTASY_ACTION_KEYWORDS = [
+  [['战斗', '打', '攻', '防', '副本', '地下', '冒险'], 'think'],
+  [['走', '旅', '行', '巡', '巡逻', '探索', '移动'], 'walk'],
+  [['坐', '休息', '酒馆', '旅馆', '营', '睡'], 'sit'],
+  [['说', '谈', '聊', '商', '交易', '市场', '集市'], 'talk'],
+  [['想', '思', '学', '修', '研究', '读', '图书馆', '学院'], 'think'],
+];
+
+// ── NPC 配置 ──────────────────────────────
+const NPC_SCENES = {
+  'OFFICE_WORKING': [{ gender: 'male', action: 'think' }],
+  'OFFICE_MEETING': [{ gender: 'male', action: 'talk' }],
+  'OFFICE_LUNCH': [{ gender: 'female', action: 'sit' }],
+  'CAFE': [{ gender: 'female', action: 'sit' }],
+  'CAFE_WORKING': [{ gender: 'male', action: 'think' }],
+  'FRIEND_HANGOUT': [{ gender: 'male', action: 'talk' }],
+  'TOURING': [{ gender: 'male', action: 'walk' }],
+  'AIRPORT': [{ gender: 'male', action: 'walk' }],
+  'LOCAL_FOOD': [{ gender: 'male', action: 'sit' }],
+  'RESTAURANT_LOCAL': [{ gender: 'female', action: 'sit' }],
+  'HOME_EVENING': [{ gender: 'male', action: 'sit' }],
+  'SUPERMARKET': [{ gender: 'female', action: 'walk' }],
+};
+
 
 class Renderer {
-  constructor(canvas) {
+  constructor(canvas, charCanvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    this.charCanvas = charCanvas;
+    this.charCtx = charCanvas.getContext('2d');
+
     this.scene = null;
     this.mainChar = null;
     this.npcs = [];
@@ -22,8 +137,88 @@ class Renderer {
     this.fading = false;
     this.fadeDir = 0;
     this.onFadeComplete = null;
+
+    // ── 素材状态 ──
+    this.bgImages = {};       // 已加载的背景图
+    this.charImages = {};     // 已加载的角色立绘
+    this.bgReady = false;
+    this.charReady = false;
+    this._charGender = null;
+    this._isStoryMode = false;    // 当前是否异世界模式
+    this._loadedWorld = null;     // 已加载素材的世界类型
+
+    // 先加载现代世界背景
+    this._loadBgImages('modern');
   }
 
+  // ── 加载背景图 ──
+  async _loadBgImages(worldType) {
+    if (this._loadedWorld === worldType && this.bgReady) return;
+    this._loadedWorld = worldType;
+    this.bgReady = false;
+    this.bgImages = {};
+
+    const map = worldType === 'fantasy' ? FANTASY_BG_MAP : BG_MAP;
+    const subDir = worldType === 'fantasy' ? 'fantasy' : '';
+    const entries = Object.entries(map);
+    let loaded = 0;
+
+    for (const [key, filename] of entries) {
+      try {
+        const img = new Image();
+        img.src = subDir
+          ? `/static/assets/bg/${subDir}/${filename}`
+          : `/static/assets/bg/${filename}`;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+        this.bgImages[key] = img;
+        loaded++;
+      } catch (e) { /* 跳过 */ }
+    }
+    this.bgReady = loaded > 0;
+    console.log(`[SimLife] 背景图加载完成 (${worldType}) ${loaded}/${entries.length}`);
+  }
+
+  // ── 加载角色立绘（指定世界+性别） ──
+  async _loadCharImages(worldType, gender) {
+    const cacheKey = `${worldType}_${gender}`;
+    if (this._charGender === cacheKey && this.charReady) return;
+    this._charGender = cacheKey;
+    this.charReady = false;
+    this.charImages = {};
+
+    const poses = CHAR_MAP[worldType]?.[gender];
+    if (!poses) return;
+
+    const subDir = worldType === 'fantasy' ? 'fantasy' : '';
+    const tasks = [];
+    for (const [pose, filename] of Object.entries(poses)) {
+      tasks.push(this._loadOneChar(worldType, gender, pose, filename, subDir));
+    }
+    await Promise.all(tasks);
+    this.charReady = Object.keys(this.charImages).length > 0;
+    console.log(`[SimLife] 角色立绘加载完成 (${worldType}/${gender}) ${Object.keys(this.charImages).length}/${tasks.length}`);
+  }
+
+  async _loadOneChar(worldType, gender, pose, filename, subDir) {
+    try {
+      const img = new Image();
+      img.src = subDir
+        ? `/static/assets/char/${subDir}/${filename}`
+        : `/static/assets/char/${filename}`;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+      this.charImages[`${gender}_${pose}`] = img;
+    } catch (e) {
+      console.warn(`[SimLife] 角色立绘加载失败: ${filename}`, e.message);
+    }
+  }
+
+  // ── 基础绘制 ──
   clear(color = '#1a1a2e') {
     this.ctx.fillStyle = color;
     this.ctx.fillRect(0, 0, W, H);
@@ -43,284 +238,74 @@ class Renderer {
     this.ctx.fill();
   }
 
-  // ── 角色绘制（精细卡通风）────────────────────
-
-  drawChar(x, y, config) {
-    /**
-     * config: { hairColor, outfitColor, skinColor, action, facing }
-     * action: 'stand' | 'walk' | 'sit' | 'sleep' | 'phone' | 'work'
-     */
-    const c = this.ctx;
-    const skin = config.skinColor || '#f5d0a9';
-    const hair = config.hairColor || '#4A3728';
-    const outfit = config.outfitColor || '#F5F0E8';
-    const px = Math.floor(x);
-    const py = Math.floor(y);
-
-    c.save();
-
-    if (config.action === 'sleep') {
-      this._drawSleeping(px, py, skin, hair, outfit);
-      c.restore();
-      return;
-    }
-
-    if (config.action === 'sit') {
-      this._drawSitting(px, py, skin, hair, outfit);
-      c.restore();
-      return;
-    }
-
-    const bob = config.action === 'walk' ? Math.sin(this.time * 0.15) * 2 : 0;
-    const legOff = config.action === 'walk' ? Math.sin(this.time * 0.3) * 3 : 0;
-    const breathe = Math.sin(this.time * 0.04) * 0.8;
-
-    // 阴影
-    c.fillStyle = 'rgba(0,0,0,0.15)';
-    c.beginPath();
-    c.ellipse(px + 16, py + 50, 14, 4, 0, 0, Math.PI * 2);
-    c.fill();
-
-    // 腿
-    c.fillStyle = '#3a3a5a';
-    this._roundRect(c, px + 8, py + 38 + bob + legOff, 6, 12, 2);
-    this._roundRect(c, px + 18, py + 38 + bob - legOff, 6, 12, 2);
-    // 鞋子
-    c.fillStyle = '#555';
-    this._roundRect(c, px + 6, py + 48 + bob + legOff, 8, 4, 2);
-    this._roundRect(c, px + 18, py + 48 + bob - legOff, 8, 4, 2);
-
-    // 身体
-    c.fillStyle = outfit;
-    this._roundRect(c, px + 4, py + 20 + bob + breathe, 24, 20, 4);
-    // 领口
-    c.fillStyle = skin;
-    this._roundRect(c, px + 12, py + 19 + bob + breathe, 8, 5, 2);
-
-    // 手臂
-    c.fillStyle = skin;
-    if (config.action === 'phone') {
-      // 举手看手机
-      c.save();
-      c.translate(px + 30, py + 22 + bob);
-      c.rotate(-0.3);
-      this._roundRect(c, 0, 0, 6, 16, 3);
-      // 手机
-      c.fillStyle = '#333';
-      this._roundRect(c, -1, -8, 10, 14, 2);
-      c.fillStyle = '#4a8af5';
-      this._roundRect(c, 0, -7, 8, 11, 1);
-      c.restore();
-      // 另一只手
-      c.fillStyle = skin;
-      this._roundRect(c, px - 2, py + 22 + bob, 6, 14, 3);
-    } else if (config.action === 'work') {
-      // 手放桌上位置
-      this._roundRect(c, px + 1, py + 28 + bob, 6, 10, 3);
-      this._roundRect(c, px + 25, py + 28 + bob, 6, 10, 3);
-    } else {
-      const armSwing = config.action === 'walk' ? Math.sin(this.time * 0.3) * 4 : 0;
-      this._roundRect(c, px - 1, py + 22 + bob + armSwing, 6, 14, 3);
-      this._roundRect(c, px + 27, py + 22 + bob - armSwing, 6, 14, 3);
-    }
-
-    // 头
-    c.fillStyle = skin;
-    c.beginPath();
-    c.arc(px + 16, py + 10 + bob, 12, 0, Math.PI * 2);
-    c.fill();
-
-    // 头发
-    c.fillStyle = hair;
-    c.beginPath();
-    c.arc(px + 16, py + 6 + bob, 13, Math.PI, Math.PI * 2);
-    c.fill();
-    c.fillRect(px + 3, py + 2 + bob, 26, 8);
-    // 刘海
-    c.beginPath();
-    c.arc(px + 12, py + 8 + bob, 6, 0.2, Math.PI + 0.2);
-    c.fill();
-
-    // 腮红
-    c.fillStyle = 'rgba(255,150,150,0.25)';
-    c.beginPath(); c.arc(px + 6, py + 13 + bob, 3, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(px + 26, py + 13 + bob, 3, 0, Math.PI * 2); c.fill();
-
-    // 眼睛
-    c.fillStyle = '#333';
-    c.beginPath(); c.ellipse(px + 10, py + 10 + bob, 2.2, 2.8, 0, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.ellipse(px + 22, py + 10 + bob, 2.2, 2.8, 0, 0, Math.PI * 2); c.fill();
-    // 眼睛高光
-    c.fillStyle = '#fff';
-    c.beginPath(); c.arc(px + 11, py + 9 + bob, 1, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(px + 23, py + 9 + bob, 1, 0, Math.PI * 2); c.fill();
-
-    // 嘴
-    c.strokeStyle = '#c47a6a';
-    c.lineWidth = 1.5;
-    c.lineCap = 'round';
-    c.beginPath();
-    c.arc(px + 16, py + 14 + bob, 3, 0.15 * Math.PI, 0.85 * Math.PI);
-    c.stroke();
-
-    c.restore();
-  }
-
-  _drawSleeping(px, py, skin, hair, outfit) {
-    const c = this.ctx;
-    // 被子
-    c.fillStyle = '#c0b8d0';
-    this._roundRect(c, px - 5, py + 16, 50, 22, 6);
-    c.fillStyle = '#a8a0b8';
-    this._roundRect(c, px - 3, py + 14, 46, 8, 4);
-    // 枕头
-    c.fillStyle = '#f0e8d8';
-    this._roundRect(c, px + 26, py + 10, 20, 14, 6);
-    // 头
-    c.fillStyle = skin;
-    c.beginPath(); c.arc(px + 36, py + 14, 9, 0, Math.PI * 2); c.fill();
-    // 头发
-    c.fillStyle = hair;
-    c.beginPath();
-    c.arc(px + 36, py + 10, 10, Math.PI, Math.PI * 2);
-    c.fill();
-    c.fillRect(px + 27, py + 6, 18, 6);
-    // 闭眼
-    c.strokeStyle = '#333';
-    c.lineWidth = 1.5;
-    c.beginPath(); c.moveTo(px + 32, py + 14); c.lineTo(px + 36, py + 13); c.stroke();
-    c.beginPath(); c.moveTo(px + 38, py + 13); c.lineTo(px + 42, py + 14); c.stroke();
-    // Zzz
-    const zOff = Math.sin(this.time * 0.05) * 2;
-    c.fillStyle = 'rgba(200,200,255,0.6)';
-    c.font = '10px sans-serif';
-    c.fillText('z', px + 46, py + 6 + zOff);
-    c.font = '13px sans-serif';
-    c.fillText('z', px + 54, py - 2 + zOff * 1.3);
-    c.font = '16px sans-serif';
-    c.fillText('Z', px + 62, py - 10 + zOff * 1.6);
-  }
-
-  _drawSitting(px, py, skin, hair, outfit) {
-    const c = this.ctx;
-    const breathe = Math.sin(this.time * 0.04) * 0.5;
-
-    // 阴影
-    c.fillStyle = 'rgba(0,0,0,0.12)';
-    c.beginPath(); c.ellipse(px + 16, py + 50, 14, 4, 0, 0, Math.PI * 2); c.fill();
-
-    // 腿（弯曲）
-    c.fillStyle = '#3a3a5a';
-    this._roundRect(c, px + 6, py + 38, 8, 10, 2);
-    this._roundRect(c, px + 18, py + 38, 8, 10, 2);
-    c.fillStyle = '#555';
-    this._roundRect(c, px + 4, py + 46, 12, 4, 2);
-    this._roundRect(c, px + 16, py + 46, 12, 4, 2);
-
-    // 身体
-    c.fillStyle = outfit;
-    this._roundRect(c, px + 4, py + 20 + breathe, 24, 18, 4);
-
-    // 手臂
-    c.fillStyle = skin;
-    this._roundRect(c, px - 1, py + 22 + breathe, 6, 12, 3);
-    this._roundRect(c, px + 27, py + 22 + breathe, 6, 12, 3);
-
-    // 头
-    c.fillStyle = skin;
-    c.beginPath(); c.arc(px + 16, py + 10, 12, 0, Math.PI * 2); c.fill();
-    // 头发
-    c.fillStyle = hair;
-    c.beginPath();
-    c.arc(px + 16, py + 6, 13, Math.PI, Math.PI * 2);
-    c.fill();
-    c.fillRect(px + 3, py + 2, 26, 8);
-
-    // 眼睛
-    c.fillStyle = '#333';
-    c.beginPath(); c.ellipse(px + 10, py + 10, 2.2, 2.8, 0, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.ellipse(px + 22, py + 10, 2.2, 2.8, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#fff';
-    c.beginPath(); c.arc(px + 11, py + 9, 1, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(px + 23, py + 9, 1, 0, Math.PI * 2); c.fill();
-
-    // 腮红
-    c.fillStyle = 'rgba(255,150,150,0.25)';
-    c.beginPath(); c.arc(px + 6, py + 13, 3, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(px + 26, py + 13, 3, 0, Math.PI * 2); c.fill();
-
-    // 微笑
-    c.strokeStyle = '#c47a6a'; c.lineWidth = 1.5; c.lineCap = 'round';
-    c.beginPath(); c.arc(px + 16, py + 14, 3, 0.15 * Math.PI, 0.85 * Math.PI); c.stroke();
-  }
-
-  drawNpc(x, y, variant, frame) {
-    const npcColors = [
-      { hair: '#2a2a2a', outfit: '#e74c3c', skin: '#f5d0a9' },
-      { hair: '#8B4513', outfit: '#3498db', skin: '#deb887' },
-      { hair: '#1a1a1a', outfit: '#2ecc71', skin: '#f0c8a0' },
-      { hair: '#654321', outfit: '#9b59b6', skin: '#f5d0a9' },
-      { hair: '#4a4a4a', outfit: '#e67e22', skin: '#deb887' },
-      { hair: '#2c2c2c', outfit: '#1abc9c', skin: '#f0c8a0' },
-      { hair: '#5a3a1a', outfit: '#f39c12', skin: '#f5d0a9' },
-      { hair: '#333', outfit: '#c0392b', skin: '#deb887' },
-      { hair: '#6a4a2a', outfit: '#2980b9', skin: '#f0c8a0' },
-      { hair: '#1c1c1c', outfit: '#27ae60', skin: '#f5d0a9' },
-    ];
-    const idx = (variant || 0) % npcColors.length;
-    const col = npcColors[idx];
-    this.drawChar(x, y, {
-      hairColor: col.hair,
-      outfitColor: col.outfit,
-      skinColor: col.skin,
-      action: 'stand',
-    });
-  }
-
-  // ── 场景绘制 ────────────────────────────────
-
-  drawScene(scene, mainChar, activeNpcs, bgNpcCount) {
+  // ── 主渲染入口 ──
+  drawScene(scene, mainChar, activeNpcs, bgNpcCount, isStoryMode, bgHint) {
     this.scene = scene;
     this.mainChar = mainChar;
+    this._isStoryMode = !!isStoryMode;
     this.time++;
 
-    this.clear(this._getSkyColor());
+    const mainGender = (mainChar && mainChar.gender === 'male') ? 'male' : 'female';
+    const worldType = this._isStoryMode ? 'fantasy' : 'modern';
 
-    const drawFn = SCENE_RENDERERS[scene];
-    if (drawFn) {
-      drawFn(this);
+    // 世界类型变化时重新加载背景
+    if (this._loadedWorld !== worldType) {
+      this._loadBgImages(worldType);
+    }
+
+    // 性别或世界变化时重新加载角色
+    const charCacheKey = `${worldType}_${mainGender}`;
+    if (this._charGender !== charCacheKey) {
+      this._loadCharImages(worldType, mainGender);
+    }
+
+    // 确定主角动作
+    let mainAction;
+    if (this._isStoryMode) {
+      mainAction = this._getFantasyAction(scene);
     } else {
-      this._drawDefaultScene();
+      mainAction = SCENE_ACTION[scene] || 'idle';
     }
 
-    // 活跃 NPC
-    if (activeNpcs && activeNpcs.length > 0) {
-      const npcPositions = this._getNpcPositions(scene);
-      activeNpcs.forEach((npc, i) => {
-        const pos = npcPositions[i] || { x: 400, y: 170 };
-        this.drawNpc(pos.x, pos.y, npc.variant || i);
-      });
-    }
+    this._drawSceneCanvas(scene, bgHint);
+    this._drawCharCanvas(mainGender, mainAction, activeNpcs);
+  }
 
-    // 主角（最后画，在最上层）
-    if (mainChar) {
-      const pos = this._getMainCharPos(scene);
-      const action = this._getMainCharAction(scene);
-      this.drawChar(pos.x, pos.y, {
-        hairColor: mainChar.hairColor,
-        outfitColor: mainChar.outfitColor,
-        action: action,
-      });
-    }
-
-    // 背景 NPC
-    if (bgNpcCount > 0) {
-      for (let i = 0; i < bgNpcCount; i++) {
-        const bx = ((this.time * 0.3 + i * 160) % (W + 80)) - 40;
-        const by = 220 + (i % 3) * 16;
-        this.drawNpc(bx, by, i + 3);
+  // ── 异世界场景名→动作 ──
+  _getFantasyAction(sceneName) {
+    if (!sceneName) return 'idle';
+    for (const [keywords, action] of FANTASY_ACTION_KEYWORDS) {
+      for (const kw of keywords) {
+        if (sceneName.includes(kw)) return action;
       }
     }
+    return 'idle';
+  }
+
+  // ── 场景 canvas ──
+  _drawSceneCanvas(scene, bgHint) {
+    this.clear('#1a1a2e');
+
+    // 画背景图
+    if (this.bgReady) {
+      let bgKey;
+      if (this._isStoryMode && bgHint) {
+        bgKey = bgHint; // 异世界用后端返回的 bg_hint
+      } else {
+        bgKey = scene;  // 现代世界用场景枚举名
+      }
+      const bgImg = this.bgImages[bgKey];
+      if (bgImg) {
+        this.ctx.drawImage(bgImg, 0, 0, W, H);
+      } else {
+        // 没匹配到背景图，用默认
+        this.ctx.fillStyle = '#2a2a3a';
+        this.ctx.fillRect(0, 260, W, H - 260);
+      }
+    }
+
+    // 天气粒子
+    this._drawWeather(this.ctx);
 
     // 淡入淡出
     if (this.fading) {
@@ -330,9 +315,56 @@ class Renderer {
       this.ctx.fillStyle = `rgba(0,0,0,${this.fadeAlpha})`;
       this.ctx.fillRect(0, 0, W, H);
     }
+  }
 
-    // 天气粒子
-    this._drawWeather();
+  // ── 人物 canvas ──
+  _drawCharCanvas(gender, action, activeNpcs) {
+    const c = this.charCtx;
+
+    // 纯白背景
+    c.fillStyle = '#ffffff';
+    c.fillRect(0, 0, CHAR_W, CHAR_H);
+
+    // action 映射
+    let pose;
+    if (action === 'sleep') pose = 'idle';
+    else if (action === 'work' || action === 'stand' || action === 'phone') pose = 'think';
+    else pose = action;
+
+    // 画主角
+    const key = `${gender}_${pose}`;
+    const img = this.charImages[key];
+    if (img) {
+      const scale = Math.min(CHAR_W / img.width, CHAR_H / img.height) * 0.9;
+      const drawW = Math.round(img.width * scale);
+      const drawH = Math.round(img.height * scale);
+      const drawX = Math.floor((CHAR_W - drawW) / 2);
+      const drawY = Math.floor(CHAR_H - drawH);
+      c.drawImage(img, drawX, drawY, drawW, drawH);
+    }
+
+    // NPC（仅现代世界有固定配置）
+    if (!this._isStoryMode) {
+      const npcList = NPC_SCENES[this.scene] || [];
+      if (npcList.length > 0) {
+        const npc = npcList[0];
+        const npcKey = `${npc.gender}_${npc.action}`;
+        const npcImg = this.charImages[npcKey];
+        if (npcImg) {
+          const npcScale = 0.5;
+          const npcW = Math.round(npcImg.width * npcScale);
+          const npcH = Math.round(npcImg.height * npcScale);
+          c.drawImage(npcImg, CHAR_W - npcW - 10, CHAR_H - npcH, npcW, npcH);
+        }
+      }
+    }
+
+    // 底部渐变遮罩
+    const grad = c.createLinearGradient(0, CHAR_H - 40, 0, CHAR_H);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(1, 'rgba(255,255,255,0.8)');
+    c.fillStyle = grad;
+    c.fillRect(0, CHAR_H - 40, CHAR_W, 40);
   }
 
   startFade(callback) {
@@ -344,1156 +376,30 @@ class Renderer {
 
   setWeather(w) { this.weather = w; this.particles = []; }
 
-  _roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, r);
-    ctx.fill();
-  }
-
-    _getSkyColor() {
-    const skyMap = {
-      'HOME_SLEEPING': '#0a0a20',
-      'HOME_MORNING': '#1a1520',
-      'HOME_EVENING': '#1a1a2e',
-      'HOME_WEEKEND_LAZY': '#1a1520',
-      'HOME_WORKING': '#2a2535',
-      'COMMUTE_TO_WORK': '#3a4a5a',
-      'COMMUTE_TO_HOME': '#2a3a4a',
-      'OFFICE_WORKING': '#f5f5f0',
-      'OFFICE_MEETING': '#f5f5f0',
-      'OFFICE_LUNCH': '#e8e8e0',
-      'CAFE_WORKING': '#f0e8d0',
-      'OUTDOOR_WORKING': '#87CEEB',
-      'STUDIO_WORKING': '#3a3545',
-      'CAFE': '#f0e8d8',
-      'PARK': '#87CEEB',
-      'SUPERMARKET': '#f0f0e8',
-      'STREET_WANDERING': '#87CEEB',
-      'FRIEND_HANGOUT': '#f0e8d8',
-      'OVERTIME': '#0a0a20',
-      // 旅行场景
-      'AIRPORT': '#e8e4e0',
-      'TOURING': '#87CEEB',
-      'HOTEL': '#2a2530',
-      'LOCAL_FOOD': '#f0e0c0',
-      'TRAIN_STATION': '#d8d4d0',
-      'SCENIC_DRIVE': '#87CEEB',
-      'RESTAURANT_LOCAL': '#f0e8d0',
-    };
-    return skyMap[this.scene] || '#1a1a2e';
-  }
-
-  _getMainCharPos(scene) {
-    const posMap = {
-      'HOME_SLEEPING': { x: 120, y: 130 },
-      'HOME_MORNING': { x: 360, y: 160 },
-      'HOME_EVENING': { x: 280, y: 170 },
-      'HOME_WEEKEND_LAZY': { x: 120, y: 135 },
-      'HOME_WORKING': { x: 260, y: 170 },
-      'COMMUTE_TO_WORK': { x: 300, y: 200 },
-      'COMMUTE_TO_HOME': { x: 300, y: 200 },
-      'OFFICE_WORKING': { x: 240, y: 170 },
-      'OFFICE_MEETING': { x: 360, y: 170 },
-      'OFFICE_LUNCH': { x: 400, y: 200 },
-      'CAFE_WORKING': { x: 320, y: 180 },
-      'OUTDOOR_WORKING': { x: 300, y: 210 },
-      'STUDIO_WORKING': { x: 280, y: 170 },
-      'CAFE': { x: 320, y: 180 },
-      'PARK': { x: 300, y: 210 },
-      'SUPERMARKET': { x: 320, y: 210 },
-      'STREET_WANDERING': { x: 300, y: 210 },
-      'FRIEND_HANGOUT': { x: 280, y: 190 },
-      'OVERTIME': { x: 240, y: 170 },
-      // 旅行场景
-      'AIRPORT': { x: 300, y: 200 },
-      'TOURING': { x: 300, y: 210 },
-      'HOTEL': { x: 280, y: 170 },
-      'LOCAL_FOOD': { x: 320, y: 200 },
-      'TRAIN_STATION': { x: 300, y: 200 },
-      'SCENIC_DRIVE': { x: 300, y: 200 },
-      'RESTAURANT_LOCAL': { x: 320, y: 190 },
-    };
-    return posMap[scene] || { x: 300, y: 180 };
-  }
-
-  _getMainCharAction(scene) {
-    const actionMap = {
-      'HOME_SLEEPING': 'sleep',
-      'HOME_MORNING': 'stand',
-      'HOME_EVENING': 'sit',
-      'HOME_WEEKEND_LAZY': 'sleep',
-      'HOME_WORKING': 'work',
-      'COMMUTE_TO_WORK': 'walk',
-      'COMMUTE_TO_HOME': 'walk',
-      'OFFICE_WORKING': 'work',
-      'OFFICE_MEETING': 'stand',
-      'OFFICE_LUNCH': 'walk',
-      'CAFE_WORKING': 'work',
-      'OUTDOOR_WORKING': 'work',
-      'STUDIO_WORKING': 'work',
-      'CAFE': 'sit',
-      'PARK': 'walk',
-      'SUPERMARKET': 'walk',
-      'STREET_WANDERING': 'walk',
-      'FRIEND_HANGOUT': 'sit',
-      'OVERTIME': 'work',
-      // 旅行场景
-      'AIRPORT': 'walk',
-      'TOURING': 'work',
-      'HOTEL': 'sit',
-      'LOCAL_FOOD': 'sit',
-      'TRAIN_STATION': 'walk',
-      'SCENIC_DRIVE': 'sit',
-      'RESTAURANT_LOCAL': 'sit',
-    };
-    return actionMap[scene] || 'stand';
-  }
-
-  _getNpcPositions(scene) {
-    const npcPosMap = {
-      'OFFICE_WORKING': [{ x: 320, y: 170 }, { x: 400, y: 170 }],
-      'OFFICE_LUNCH': [{ x: 440, y: 200 }],
-      'CAFE': [{ x: 280, y: 180 }],
-      'CAFE_WORKING': [{ x: 280, y: 180 }],
-      'FRIEND_HANGOUT': [{ x: 360, y: 190 }],
-      // 旅行场景
-      'TOURING': [{ x: 200, y: 210 }, { x: 450, y: 220 }],
-      'AIRPORT': [{ x: 200, y: 200 }, { x: 420, y: 195 }],
-      'LOCAL_FOOD': [{ x: 250, y: 200 }],
-      'RESTAURANT_LOCAL': [{ x: 260, y: 190 }],
-    };
-    return npcPosMap[scene] || [];
-  }
-
-  _drawWeather() {
-    const c = this.ctx;
-    // 粒子初始化
+  _drawWeather(ctx) {
     if (this.weather === 'rainy' || this.weather === 'heavy_rain') {
       const target = this.weather === 'heavy_rain' ? 120 : 60;
       while (this.particles.length < target) {
         this.particles.push({ x: Math.random() * W, y: Math.random() * H, speed: 4 + Math.random() * 6 });
       }
-      c.strokeStyle = 'rgba(180,200,255,0.4)';
-      c.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(180,200,255,0.4)'; ctx.lineWidth = 1;
       for (const p of this.particles) {
-        c.beginPath(); c.moveTo(p.x, p.y); c.lineTo(p.x - 1, p.y + p.speed * 2); c.stroke();
-        p.y += p.speed;
-        p.x -= 0.5;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - 1, p.y + p.speed * 2); ctx.stroke();
+        p.y += p.speed; p.x -= 0.5;
         if (p.y > H) { p.y = -10; p.x = Math.random() * W; }
       }
     } else if (this.weather === 'snow') {
       while (this.particles.length < 50) {
         this.particles.push({ x: Math.random() * W, y: Math.random() * H, r: 1.5 + Math.random() * 2, speed: 0.5 + Math.random() * 1.5, drift: Math.random() * 2 - 1 });
       }
-      c.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
       for (const p of this.particles) {
-        c.beginPath(); c.arc(p.x, p.y, p.r, 0, Math.PI * 2); c.fill();
-        p.y += p.speed;
-        p.x += Math.sin(this.time * 0.02 + p.drift) * 0.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        p.y += p.speed; p.x += Math.sin(this.time * 0.02 + p.drift) * 0.5;
         if (p.y > H) { p.y = -5; p.x = Math.random() * W; }
       }
     } else {
-      // 非天气场景，清除粒子
       if (this.particles.length > 0) this.particles = [];
     }
   }
-
-  _drawDefaultScene() {
-    this.roundRect(0, 260, W, 100, 0, '#2a2a3a');
-  }
 }
-
-// ── 场景渲染函数（精细版）────────────────────
-
-const SCENE_RENDERERS = {
-
-  HOME_SLEEPING(r) {
-    const c = r.ctx;
-    // 墙壁渐变
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#1a1a30'); wg.addColorStop(1, '#0f0f22');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-
-    // 地板
-    const fg = c.createLinearGradient(0, 220, 0, H);
-    fg.addColorStop(0, '#3a3228'); fg.addColorStop(1, '#2a2218');
-    c.fillStyle = fg; c.fillRect(0, 220, W, H - 220);
-
-    // 墙线
-    c.strokeStyle = 'rgba(255,255,255,0.03)'; c.lineWidth = 1;
-    for (let i = 0; i < 6; i++) { c.beginPath(); c.moveTo(0, 220); c.lineTo(W, 220 - i * 40); c.stroke(); }
-
-    // 窗户
-    r.roundRect(60, 60, 80, 60, 3, '#1a2a4a');
-    r.roundRect(63, 63, 36, 26, 1, '#2a3a5a');
-    r.roundRect(102, 63, 36, 26, 1, '#2a3a5a');
-    // 窗框
-    c.fillStyle = '#555';
-    c.fillRect(98, 60, 4, 60);
-    c.fillRect(60, 90, 80, 3);
-    // 月光
-    c.fillStyle = 'rgba(232,232,208,0.6)';
-    c.beginPath(); c.arc(110, 75, 8, 0, Math.PI * 2); c.fill();
-    c.fillStyle = 'rgba(232,232,208,0.08)';
-    c.fillRect(63, 63, 75, 54);
-
-    // 月光投射到地面
-    c.fillStyle = 'rgba(200,200,180,0.04)';
-    c.beginPath();
-    c.moveTo(60, 220); c.lineTo(140, 220); c.lineTo(180, H); c.lineTo(20, H);
-    c.fill();
-
-    // 床
-    r.roundRect(120, 170, 60, 50, 4, '#5a3a2a');   // 床身
-    r.roundRect(118, 158, 64, 16, 4, '#e8e0d0');   // 床头板
-    r.roundRect(124, 160, 52, 8, 2, '#c0b0a0');    // 枕头区
-    // 床头柜
-    r.roundRect(190, 180, 28, 40, 3, '#4a3a2a');
-    // 小夜灯
-    c.fillStyle = 'rgba(255,200,100,0.6)';
-    c.beginPath(); c.arc(204, 178, 4, 0, Math.PI * 2); c.fill();
-    c.fillStyle = 'rgba(255,200,100,0.06)';
-    c.beginPath(); c.arc(204, 178, 40, 0, Math.PI * 2); c.fill();
-
-    // 植物
-    r.roundRect(520, 160, 20, 60, 2, '#3a4a3a');  // 花盆
-    c.fillStyle = '#3a5a3a';
-    c.beginPath(); c.arc(530, 148, 16, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#4a7a4a';
-    c.beginPath(); c.arc(525, 142, 10, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#5a8a5a';
-    c.beginPath(); c.arc(535, 140, 8, 0, Math.PI * 2); c.fill();
-  },
-
-  HOME_MORNING(r) {
-    const c = r.ctx;
-    // 墙壁暖色
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#e8e0d0'); wg.addColorStop(1, '#d8d0c0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    // 地板
-    const fg = c.createLinearGradient(0, 220, 0, H);
-    fg.addColorStop(0, '#3a3228'); fg.addColorStop(1, '#2a2218');
-    c.fillStyle = fg; c.fillRect(0, 220, W, H - 220);
-
-    // 大窗户 + 阳光
-    r.roundRect(40, 40, 100, 80, 4, '#87CEEB');
-    c.fillStyle = '#c0b0a0';
-    c.fillRect(88, 40, 4, 80);
-    c.fillRect(40, 78, 100, 3);
-    // 阳光射入
-    c.fillStyle = 'rgba(255,240,180,0.08)';
-    c.beginPath();
-    c.moveTo(40, 120); c.lineTo(140, 120); c.lineTo(220, H); c.lineTo(0, H);
-    c.fill();
-
-    // 厨房区域
-    r.roundRect(360, 120, 160, 100, 0, '#d0c8b8');
-    // 台面
-    r.roundRect(380, 140, 40, 30, 3, '#f0f0e8');
-    // 咖啡机
-    r.roundRect(400, 120, 20, 22, 3, '#555');
-    c.fillStyle = '#f0e8a0';
-    c.beginPath(); c.arc(410, 125, 3, 0, Math.PI * 2); c.fill(); // 小灯
-    // 冰箱
-    r.roundRect(490, 120, 30, 100, 3, '#b0a898');
-    r.roundRect(494, 125, 22, 40, 2, '#a09888');
-    c.fillStyle = '#888'; c.fillRect(506, 140, 2, 10); // 把手
-  },
-
-  HOME_EVENING(r) {
-    const c = r.ctx;
-    // 暖色夜墙
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#2a2030'); wg.addColorStop(1, '#1e1a28');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    // 地板
-    const fg = c.createLinearGradient(0, 220, 0, H);
-    fg.addColorStop(0, '#3a3228'); fg.addColorStop(1, '#2a2218');
-    c.fillStyle = fg; c.fillRect(0, 220, W, H - 220);
-
-    // 电视
-    r.roundRect(280, 80, 100, 60, 4, '#1a1a2a');
-    r.roundRect(284, 84, 92, 52, 2, '#3a4a5a');
-    // 电视动态色彩
-    const hue = (r.time * 0.5) % 360;
-    c.fillStyle = `hsla(${hue},40%,50%,0.15)`;
-    c.fillRect(284, 84, 92, 52);
-    // 电视柜
-    r.roundRect(260, 144, 140, 16, 3, '#4a3a2a');
-    // 电视光
-    c.fillStyle = `rgba(100,130,180,0.05)`;
-    c.beginPath();
-    c.moveTo(280, 160); c.lineTo(380, 160); c.lineTo(420, 360); c.lineTo(240, 360);
-    c.fill();
-
-    // 沙发
-    r.roundRect(240, 180, 160, 40, 6, '#5a4a3a');
-    r.roundRect(228, 170, 20, 60, 4, '#5a4a3a');
-    r.roundRect(392, 170, 20, 60, 4, '#5a4a3a');
-    // 抱枕
-    r.roundRect(260, 178, 24, 22, 4, '#8a6a5a');
-    r.roundRect(360, 180, 20, 18, 4, '#6a7a8a');
-
-    // 落地灯
-    r.roundRect(180, 100, 4, 120, 1, '#888');
-    c.fillStyle = 'rgba(255,200,100,0.5)';
-    c.beginPath(); c.arc(182, 96, 16, 0, Math.PI * 2); c.fill();
-    c.fillStyle = 'rgba(255,200,100,0.06)';
-    c.beginPath(); c.arc(182, 96, 80, 0, Math.PI * 2); c.fill();
-
-    // 猫
-    const catX = 160 + Math.sin(r.time * 0.02) * 8;
-    c.fillStyle = '#f5a623';
-    c.beginPath(); c.ellipse(catX, 260, 16, 10, 0, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(catX + 14, 250, 6, 0, Math.PI * 2); c.fill();
-    // 耳朵
-    c.beginPath(); c.moveTo(catX + 10, 246); c.lineTo(catX + 8, 238); c.lineTo(catX + 14, 244); c.fill();
-    c.beginPath(); c.moveTo(catX + 18, 244); c.lineTo(catX + 20, 238); c.lineTo(catX + 22, 246); c.fill();
-    // 眼睛
-    c.fillStyle = '#333';
-    c.beginPath(); c.arc(catX + 12, 250, 1.5, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(catX + 17, 250, 1.5, 0, Math.PI * 2); c.fill();
-    // 尾巴
-    c.strokeStyle = '#f5a623'; c.lineWidth = 3; c.lineCap = 'round';
-    c.beginPath();
-    c.moveTo(catX - 14, 256);
-    c.quadraticCurveTo(catX - 24, 240 + Math.sin(r.time * 0.04) * 5, catX - 18, 234);
-    c.stroke();
-  },
-
-  HOME_WEEKEND_LAZY(r) {
-    SCENE_RENDERERS.HOME_SLEEPING(r);
-    r.ctx.fillStyle = 'rgba(200,200,180,0.1)';
-    r.ctx.fillRect(0, 0, W, H);
-  },
-
-  COMMUTE_TO_WORK(r) {
-    const c = r.ctx;
-    // 地铁车厢
-    const wg = c.createLinearGradient(0, 0, 0, 260);
-    wg.addColorStop(0, '#e8e4e0'); wg.addColorStop(1, '#d8d4d0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 260);
-    // 地板
-    c.fillStyle = '#888'; c.fillRect(0, 260, W, H - 260);
-    c.fillStyle = '#666'; c.fillRect(0, 280, W, H - 280);
-
-    // 大车窗
-    for (let i = 0; i < 4; i++) {
-      const wx = 40 + i * 150;
-      r.roundRect(wx, 40, 100, 80, 4, '#87CEEB');
-      c.fillStyle = '#d0ccc8';
-      c.fillRect(wx - 3, 38, 106, 84);
-      c.fillStyle = '#87CEEB';
-      r.roundRect(wx, 40, 100, 80, 4, '#87CEEB');
-    }
-
-    // 把手
-    c.strokeStyle = '#999'; c.lineWidth = 2;
-    for (let i = 0; i < 8; i++) {
-      const hx = 60 + i * 70;
-      c.beginPath(); c.moveTo(hx, 140); c.lineTo(hx, 200); c.stroke();
-      c.fillStyle = '#aaa';
-      c.beginPath(); c.arc(hx, 136, 6, 0, Math.PI * 2); c.fill();
-    }
-
-    // 门
-    r.roundRect(0, 80, 12, 140, 2, '#d0ccc8');
-    r.roundRect(W - 12, 80, 12, 140, 2, '#d0ccc8');
-
-    // 运动线条
-    const offset = (r.time * 2) % 40;
-    c.fillStyle = 'rgba(150,150,150,0.2)';
-    for (let i = 0; i < 10; i++) c.fillRect(0, offset + i * 40, W, 1);
-
-    // LED 线路图
-    r.roundRect(490, 50, 120, 50, 3, '#1a1a2a');
-    c.fillStyle = '#4a8af5';
-    for (let i = 0; i < 4; i++) {
-      c.beginPath(); c.arc(520 + i * 25, 75, 4, 0, Math.PI * 2); c.fill();
-    }
-    c.strokeStyle = '#4a8af5'; c.lineWidth = 1;
-    c.beginPath(); c.moveTo(520, 75); c.lineTo(545, 75); c.lineTo(570, 75); c.lineTo(595, 75); c.stroke();
-  },
-
-  COMMUTE_TO_HOME(r) {
-    SCENE_RENDERERS.COMMUTE_TO_WORK(r);
-    r.ctx.fillStyle = 'rgba(20,20,40,0.35)';
-    r.ctx.fillRect(0, 0, W, H);
-  },
-
-  OFFICE_WORKING(r) {
-    const c = r.ctx;
-    // 明亮办公室
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#f5f5f0'); wg.addColorStop(1, '#e8e5e0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    // 地板
-    c.fillStyle = '#e0ddd5'; c.fillRect(0, 220, W, H - 220);
-
-    // 大落地窗
-    r.roundRect(0, 20, W, 100, 0, '#c0d8e8');
-    // 窗格
-    c.fillStyle = '#ddd';
-    for (let i = 0; i < 10; i++) c.fillRect(i * 66 + 5, 20, 2, 100);
-    // 天际线
-    c.fillStyle = 'rgba(100,120,140,0.2)';
-    for (let i = 0; i < 5; i++) {
-      const bw = 30 + i * 15;
-      c.fillRect(i * 130 + 20, 100 - 30 - i * 10, bw, 30 + i * 10);
-    }
-
-    // 工位（3x2）
-    for (let row = 0; row < 2; row++) {
-      for (let col = 0; col < 3; col++) {
-        const dx = 80 + col * 200;
-        const dy = 140 + row * 50;
-        // 桌面
-        r.roundRect(dx, dy, 120, 6, 2, '#8a7a6a');
-        // 桌腿
-        c.fillStyle = '#7a6a5a'; c.fillRect(dx + 10, dy + 6, 4, 30); c.fillRect(dx + 106, dy + 6, 4, 30);
-        // 显示器
-        r.roundRect(dx + 30, dy - 30, 60, 28, 3, '#555');
-        r.roundRect(dx + 33, dy - 27, 54, 22, 2, '#4a6a8a');
-        // 显示器支架
-        c.fillStyle = '#555'; c.fillRect(dx + 57, dy - 3, 6, 6);
-        // 键盘
-        r.roundRect(dx + 35, dy + 1, 50, 4, 1, '#888');
-        // 屏幕内容微光
-        c.fillStyle = 'rgba(100,180,255,0.05)';
-        c.fillRect(dx + 33, dy - 27, 54, 22);
-      }
-    }
-  },
-
-  OFFICE_MEETING(r) {
-    SCENE_RENDERERS.OFFICE_WORKING(r);
-    const c = r.ctx;
-    // 会议桌
-    r.roundRect(160, 170, 320, 80, 6, '#8a7a6a');
-    r.roundRect(160, 166, 320, 8, 4, '#9a8a7a');
-    // 投影幕
-    r.roundRect(200, 50, 240, 120, 3, '#fff');
-    c.fillStyle = '#e8e8e0';
-    c.fillRect(202, 52, 236, 116);
-    c.fillStyle = '#333'; c.font = '14px sans-serif'; c.fillText('Q2 目标复盘', 260, 115);
-  },
-
-  OFFICE_LUNCH(r) {
-    const c = r.ctx;
-    // 外面觅食街道
-    c.fillStyle = '#e8e0d0'; c.fillRect(0, 0, W, 180);
-    c.fillStyle = '#d0c8b8'; c.fillRect(0, 180, W, H - 180);
-
-    // 建筑背景
-    r.roundRect(20, 60, 150, 120, 0, '#c0b8a8');
-    r.roundRect(180, 40, 120, 140, 0, '#b8b0a0');
-    r.roundRect(470, 50, 140, 130, 0, '#c8c0b0');
-
-    // 餐厅
-    r.roundRect(200, 60, 240, 100, 6, '#f0e8d0');
-    r.roundRect(200, 50, 240, 20, 6, '#e74c3c');
-    c.fillStyle = '#fff'; c.font = '14px sans-serif'; c.fillText('🍜 味千拉面', 280, 66);
-
-    // 户外桌椅
-    for (let i = 0; i < 3; i++) {
-      const tx = 100 + i * 180;
-      r.roundRect(tx, 200, 60, 6, 2, '#8a7a6a');
-      // 遮阳伞
-      c.fillStyle = i % 2 === 0 ? 'rgba(230,80,60,0.7)' : 'rgba(60,140,200,0.7)';
-      c.beginPath(); c.arc(tx + 30, 196, 30, Math.PI, Math.PI * 2); c.fill();
-      c.fillStyle = '#888'; c.fillRect(tx + 28, 196, 4, 20);
-    }
-
-    // 人行道
-    c.fillStyle = '#c0b8a8'; c.fillRect(0, 280, W, 10);
-  },
-
-  CAFE(r) {
-    const c = r.ctx;
-    // 温暖咖啡色
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#f0e8d0'); wg.addColorStop(1, '#e0d8c0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    // 木地板
-    c.fillStyle = '#c0a880'; c.fillRect(0, 220, W, H - 220);
-    // 木纹
-    c.strokeStyle = 'rgba(0,0,0,0.05)'; c.lineWidth = 1;
-    for (let i = 0; i < 10; i++) { c.beginPath(); c.moveTo(0, 220 + i * 14); c.lineTo(W, 220 + i * 14); c.stroke(); }
-
-    // 大窗
-    r.roundRect(40, 30, 240, 120, 4, '#d8d0c0');
-    r.roundRect(44, 34, 232, 112, 2, '#e8e0d0');
-    // 窗外树影
-    c.fillStyle = 'rgba(100,160,80,0.3)';
-    c.beginPath(); c.arc(100, 50, 30, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(250, 60, 20, 0, Math.PI * 2); c.fill();
-
-    // 吧台
-    r.roundRect(0, 120, 200, 100, 0, '#6a4a3a');
-    r.roundRect(0, 115, 200, 12, 4, '#7a5a4a');
-    // 咖啡机
-    r.roundRect(30, 90, 24, 28, 3, '#555');
-    c.fillStyle = '#e74c3c'; c.beginPath(); c.arc(42, 96, 3, 0, Math.PI * 2); c.fill();
-    // 杯子架
-    for (let i = 0; i < 4; i++) {
-      c.fillStyle = i % 2 === 0 ? '#fff' : '#e8d8c8';
-      c.beginPath(); c.arc(80 + i * 16, 100, 5, 0, Math.PI * 2); c.fill();
-    }
-    // 菜单板
-    r.roundRect(60, 40, 80, 50, 3, '#2a2a2a');
-    c.fillStyle = '#e8d8a8'; c.font = '10px sans-serif';
-    c.fillText('Latte    ¥28', 68, 58);
-    c.fillText('Mocha    ¥32', 68, 72);
-    c.fillText('Matcha   ¥30', 68, 84);
-
-    // 桌子
-    for (let i = 0; i < 2; i++) {
-      const tx = 320 + i * 150;
-      r.roundRect(tx, 190, 100, 6, 3, '#8a7a6a');
-      // 桌腿
-      c.fillStyle = '#7a6a5a'; c.fillRect(tx + 45, 196, 10, 30);
-      // 桌上咖啡杯
-      c.fillStyle = '#fff';
-      c.beginPath(); c.arc(tx + 30, 188, 7, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#6a4a3a';
-      c.beginPath(); c.arc(tx + 30, 188, 5, 0, Math.PI * 2); c.fill();
-      // 蒸汽
-      c.strokeStyle = 'rgba(255,255,255,0.3)'; c.lineWidth = 1;
-      const sOff = Math.sin(r.time * 0.04 + i) * 2;
-      c.beginPath(); c.moveTo(tx + 28, 182); c.quadraticCurveTo(tx + 26, 174 + sOff, tx + 30, 168); c.stroke();
-    }
-
-    // 吊灯
-    for (let i = 0; i < 3; i++) {
-      const lx = 100 + i * 200;
-      c.strokeStyle = '#999'; c.lineWidth = 1;
-      c.beginPath(); c.moveTo(lx, 0); c.lineTo(lx, 30); c.stroke();
-      c.fillStyle = 'rgba(255,200,100,0.7)';
-      c.beginPath(); c.arc(lx, 34, 8, 0, Math.PI * 2); c.fill();
-      c.fillStyle = 'rgba(255,200,100,0.06)';
-      c.beginPath(); c.arc(lx, 34, 60, 0, Math.PI * 2); c.fill();
-    }
-  },
-
-  PARK(r) {
-    const c = r.ctx;
-    // 天空渐变
-    const sg = c.createLinearGradient(0, 0, 0, 200);
-    sg.addColorStop(0, '#6ab7e8'); sg.addColorStop(1, '#a8d8f0');
-    c.fillStyle = sg; c.fillRect(0, 0, W, 200);
-
-    // 云
-    const drawCloud = (cx, cy, s) => {
-      c.fillStyle = 'rgba(255,255,255,0.85)';
-      c.beginPath(); c.arc(cx, cy, 18 * s, 0, Math.PI * 2); c.fill();
-      c.beginPath(); c.arc(cx - 15 * s, cy + 4, 12 * s, 0, Math.PI * 2); c.fill();
-      c.beginPath(); c.arc(cx + 16 * s, cy + 3, 14 * s, 0, Math.PI * 2); c.fill();
-      c.beginPath(); c.arc(cx + 5 * s, cy - 8 * s, 10 * s, 0, Math.PI * 2); c.fill();
-    };
-    const cloudOff = (r.time * 0.1) % W;
-    drawCloud(100 + cloudOff % 500, 50, 1.2);
-    drawCloud(350 + (cloudOff * 0.7) % 500, 35, 0.9);
-    drawCloud(550 + (cloudOff * 0.5) % 500, 60, 1.0);
-
-    // 草地
-    const gg = c.createLinearGradient(0, 200, 0, H);
-    gg.addColorStop(0, '#5aaa4a'); gg.addColorStop(1, '#3a8a3a');
-    c.fillStyle = gg; c.fillRect(0, 200, W, H - 200);
-    // 草地纹理
-    c.fillStyle = 'rgba(80,180,60,0.3)';
-    for (let i = 0; i < 40; i++) {
-      c.fillRect(Math.random() * W, 200 + Math.random() * 160, 3, 6);
-    }
-
-    // 小路
-    c.fillStyle = '#c0b898';
-    c.beginPath();
-    c.moveTo(260, 200); c.lineTo(380, 200); c.lineTo(400, H); c.lineTo(240, H);
-    c.fill();
-    c.fillStyle = 'rgba(0,0,0,0.05)';
-    c.beginPath();
-    c.moveTo(280, 200); c.lineTo(360, 200); c.lineTo(380, H); c.lineTo(260, H);
-    c.fill();
-
-    // 树
-    const drawTree = (x, y, s) => {
-      // 树干
-      c.fillStyle = '#5a3a1a';
-      c.beginPath(); c.moveTo(x - 5 * s, y); c.lineTo(x + 5 * s, y);
-      c.lineTo(x + 3 * s, y + 40 * s); c.lineTo(x - 3 * s, y + 40 * s); c.fill();
-      // 树冠（多层圆）
-      c.fillStyle = '#3a7a3a';
-      c.beginPath(); c.arc(x, y - 8 * s, 22 * s, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#4a8a4a';
-      c.beginPath(); c.arc(x - 8 * s, y, 16 * s, 0, Math.PI * 2); c.fill();
-      c.beginPath(); c.arc(x + 10 * s, y - 2 * s, 14 * s, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#5a9a5a';
-      c.beginPath(); c.arc(x + 2 * s, y - 14 * s, 12 * s, 0, Math.PI * 2); c.fill();
-    };
-    drawTree(60, 150, 1.2);
-    drawTree(200, 140, 1.5);
-    drawTree(440, 148, 1.3);
-    drawTree(560, 155, 1.1);
-
-    // 长椅
-    r.roundRect(290, 230, 60, 6, 2, '#6a4a2a');
-    r.roundRect(296, 236, 4, 14, 1, '#6a4a2a');
-    r.roundRect(340, 236, 4, 14, 1, '#6a4a2a');
-    // 背板
-    r.roundRect(292, 220, 56, 4, 1, '#6a4a2a');
-
-    // 小花
-    const flowerColors = ['#e74c3c', '#f39c12', '#e91e63', '#9b59b6'];
-    for (let i = 0; i < 8; i++) {
-      c.fillStyle = flowerColors[i % 4];
-      c.beginPath(); c.arc(140 + i * 50, 240 + (i % 3) * 20, 3, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#4a8a3a';
-      c.fillRect(140 + i * 50 - 1, 244 + (i % 3) * 20, 2, 8);
-    }
-  },
-
-  SUPERMARKET(r) {
-    const c = r.ctx;
-    // 明亮超市
-    c.fillStyle = '#f0f0e8'; c.fillRect(0, 0, W, 220);
-    c.fillStyle = '#e0ddd5'; c.fillRect(0, 220, W, H - 220);
-
-    // 天花板灯
-    for (let i = 0; i < 5; i++) {
-      const lx = 60 + i * 130;
-      r.roundRect(lx, 0, 60, 10, 3, '#f8f8f0');
-      c.fillStyle = 'rgba(255,255,200,0.06)';
-      c.fillRect(lx - 20, 0, 100, 220);
-    }
-
-    // 货架（3排）
-    const shelfColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#e67e22', '#1abc9c', '#c0392b'];
-    for (let i = 0; i < 3; i++) {
-      const sx = 40 + i * 200;
-      // 货架框架
-      r.roundRect(sx, 100, 160, 120, 3, '#d0d0c0');
-      // 层板 + 商品
-      for (let j = 0; j < 4; j++) {
-        const ly = 105 + j * 28;
-        c.fillStyle = '#c0c0b0'; c.fillRect(sx + 4, ly, 152, 3);
-        for (let k = 0; k < 6; k++) {
-          const ci = (i * 4 + j + k) % shelfColors.length;
-          c.fillStyle = shelfColors[ci];
-          r.roundRect(sx + 8 + k * 24, ly - 18, 20, 16, 2, shelfColors[ci]);
-        }
-      }
-    }
-
-    // 价格标签（小细节）
-    c.fillStyle = '#ff0'; c.font = '8px sans-serif';
-    c.fillText('¥12.9', 52, 96); c.fillText('¥8.5', 252, 96); c.fillText('¥25.0', 452, 96);
-  },
-
-  STREET_WANDERING(r) {
-    const c = r.ctx;
-    // 天空
-    const sg = c.createLinearGradient(0, 0, 0, 180);
-    sg.addColorStop(0, '#6ab7e8'); sg.addColorStop(1, '#a8d8f0');
-    c.fillStyle = sg; c.fillRect(0, 0, W, 180);
-
-    // 云
-    c.fillStyle = 'rgba(255,255,255,0.8)';
-    const cOff = (r.time * 0.08) % W;
-    c.beginPath(); c.arc(100 + cOff % 600, 40, 20, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(120 + cOff % 600, 36, 14, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(400 + (cOff * 0.6) % 600, 55, 16, 0, Math.PI * 2); c.fill();
-
-    // 建筑
-    const drawBuilding = (x, w, h, color) => {
-      r.roundRect(x, 180 - h, w, h, 0, color);
-      for (let row = 0; row < Math.floor(h / 32); row++) {
-        for (let col = 0; col < Math.floor(w / 32); col++) {
-          c.fillStyle = (row + col) % 2 === 0 ? 'rgba(42,58,90,0.6)' : 'rgba(240,232,208,0.5)';
-          c.fillRect(x + 6 + col * 32, 180 - h + 10 + row * 32, 18, 18);
-        }
-      }
-    };
-    drawBuilding(0, 100, 160, '#8a8090');
-    drawBuilding(120, 80, 120, '#9a9080');
-    drawBuilding(400, 120, 180, '#7a8090');
-    drawBuilding(540, 100, 110, '#a09888');
-
-    // 招牌
-    r.roundRect(130, 100, 70, 20, 3, '#e74c3c');
-    c.fillStyle = '#fff'; c.font = '11px sans-serif'; c.fillText('奶茶店', 142, 114);
-    r.roundRect(420, 80, 80, 20, 3, '#3498db');
-    c.fillStyle = '#fff'; c.fillText('便利蜂', 435, 94);
-
-    // 人行道
-    c.fillStyle = '#bbb'; c.fillRect(0, 220, W, 20);
-    // 斑马线
-    for (let i = 0; i < 6; i++) {
-      c.fillStyle = '#fff';
-      c.fillRect(280 + i * 18, 220, 10, 20);
-    }
-    // 马路
-    c.fillStyle = '#666'; c.fillRect(0, 240, W, 80);
-    // 路灯
-    c.fillStyle = '#555'; c.fillRect(300, 80, 4, 140);
-    c.fillStyle = '#f0e8a0';
-    c.beginPath(); c.arc(302, 76, 12, 0, Math.PI * 2); c.fill();
-    c.fillStyle = 'rgba(240,232,160,0.05)';
-    c.beginPath(); c.arc(302, 76, 60, 0, Math.PI * 2); c.fill();
-  },
-
-  FRIEND_HANGOUT(r) {
-    SCENE_RENDERERS.CAFE(r);
-    r.ctx.fillStyle = 'rgba(255,180,100,0.04)';
-    r.ctx.fillRect(0, 0, W, H);
-  },
-
-  OVERTIME(r) {
-    SCENE_RENDERERS.OFFICE_WORKING(r);
-    const c = r.ctx;
-    c.fillStyle = 'rgba(10,10,30,0.55)';
-    c.fillRect(0, 0, W, H);
-    // 只有主角工位亮
-    c.fillStyle = 'rgba(255,255,200,0.08)';
-    c.beginPath(); c.arc(300, 170, 80, 0, Math.PI * 2); c.fill();
-    // 窗外夜景
-    c.fillStyle = '#1a2a4a';
-    c.fillRect(0, 20, W, 100);
-    c.fillStyle = 'rgba(255,200,100,0.4)';
-    for (let i = 0; i < 12; i++) {
-      c.fillRect(30 + i * 50 + Math.random() * 20, 40 + Math.random() * 60, 3, 3);
-    }
-  },
-
-  // ── 自由职业场景 ──
-
-  HOME_WORKING(r) {
-    const c = r.ctx;
-    // 温暖室内色调
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#2a2535'); wg.addColorStop(1, '#352a3a');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    // 地板
-    c.fillStyle = '#3a3040'; c.fillRect(0, 220, W, H - 220);
-    // 窗户 — 日间
-    c.fillStyle = '#87CEEB';
-    c.globalAlpha = 0.6;
-    c.fillRect(380, 30, 120, 100);
-    c.globalAlpha = 1;
-    c.strokeStyle = '#4a4050'; c.lineWidth = 3;
-    c.strokeRect(380, 30, 120, 100);
-    c.beginPath(); c.moveTo(440, 30); c.lineTo(440, 130); c.stroke();
-    c.beginPath(); c.moveTo(380, 80); c.lineTo(500, 80); c.stroke();
-    // 书桌
-    r.roundRect(180, 150, 200, 60, 4, '#5a4a5a');
-    r.roundRect(180, 146, 200, 8, 4, '#6a5a6a');
-    // 笔记本电脑
-    r.roundRect(220, 140, 60, 40, 2, '#333');
-    r.roundRect(222, 142, 56, 28, 1, '#4488cc');
-    // 键盘
-    r.roundRect(290, 155, 50, 30, 2, '#444');
-    c.fillStyle = '#555';
-    c.fillRect(295, 158, 40, 2);
-    // 咖啡杯
-    c.fillStyle = '#e8d8c8';
-    c.fillRect(350, 158, 14, 16);
-    c.fillStyle = '#6a4a3a';
-    c.fillRect(352, 160, 10, 8);
-    // 绿植（窗台）
-    c.fillStyle = '#4a6a3a';
-    c.beginPath(); c.arc(395, 130, 10, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#5a3a3a';
-    c.fillRect(393, 135, 4, 8);
-    // 书架
-    r.roundRect(20, 60, 100, 150, 3, '#4a3a4a');
-    for (let i = 0; i < 3; i++) {
-      c.fillStyle = '#5a4a5a';
-      c.fillRect(25, 80 + i * 45, 90, 3);
-      // 书
-      const colors = ['#c06060', '#6060c0', '#60c060', '#c0a060', '#a060c0'];
-      for (let j = 0; j < 4; j++) {
-        c.fillStyle = colors[(i * 4 + j) % colors.length];
-        c.fillRect(28 + j * 20, 65 + i * 45, 14, 14);
-      }
-    }
-  },
-
-  CAFE_WORKING(r) {
-    SCENE_RENDERERS.CAFE(r);
-    const c = r.ctx;
-    // 笔记本电脑
-    r.roundRect(260, 155, 55, 35, 2, '#333');
-    r.roundRect(262, 157, 51, 24, 1, '#4488cc');
-    // 咖啡杯
-    c.fillStyle = '#e8d8c8';
-    c.fillRect(330, 158, 12, 14);
-    c.fillStyle = '#6a4a3a';
-    c.fillRect(332, 160, 8, 7);
-    // 小标签：工作中
-    c.fillStyle = 'rgba(100,80,60,0.5)';
-    c.font = '10px sans-serif';
-    c.fillText('工作模式', 270, 148);
-  },
-
-  OUTDOOR_WORKING(r) {
-    const c = r.ctx;
-    // 户外场景
-    c.fillStyle = '#87CEEB'; c.fillRect(0, 0, W, 180);
-    c.fillStyle = '#90c060'; c.fillRect(0, 180, W, 80);
-    c.fillStyle = '#70a050'; c.fillRect(0, 220, W, H - 220);
-    // 远处建筑
-    c.fillStyle = '#b0c0d0';
-    c.fillRect(0, 100, 80, 80);
-    c.fillRect(90, 120, 60, 60);
-    c.fillRect(450, 90, 70, 90);
-    c.fillRect(530, 130, 60, 50);
-    // 树
-    c.fillStyle = '#5a3a2a';
-    c.fillRect(150, 150, 8, 50);
-    c.fillStyle = '#4a8a3a';
-    c.beginPath(); c.arc(154, 135, 25, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#3a7a2a';
-    c.beginPath(); c.arc(145, 140, 18, 0, Math.PI * 2); c.fill();
-    // 另一棵树
-    c.fillStyle = '#5a3a2a';
-    c.fillRect(420, 160, 7, 40);
-    c.fillStyle = '#5a9a4a';
-    c.beginPath(); c.arc(423, 145, 20, 0, Math.PI * 2); c.fill();
-    // 相机/器材（地面）
-    r.roundRect(200, 200, 30, 20, 2, '#333');
-    c.fillStyle = '#555';
-    c.beginPath(); c.arc(225, 205, 8, 0, Math.PI * 2); c.fill();
-    // 小路
-    c.fillStyle = '#c0b0a0';
-    c.fillRect(0, 250, W, 20);
-    // 云
-    c.fillStyle = 'rgba(255,255,255,0.7)';
-    c.beginPath(); c.arc(100 + Math.sin(r.time * 0.005) * 20, 50, 25, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(125, 45, 18, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(350 + Math.sin(r.time * 0.003) * 15, 35, 22, 0, Math.PI * 2); c.fill();
-  },
-
-  STUDIO_WORKING(r) {
-    const c = r.ctx;
-    // 工作室 — 暗色调
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#2a2530'); wg.addColorStop(1, '#352a35');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    c.fillStyle = '#3a3040'; c.fillRect(0, 220, W, H - 220);
-    // 设备架
-    r.roundRect(400, 80, 120, 100, 3, '#3a3545');
-    c.fillStyle = '#4a4555';
-    c.fillRect(410, 90, 30, 20);
-    c.fillRect(410, 120, 30, 20);
-    c.fillRect(410, 150, 30, 20);
-    // 小指示灯
-    c.fillStyle = '#44cc44';
-    c.beginPath(); c.arc(450, 100, 3, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#cc4444';
-    c.beginPath(); c.arc(460, 100, 3, 0, Math.PI * 2); c.fill();
-    // 工作台
-    r.roundRect(150, 160, 220, 50, 4, '#4a3a4a');
-    r.roundRect(150, 156, 220, 8, 4, '#5a4a5a');
-    // 显示器
-    r.roundRect(180, 100, 80, 55, 3, '#222');
-    r.roundRect(183, 103, 74, 49, 1, '#3366aa');
-    c.fillRect(215, 155, 10, 5);
-    // 麦克风
-    c.fillStyle = '#555';
-    c.fillRect(320, 140, 4, 25);
-    c.beginPath(); c.arc(322, 135, 8, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#666';
-    c.beginPath(); c.arc(322, 135, 5, 0, Math.PI * 2); c.fill();
-    // 地毯
-    c.fillStyle = 'rgba(80,60,80,0.3)';
-    c.fillRect(200, 230, 160, 30);
-  },
-
-  // ── 旅行场景 ──
-
-  AIRPORT(r) {
-    const c = r.ctx;
-    // 明亮机场大厅
-    const wg = c.createLinearGradient(0, 0, 0, 260);
-    wg.addColorStop(0, '#e8e4e0'); wg.addColorStop(1, '#d8d4d0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 260);
-    // 地板
-    c.fillStyle = '#c0b8a8'; c.fillRect(0, 260, W, H - 260);
-
-    // 大玻璃窗
-    r.roundRect(40, 30, 250, 120, 4, '#c0d8e8');
-    // 窗外 - 天空 + 飞机
-    c.fillStyle = '#87CEEB';
-    c.fillRect(44, 34, 242, 112);
-    // 云
-    c.fillStyle = 'rgba(255,255,255,0.7)';
-    c.beginPath(); c.arc(150, 70, 20, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(180, 65, 14, 0, Math.PI * 2); c.fill();
-    // 小飞机
-    const planeOff = (r.time * 0.3) % 300;
-    c.fillStyle = '#555';
-    c.beginPath(); c.moveTo(60 + planeOff, 80); c.lineTo(80 + planeOff, 80);
-    c.lineTo(85 + planeOff, 76); c.lineTo(90 + planeOff, 80); c.lineTo(95 + planeOff, 80); c.fill();
-
-    // 航班信息屏
-    r.roundRect(350, 30, 240, 60, 3, '#1a1a2a');
-    c.fillStyle = '#f0a020'; c.font = '10px monospace';
-    c.fillText('DEPARTURES', 360, 48);
-    c.fillStyle = '#4ae04a'; c.font = '9px monospace';
-    c.fillText('CA123  北京  ON TIME   12:30', 360, 62);
-    c.fillText('MU567  东京  DELAYED  14:15', 360, 75);
-
-    // 登机口
-    r.roundRect(480, 130, 80, 50, 4, '#d0ccc8');
-    c.fillStyle = '#888'; c.font = '12px sans-serif';
-    c.fillText('GATE 12', 490, 160);
-
-    // 行李
-    r.roundRect(100, 220, 40, 30, 3, '#4a6a8a');
-    r.roundRect(100, 215, 40, 8, 2, '#5a7a9a');
-    // 拉杆箱
-    r.roundRect(160, 225, 25, 25, 3, '#e74c3c');
-    c.fillStyle = '#555'; c.fillRect(170, 220, 2, 8);
-
-    // 候车座椅
-    for (let i = 0; i < 3; i++) {
-      const sx = 240 + i * 80;
-      r.roundRect(sx, 210, 50, 5, 1, '#888');
-      c.fillStyle = '#777'; c.fillRect(sx + 5, 215, 4, 20);
-      c.fillRect(sx + 41, 215, 4, 20);
-    }
-  },
-
-  TOURING(r) {
-    const c = r.ctx;
-    // 天空
-    const sg = c.createLinearGradient(0, 0, 0, 180);
-    sg.addColorStop(0, '#4ab0e8'); sg.addColorStop(1, '#8ad0f0');
-    c.fillStyle = sg; c.fillRect(0, 0, W, 180);
-    // 云
-    c.fillStyle = 'rgba(255,255,255,0.8)';
-    const cOff = (r.time * 0.08) % W;
-    c.beginPath(); c.arc(100 + cOff % 600, 40, 18, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(400 + (cOff * 0.5) % 600, 55, 15, 0, Math.PI * 2); c.fill();
-
-    // 远处 - 标志性建筑剪影（寺庙/城堡）
-    c.fillStyle = '#8a8090';
-    r.roundRect(280, 80, 80, 100, 0, '#8a8090');
-    // 塔顶
-    c.beginPath(); c.moveTo(280, 80); c.lineTo(320, 30); c.lineTo(360, 80); c.fill();
-    // 屋檐
-    c.fillStyle = '#7a7080';
-    c.beginPath(); c.moveTo(265, 100); c.lineTo(375, 100); c.lineTo(370, 90); c.lineTo(270, 90); c.fill();
-
-    // 树
-    c.fillStyle = '#3a7a3a';
-    c.beginPath(); c.arc(100, 140, 22, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#5a3a1a'; c.fillRect(96, 155, 8, 30);
-    c.fillStyle = '#4a8a4a';
-    c.beginPath(); c.arc(500, 145, 18, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#5a3a1a'; c.fillRect(497, 158, 6, 25);
-
-    // 地面（石板路）
-    c.fillStyle = '#b0a898'; c.fillRect(0, 200, W, H - 200);
-    // 石板纹理
-    c.strokeStyle = 'rgba(0,0,0,0.06)'; c.lineWidth = 1;
-    for (let i = 0; i < 20; i++) {
-      const sx = (i * 35 + 10) % W;
-      c.beginPath(); c.moveTo(sx, 200); c.lineTo(sx + 15, H); c.stroke();
-    }
-
-    // 路灯
-    c.fillStyle = '#555'; c.fillRect(40, 100, 3, 100);
-    c.fillStyle = '#f0e8a0';
-    c.beginPath(); c.arc(41, 96, 10, 0, Math.PI * 2); c.fill();
-
-    // 相机标志（主角在拍照）
-    c.fillStyle = '#333';
-    c.beginPath(); c.arc(560, 195, 10, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#555';
-    c.beginPath(); c.arc(560, 195, 6, 0, Math.PI * 2); c.fill();
-  },
-
-  HOTEL(r) {
-    const c = r.ctx;
-    // 酒店房间 — 暖色
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#2a2030'); wg.addColorStop(1, '#1e1a28');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    c.fillStyle = '#3a3040'; c.fillRect(0, 220, W, H - 220);
-
-    // 大窗户（夜景）
-    r.roundRect(350, 40, 160, 120, 4, '#1a2a4a');
-    // 窗外城市灯光
-    c.fillStyle = 'rgba(255,200,100,0.5)';
-    for (let i = 0; i < 15; i++) {
-      c.fillRect(360 + (i * 11) % 140, 60 + (i * 7) % 80, 3, 3);
-    }
-    // 窗帘
-    c.fillStyle = '#4a3a5a';
-    c.fillRect(345, 35, 12, 130);
-    c.fillRect(503, 35, 12, 130);
-
-    // 大床
-    r.roundRect(80, 160, 180, 50, 4, '#5a4a3a');
-    r.roundRect(80, 155, 180, 12, 4, '#e8e0d0');
-    r.roundRect(90, 158, 70, 8, 3, '#f0e8d8');
-
-    // 床头柜 + 灯
-    r.roundRect(270, 170, 30, 40, 3, '#4a3a2a');
-    c.fillStyle = 'rgba(255,180,100,0.6)';
-    c.beginPath(); c.arc(285, 168, 6, 0, Math.PI * 2); c.fill();
-
-    // 电视
-    r.roundRect(330, 130, 10, 50, 2, '#333');
-    r.roundRect(325, 120, 20, 5, 2, '#444');
-
-    // 笔记本电脑（在另一张小桌上）
-    r.roundRect(420, 170, 80, 40, 3, '#4a3a5a');
-    r.roundRect(435, 155, 50, 18, 2, '#333');
-    r.roundRect(437, 157, 46, 14, 1, '#4488cc');
-  },
-
-  LOCAL_FOOD(r) {
-    const c = r.ctx;
-    // 温暖的街头美食氛围
-    const wg = c.createLinearGradient(0, 0, 0, 220);
-    wg.addColorStop(0, '#f0d8a0'); wg.addColorStop(1, '#e8c888');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 220);
-    c.fillStyle = '#c0a870'; c.fillRect(0, 220, W, H - 220);
-
-    // 灯笼
-    for (let i = 0; i < 4; i++) {
-      const lx = 80 + i * 150;
-      c.fillStyle = '#e74c3c';
-      c.beginPath(); c.arc(lx, 40, 16, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#f0a020';
-      c.beginPath(); c.arc(lx, 40, 10, 0, Math.PI * 2); c.fill();
-      c.strokeStyle = '#c03030'; c.lineWidth = 1;
-      c.beginPath(); c.moveTo(lx, 24); c.lineTo(lx, 15); c.stroke();
-    }
-
-    // 摊位
-    r.roundRect(50, 140, 200, 80, 3, '#6a4a2a');
-    r.roundRect(50, 135, 200, 12, 4, '#7a5a3a');
-    // 蒸笼
-    for (let i = 0; i < 3; i++) {
-      r.roundRect(70 + i * 55, 110, 40, 28, 2, '#f0f0e8');
-      c.fillStyle = '#d0d0c0';
-      c.fillRect(70 + i * 55, 108, 40, 4);
-    }
-    // 蒸汽
-    c.strokeStyle = 'rgba(255,255,255,0.4)'; c.lineWidth = 1;
-    const sOff = Math.sin(r.time * 0.04) * 2;
-    c.beginPath(); c.moveTo(90, 106); c.quadraticCurveTo(88, 98 + sOff, 92, 92); c.stroke();
-    c.beginPath(); c.moveTo(145, 106); c.quadraticCurveTo(143, 100 + sOff, 148, 94); c.stroke();
-
-    // 第二个摊位
-    r.roundRect(350, 150, 180, 70, 3, '#5a4a3a');
-    c.fillStyle = '#ff0'; c.font = '11px sans-serif';
-    c.fillText('🍜', 400, 180);
-    c.fillText('🍜', 440, 185);
-    c.fillText('🍜', 470, 178);
-
-    // 路面
-    c.fillStyle = '#a09880'; c.fillRect(0, 280, W, 20);
-  },
-
-  SCENIC_DRIVE(r) {
-    const c = r.ctx;
-    // 车窗视角 — 蓝天 + 流动的风景
-    const sg = c.createLinearGradient(0, 0, 0, 200);
-    sg.addColorStop(0, '#4ab0e8'); sg.addColorStop(1, '#8ad0f0');
-    c.fillStyle = sg; c.fillRect(0, 0, W, 200);
-    // 云（流动）
-    c.fillStyle = 'rgba(255,255,255,0.7)';
-    const drift = (r.time * 1.5) % W;
-    c.beginPath(); c.arc(W - drift, 50, 25, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(W - drift + 30, 45, 18, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(W - (drift * 0.7 + 300) % W, 70, 20, 0, Math.PI * 2); c.fill();
-
-    // 远山
-    c.fillStyle = '#7aaa7a';
-    c.beginPath(); c.moveTo(0, 200); c.lineTo(100, 120); c.lineTo(200, 160);
-    c.lineTo(350, 100); c.lineTo(500, 150); c.lineTo(640, 110); c.lineTo(640, 200); c.fill();
-    // 近山
-    c.fillStyle = '#5a8a5a';
-    c.beginPath(); c.moveTo(0, 200); c.lineTo(150, 140); c.lineTo(300, 170);
-    c.lineTo(450, 130); c.lineTo(640, 160); c.lineTo(640, 200); c.fill();
-
-    // 流动的路边树
-    const treeOff = (r.time * 2) % 80;
-    for (let i = 0; i < 10; i++) {
-      const tx = (i * 80 - treeOff) % (W + 40) - 20;
-      c.fillStyle = '#5a3a1a'; c.fillRect(tx + 4, 180, 6, 20);
-      c.fillStyle = '#4a8a3a';
-      c.beginPath(); c.arc(tx + 7, 170, 14, 0, Math.PI * 2); c.fill();
-    }
-
-    // 路面
-    c.fillStyle = '#666'; c.fillRect(0, 200, W, 80);
-    // 车道线
-    c.fillStyle = '#fff';
-    const lineOff = (r.time * 3) % 60;
-    for (let i = 0; i < 15; i++) {
-      c.fillRect(i * 60 - lineOff, 240, 30, 3);
-    }
-
-    // 车窗边框
-    c.strokeStyle = '#333'; c.lineWidth = 6;
-    c.strokeRect(0, 0, W, H);
-  },
-
-  RESTAURANT_LOCAL(r) {
-    SCENE_RENDERERS.CAFE(r);
-    const c = r.ctx;
-    // 覆盖为当地餐厅风格
-    c.fillStyle = 'rgba(200,160,80,0.1)';
-    c.fillRect(0, 0, W, H);
-    // 菜单板改为当地特色
-    r.roundRect(60, 40, 80, 50, 3, '#2a2a2a');
-    c.fillStyle = '#f0d8a8'; c.font = '9px sans-serif';
-    c.fillText('当地特色菜', 68, 58);
-    c.fillText('招牌推荐 ¥35', 68, 72);
-    c.fillText('时令鲜蔬 ¥28', 68, 84);
-  },
-
-  TRAIN_STATION(r) {
-    const c = r.ctx;
-    // 火车站风格
-    const wg = c.createLinearGradient(0, 0, 0, 260);
-    wg.addColorStop(0, '#d8d4d0'); wg.addColorStop(1, '#c8c4c0');
-    c.fillStyle = wg; c.fillRect(0, 0, W, 260);
-    c.fillStyle = '#999'; c.fillRect(0, 260, W, H - 260);
-
-    // 铁轨结构天花板
-    c.fillStyle = '#888';
-    for (let i = 0; i < 8; i++) {
-      c.fillRect(i * 85, 0, 4, 40);
-    }
-    c.fillRect(0, 35, W, 6);
-
-    // 大显示屏
-    r.roundRect(200, 60, 200, 50, 3, '#1a1a2a');
-    c.fillStyle = '#4ae04a'; c.font = '11px monospace';
-    c.fillText('G5  开往成都  15:30', 215, 82);
-    c.fillStyle = '#f0a020'; c.font = '10px monospace';
-    c.fillText('检票口 B3', 215, 98);
-
-    // 候车座椅
-    for (let i = 0; i < 5; i++) {
-      const sx = 40 + i * 120;
-      r.roundRect(sx, 180, 80, 5, 1, '#888');
-      c.fillStyle = '#777'; c.fillRect(sx + 5, 185, 4, 25);
-      c.fillRect(sx + 71, 185, 4, 25);
-    }
-
-    // 时钟
-    c.fillStyle = '#fff';
-    c.beginPath(); c.arc(550, 80, 20, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#333';
-    c.beginPath(); c.arc(550, 80, 18, 0, Math.PI * 2); c.stroke();
-    c.font = '12px monospace'; c.fillText('15:22', 536, 84);
-  },
-
-};

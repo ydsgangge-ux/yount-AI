@@ -274,6 +274,34 @@ def _is_non_modern_world() -> bool:
         return False
 
 
+# ── 异世界场景→背景图映射 ──
+_FANTASY_BG_KEYWORDS = [
+    (["城镇", "集市", "广场", "街道", "商铺", "小镇", "市场"], "town_square"),
+    (["酒馆", "旅馆", "旅店", "客栈", "休息"], "tavern"),
+    (["森林", "树林", "丛林", "密林", "精灵"], "forest"),
+    (["城堡", "宫殿", "王城", "皇宫", "大厅"], "castle"),
+    (["学院", "魔法", "塔", "图书馆", "研究"], "magic_academy"),
+    (["地下", "地牢", "副本", "洞窟", "矿坑", "迷宫"], "dungeon"),
+    (["营地", "扎营", "篝火", "野营", "露营"], "night_camp"),
+    (["湖", "河", "溪", "水边", "泉"], "lakeside"),
+    (["山", "峡谷", "关隘", "山道", "高地"], "mountain_pass"),
+    (["神殿", "祠堂", "祭坛", "圣", "遗迹", "古"], "shrine"),
+    (["草原", "平原", "田野", "牧场", "旷野"], "plains"),
+]
+
+
+def _map_fantasy_bg(scene_name: str) -> str:
+    """将异世界场景名（中文）映射到通用背景图文件名（不含扩展名）"""
+    if not scene_name:
+        return "town_square"
+    for keywords, bg_name in _FANTASY_BG_KEYWORDS:
+        for kw in keywords:
+            if kw in scene_name:
+                return bg_name
+    # 默认：城镇广场
+    return "town_square"
+
+
 def _get_arc_summary() -> Optional[dict]:
     """获取当前主线的摘要信息，供 API 返回"""
     try:
@@ -898,6 +926,11 @@ def api_world_state():
             for l in world_state.today_log[-20:]
         ]
 
+    # 背景图提示（异世界场景→通用背景映射）
+    bg_hint = None
+    if _is_non_modern_world():
+        bg_hint = _map_fantasy_bg(world_state.current_scene or "")
+
     return {
         "scene": world_state.current_scene,
         "scene_label": scene_label,
@@ -914,6 +947,7 @@ def api_world_state():
         "travel": travel_info,
         "world": world_info,
         "is_story_mode": _is_non_modern_world(),
+        "bg_hint": bg_hint,
         "story_cast": story_cast if _is_non_modern_world() else None,
         "day_plan": (world_state.day_plan if _is_non_modern_world() else None),
         "day_plan_progress": world_state.day_plan_progress if _is_non_modern_world() else None,

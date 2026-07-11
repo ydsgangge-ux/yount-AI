@@ -318,6 +318,7 @@ def _build_office_prompt(name, age, city, occupation, personality, extra_context
   }},
   "current_context": "最近在忙什么，30字以内",
   "pixel_appearance": {{
+    "gender": "male 或 female",
     "hair_color": "#十六进制颜色",
     "hair_style": "发型",
     "default_outfit_color": "#十六进制颜色"
@@ -426,6 +427,7 @@ def _build_freelance_prompt(name, age, city, occupation, personality, extra_cont
   }},
   "current_context": "最近在忙什么项目/创作，30字以内",
   "pixel_appearance": {{
+    "gender": "male 或 female",
     "hair_color": "#十六进制颜色",
     "hair_style": "发型",
     "default_outfit_color": "#十六进制颜色"
@@ -528,6 +530,7 @@ def _build_student_prompt(name, age, city, occupation, personality, extra_contex
   }},
   "current_context": "最近在忙什么（如考试、论文、社团等），30字以内",
   "pixel_appearance": {{
+    "gender": "male 或 female",
     "hair_color": "#十六进制颜色",
     "hair_style": "发型",
     "default_outfit_color": "#十六进制颜色"
@@ -632,6 +635,7 @@ def _build_travel_prompt(name, age, city, occupation, personality, extra_context
   }},
   "current_context": "最近在忙什么旅行项目，30字以内",
   "pixel_appearance": {{
+    "gender": "male 或 female",
     "hair_color": "#十六进制颜色",
     "hair_style": "发型",
     "default_outfit_color": "#十六进制颜色"

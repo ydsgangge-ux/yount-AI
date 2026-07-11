@@ -227,6 +227,7 @@ class HabitsInfo(BaseModel):
 
 
 class PixelAppearance(BaseModel):
+    gender: str = "female"       # "male" 或 "female"，决定立绘性别
     hair_color: str = "#4A3728"
     hair_style: str = "中长发"
     default_outfit_color: str = "#F5F0E8"
