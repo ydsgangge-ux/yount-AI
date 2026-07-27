@@ -1159,11 +1159,14 @@ class MemoryPage(QWidget):
                         conn.execute("DELETE FROM memory_entities")
                     if self._table_exists(conn, "formed_cognition"):
                         conn.execute("DELETE FROM formed_cognition")
+                    # 清除对话记录（interactions 表）
+                    if self._table_exists(conn, "interactions"):
+                        conn.execute("DELETE FROM interactions")
                     # 重置自增序列
                     conn.execute(
                         "DELETE FROM sqlite_sequence WHERE name='memories'"
                     ) if self._table_exists(conn, "sqlite_sequence") else None
-                    deleted_msg = "全部记忆及关联网络"
+                    deleted_msg = "全部记忆、关联网络及对话记录"
                 elif scope in ("detail", "outline", "summary"):
                     count = conn.execute(
                         "SELECT COUNT(*) FROM memories WHERE level=?", (scope,)
@@ -1182,6 +1185,21 @@ class MemoryPage(QWidget):
 
                 conn.commit()
 
+            # 清除 agent 内存中的对话历史（否则会影响新人格回复）
+            if scope == "all" and self.agent and hasattr(self.agent, 'conversation_history'):
+                self.agent.conversation_history.clear()
+
+            # 清除聊天页面的气泡显示
+            if scope == "all":
+                self._clear_chat_bubbles()
+                # 同步清除悬浮窗消息
+                fw = getattr(self, 'float_win', None)
+                if fw and hasattr(fw, 'clear_messages'):
+                    try:
+                        fw.clear_messages()
+                    except Exception:
+                        pass
+
             # 刷新列表
             self.load()
             QMessageBox.information(
@@ -1190,6 +1208,23 @@ class MemoryPage(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "清除失败", f"❌ 操作失败：{e}")
+
+    def _clear_chat_bubbles(self):
+        """清除聊天页面的所有消息气泡"""
+        try:
+            chat = self.chat_page
+            layout = chat._msg_layout
+            # 倒序移除所有气泡（保留最后的 stretch）
+            for i in range(layout.count() - 1, -1, -1):
+                item = layout.itemAt(i)
+                if item and item.widget():
+                    w = item.widget()
+                    layout.removeWidget(w)
+                    w.deleteLater()
+            # 重新添加 stretch
+            layout.addStretch()
+        except Exception:
+            pass
 
     def search(self):
         q = self._search.text().strip()

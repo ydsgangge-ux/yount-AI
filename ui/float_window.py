@@ -667,6 +667,17 @@ class FloatingWindow(QWidget):
             self._scroll.verticalScrollBar().maximum()
         ))
 
+    def clear_messages(self):
+        """清除所有消息气泡"""
+        layout = self._msg_layout
+        for i in range(layout.count() - 1, -1, -1):
+            item = layout.itemAt(i)
+            if item and item.widget():
+                w = item.widget()
+                layout.removeWidget(w)
+                w.deleteLater()
+        layout.addStretch()
+
     def set_thinking(self, thinking: bool):
         if thinking:
             self._emotion_lbl.setText(f"· {t('thinking')}")

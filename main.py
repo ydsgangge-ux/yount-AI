@@ -301,6 +301,7 @@ class AGIApp:
         self.float_win = FloatingWindow(
             opacity=self.cfg.get("float_opacity", 0.95)
         )
+        self.main_win.float_win = self.float_win  # 允许 MainWindow 在清除记忆时同步清悬浮窗
         self.tray   = SystemTray()
         self.hotkey = GlobalHotkey()
 
