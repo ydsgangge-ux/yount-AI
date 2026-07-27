@@ -1033,21 +1033,40 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
 
     # 前情提要：上一段主线的摘要
     prev_hint = ""
+    prev_threat_level = 0
     if previous_arc:
         prev_title = previous_arc.get("title", "")
         prev_desc = previous_arc.get("description", "")
+        prev_goal = previous_arc.get("main_goal", "")
+        prev_antagonist = previous_arc.get("antagonist", "")
+        prev_antagonist_motiv = previous_arc.get("antagonist_motivation", "")
+        prev_threat_level = previous_arc.get("threat_level", 1)
+        prev_consequences = previous_arc.get("consequences", "")
+        prev_threads = previous_arc.get("unresolved_threads", [])
         stages = previous_arc.get("stages", [])
         final_stage = stages[-1] if stages else {}
         final_events = "；".join(final_stage.get("key_events", [])[:3])
         if final_stage.get("description"):
             final_events = final_stage["description"] + "。" + final_events
-        prev_hint = f"""
 
-【前情提要】
-上一条主线：「{prev_title}」
-概述：{prev_desc}
-结局：{final_events}
-"""
+        prev_hint = f"\n\n【前情提要】\n上一条主线：「{prev_title}」\n大目标：{prev_goal}\n概述：{prev_desc}\n"
+
+        if prev_antagonist:
+            prev_hint += f"上一个对手：{prev_antagonist}"
+            if prev_antagonist_motiv:
+                prev_hint += f"（动机：{prev_antagonist_motiv}）"
+            prev_hint += "\n"
+
+        prev_hint += f"结局：{final_events}\n"
+
+        if prev_consequences:
+            prev_hint += f"此主线造成的后果：{prev_consequences}\n"
+
+        if prev_threads:
+            prev_hint += "未解决的伏笔：\n"
+            for t in prev_threads[:5]:
+                prev_hint += f"  - {t}\n"
+
         # 历史归档中的主线轨迹
         try:
             hist_path = Path(__file__).parent.parent / "data" / "life_arc_history.json"
@@ -1056,33 +1075,64 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
                     history = json.load(f)
                 if history:
                     arc_titles = " → ".join([h.get("title", "?") for h in history[-5:]])
-                    prev_hint += f"角色经历过的所有主线：{arc_titles}\n"
+                    prev_hint += f"\n角色经历过的主线轨迹：{arc_titles}\n"
+                    # 提取历史中的反派
+                    past_antagonists = [h.get("antagonist", "") for h in history if h.get("antagonist")]
+                    if past_antagonists:
+                        prev_hint += f"过去的对手：{'、'.join(past_antagonists[-3:])}\n"
         except Exception:
             pass
 
-    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）规划一段为期约30天的人生主线任务。{prev_hint}
+    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）规划一段人生主线任务。{prev_hint}
 
-要求：
-1. 主线要有起承转合，符合角色身份和性格
-2. 分为 4-7 个阶段，每个阶段持续 3-10 天不等
-3. 阶段之间要有逻辑递进关系（如：准备→出发→探索→高潮→收尾）
-4. 每个阶段给出 2-4 个可能发生的关键事件
-5. 总时长控制在 25-40 天
-6. 内容要符合世界观设定，有冒险感但不离谱
-7. 标题用 10-20 字概括
-8. 如果有【前情提要】，新主线要基于前情自然延续，角色状态和关系要有继承性
+## 核心设计原则
+
+1. **目标层级**：主线是一个大目标，每个阶段是一个中目标，每个子目标是小目标。大目标拆解为中目标，中目标拆解为小目标
+2. **必须有对抗力量**：每条主线都必须有明确的 antagonist（反派/对抗力量）。没有反派的故事没有紧张感。对抗力量可以是：
+   - 具体的反派角色（黑魔法师、腐败的领主、宿敌刺客）
+   - 组织或势力（暗影教会、盗贼公会、侵略军队）
+   - 自然/超自然威胁（瘟疫、远古封印松动、异变魔兽）
+   - 但必须有自己的动机，不是纯粹的"坏人"，要让玩家理解他们为什么这样做
+3. **威胁升级**：如果有前情提要，新主线的威胁等级必须高于上一条（threat_level + 1，最高5）。角色在成长，挑战也必须升级。可以是：
+   - 之前的对手回来复仇/升级
+   - 前一个事件意外引出了更大的威胁
+   - 角色的新身份/新能力引来新的敌人
+4. **节奏多变**：不要每天都充满戏剧冲突。有些阶段是缓慢的赶路（可能持续3-5天），有些是紧张的决战（2-3天），有些是日常社交铺垫。张弛有度才是好故事
+5. **时长自由**：总时长由故事本身决定，不要刻意压缩。一个涉及远方旅程的主线可能需要40-60天，一个本地事件可能只要15-20天
+6. **阶段类型**：每个阶段标注类型，用于控制节奏：
+   - travel（旅行赶路）：以移动为主，节奏慢，可以持续多天
+   - preparation（准备）：收集情报、整备装备、修炼提升
+   - exploration（探索）：调查未知区域、发现线索
+   - social（社交）：与NPC互动、建立关系、获取帮助
+   - conflict（冲突）：对抗、战斗、危机
+   - climax（高潮）：主线最关键的事件
+   - resolution（收尾）：处理后果、休整、为新冒险埋种子
+7. **子目标**：每个阶段拆出2-4个具体可执行的小目标，让角色每天有事可做
+8. **未解伏笔**：给出2-3个本主线结束后仍未解决的伏笔，为下一条主线埋种子
+9. **前情延续**：如果有【前情提要】，新主线必须基于前作的后果和未解伏笔自然发展，不是另起炉灶
+
+## 输出要求
 
 返回 JSON，不要其他内容：
 {{
-  "title": "主线标题",
-  "description": "主线概述（50-100字）",
+  "title": "主线标题（10-20字）",
+  "description": "主线概述（80-150字，说明大目标是什么、为什么要做）",
+  "main_goal": "主线大目标（一句话概括最终要达成什么）",
+  "antagonist": "对抗力量描述（谁/什么在阻止主角，20-40字）",
+  "antagonist_motivation": "对抗力量的动机（为什么这样做，20-40字）",
+  "threat_level": {prev_threat_level + 1},
   "duration_days": 30,
+  "unresolved_threads": ["伏笔1", "伏笔2", "伏笔3"],
+  "consequences": "本主线完成后的后果（如果主角成功了会怎样，如果失败了会怎样，30-60字）",
   "stages": [
     {{
       "name": "阶段名（5-10字）",
       "description": "阶段描述（20-50字）",
+      "goal": "本阶段目标（一句话，如：抵达矮人王国、找到失踪的商人）",
+      "stage_type": "travel",
       "duration_days": 5,
-      "key_events": ["事件1", "事件2", "事件3"]
+      "key_events": ["事件1", "事件2", "事件3"],
+      "sub_goals": ["小目标1", "小目标2", "小目标3"]
     }}
   ]
 }}"""
@@ -1114,14 +1164,17 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
             if not isinstance(s, dict):
                 continue
             dur = int(s.get("duration_days", 5))
-            dur = max(2, min(15, dur))
+            dur = max(2, min(20, dur))  # 放宽到20天
             total_days += dur
             stages.append({
                 "name": str(s.get("name", "阶段")),
                 "description": str(s.get("description", "")),
+                "goal": str(s.get("goal", "")),
+                "stage_type": str(s.get("stage_type", "exploration")),
                 "duration_days": dur,
                 "status": "pending",
                 "key_events": [str(e) for e in s.get("key_events", [])[:5]],
+                "sub_goals": [str(g) for g in s.get("sub_goals", [])[:4]],
             })
 
         if not stages:
@@ -1130,10 +1183,20 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         # 激活第一个阶段
         stages[0]["status"] = "active"
 
+        # 威胁等级递增，上限5
+        threat_level = int(result.get("threat_level", prev_threat_level + 1))
+        threat_level = max(1, min(5, threat_level))
+
         return {
             "title": str(result.get("title", "日常冒险")),
             "description": str(result.get("description", "")),
+            "main_goal": str(result.get("main_goal", "")),
+            "antagonist": str(result.get("antagonist", "")),
+            "antagonist_motivation": str(result.get("antagonist_motivation", "")),
+            "threat_level": threat_level,
             "duration_days": total_days,
+            "unresolved_threads": [str(t) for t in result.get("unresolved_threads", [])[:5]],
+            "consequences": str(result.get("consequences", "")),
             "stages": stages,
         }
 
@@ -1145,14 +1208,21 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
 def _default_life_arc(name: str = "角色") -> dict:
     """主线生成失败时的默认值"""
     return {
-        "title": "日常修炼与探索",
-        "description": f"{name}开始了平淡但充实的日常生活",
+        "title": "暗影试炼",
+        "description": f"{name}发现附近森林的魔兽异常暴动，调查后发现是暗影势力的阴谋",
+        "main_goal": "调查并阻止暗影势力的阴谋",
+        "antagonist": "暗影教派的残余势力",
+        "antagonist_motivation": "试图解封沉睡在地下的暗影魔物",
+        "threat_level": 1,
         "duration_days": 30,
+        "unresolved_threads": ["暗影教派的真正首领仍未现身", "地下封印的完整结构尚不清楚"],
+        "consequences": "如果成功，暗影教派的这一据点被清除；如果失败，暗影魔物可能被释放，周边村庄将遭殃",
         "stages": [
-            {"name": "日常修炼", "description": "在住处附近修炼基本功", "duration_days": 7, "status": "active", "key_events": ["晨练", "研读典籍", "基础训练"]},
-            {"name": "外出探索", "description": "到周边区域了解情况", "duration_days": 7, "status": "pending", "key_events": ["前往集市", "打听消息", "探索遗迹"]},
-            {"name": "任务执行", "description": "接受并完成一些任务", "duration_days": 10, "status": "pending", "key_events": ["接受委托", "战斗历练", "收获战利品"]},
-            {"name": "总结沉淀", "description": "休整并规划下一步", "duration_days": 6, "status": "pending", "key_events": ["整理收获", "修复装备", "记录心得"]},
+            {"name": "异常初现", "description": "注意到森林魔兽的异常行为", "goal": "收集异常情报", "stage_type": "exploration", "duration_days": 5, "status": "active", "key_events": ["发现异常魔兽", "询问村民", "找到线索"], "sub_goals": ["调查三起魔兽袭击事件", "找到目击者", "确定异常源头方向"]},
+            {"name": "深入调查", "description": "进入森林深处调查真相", "goal": "找到暗影教派的据点", "stage_type": "exploration", "duration_days": 7, "status": "pending", "key_events": ["追踪魔兽足迹", "发现祭坛遗迹", "遭遇教徒"], "sub_goals": ["追踪到森林深处", "发现教派的祭坛", "活捉一名教徒审问"]},
+            {"name": "备战准备", "description": "回去整备并寻求帮助", "goal": "做好突袭准备", "stage_type": "preparation", "duration_days": 5, "status": "pending", "key_events": ["采购药剂", "招募帮手", "制定计划"], "sub_goals": ["准备解毒药剂", "找到一个帮手", "制定突袭计划"]},
+            {"name": "突袭据点", "description": "攻击暗影教派的据点", "goal": "摧毁教派的祭坛", "stage_type": "climax", "duration_days": 5, "status": "pending", "key_events": ["潜入据点", "与守卫战斗", "摧毁祭坛"], "sub_goals": ["潜入不被发现", "击败守卫头目", "摧毁祭坛核心"]},
+            {"name": "战后收尾", "description": "处理后续并休整", "goal": "消化收获，警惕未来", "stage_type": "resolution", "duration_days": 8, "status": "pending", "key_events": ["审问俘虏", "整理战利品", "向村庄报告"], "sub_goals": ["审问俘虏获取情报", "整理战利品", "恢复伤势"]},
         ],
     }
 
@@ -1197,10 +1267,22 @@ def generate_day_plan(
 要求：
 1. 生成 8-10 个时间节点，从起床到入睡，均匀分布
 2. 每个节点包含：time(HH:MM)、scene(2-4字场景名)、label(4-8字标签)、activity(15-30字简短描述)、mood_delta(-5到+5)、npc(可选，NPC的id或空字符串)
-3. 活动要符合世界观设定，围绕主线推进
+3. 活动要符合世界观设定，围绕当前阶段目标推进
 4. 不要用感叹号
 5. activity 要精简概括，不要展开细节，细节会在到时间后按需展开
 6. 一天中至少 1-2 个节点涉及NPC互动
+
+## 节奏要求
+- 如果当前阶段是"travel"类型（赶路），大半天应该都在旅途上，不要安排太多事件，赶路本身就是内容
+- 如果是"preparation"类型，安排收集情报、采购、修炼等日常准备活动
+- 如果是"social"类型，多安排与NPC的互动场景
+- 如果是"conflict/climax"类型，安排紧张的事件，但也要有战前准备和战后休整
+- 如果是"resolution"类型，节奏要慢，安排整理、反思、休整
+- 不要每天都安排大事。有些天就是平淡的日常，这很重要
+
+## 子目标
+- 如果提示中给了子目标，今天安排1-2个可以推进的活动，不要一天全做完
+- 子目标的推进要自然融入日常，不要生硬地"完成子目标"
 
 返回 JSON 数组，不要其他内容：
 [{{"time":"07:00","scene":"房间","label":"晨起","activity":"{name}醒来，简单梳洗",  "mood_delta":1,"npc":""}}, ...]"""
@@ -1359,11 +1441,11 @@ def _default_day_plan(name: str = "角色") -> list:
     ]
 
 
-def generate_story_cast(character_card: dict) -> list:
+def generate_story_cast(character_card: dict, arc: dict = None, existing_cast: list = None) -> list:
     """
     为非现代世界生成剧情NPC卡司（3-5个角色）。
-    每个NPC有名字、身份、性格、秘密、说话风格。
-    基于世界观设定自动适配内容。
+    如果传入 arc，会根据主线反派设计加入对应阵营的NPC。
+    如果传入 existing_cast，保留部分老NPC以维持关系连续性。
     """
     llm = get_llm_client()
 
@@ -1373,14 +1455,36 @@ def generate_story_cast(character_card: dict) -> list:
     personality = character_card.get("basic", {}).get("personality_traits", [])
     traits_str = "、".join(personality[:3]) if personality else "未设定"
 
-    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）生成一组剧情NPC卡司。
+    # 主线反派信息
+    arc_hint = ""
+    if arc:
+        antagonist = arc.get("antagonist", "")
+        antagonist_motiv = arc.get("antagonist_motivation", "")
+        arc_title = arc.get("title", "")
+        arc_goal = arc.get("main_goal", "")
+        arc_hint = f"\n当前主线：「{arc_title}」\n主线目标：{arc_goal}\n"
+        if antagonist:
+            arc_hint += f"对抗力量：{antagonist}"
+            if antagonist_motiv:
+                arc_hint += f"（动机：{antagonist_motiv}）"
+            arc_hint += "\n卡司中必须包含1-2个与对抗力量相关的NPC（可以是反派阵营的人、被反派胁迫的人、或反对反派的盟友）\n"
+
+    # 老NPC信息（保持关系连续性）
+    old_cast_hint = ""
+    if existing_cast:
+        old_brief = "\n".join([f"- {c.get('name', '?')}（{c.get('role', '?')}，信任度{c.get('trust', 50)}）" for c in existing_cast[:5]])
+        old_cast_hint = f"\n\n角色已有的社交关系：\n{old_brief}\n可以保留1-2个关系最深的老面孔，其余换新。\n"
+
+    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）生成一组剧情NPC卡司。{arc_hint}{old_cast_hint}
 
 要求：
-1. 生成 3-5 个NPC，他们将在剧情中反复出现
+1. 生成 4-6 个NPC，他们将在剧情中反复出现
 2. NPC类型要多样：同伴、对手、导师、神秘人、交易伙伴等
-3. 每个NPC要有独特的性格和说话风格，让对话有辨识度
-4. 每个NPC要有一个秘密或隐藏身份，为后续剧情埋伏笔
-5. NPC要完全符合世界观设定，不要出现现代元素
+3. 如果有当前主线，必须包含1-2个与对抗力量相关的NPC
+4. 每个NPC要有独特的性格和说话风格，让对话有辨识度
+5. 每个NPC要有一个秘密或隐藏身份，为后续剧情埋伏笔
+6. NPC要完全符合世界观设定，不要出现现代元素
+7. 如果有已有社交关系，保留1-2个老面孔，维持关系连续性
 
 返回 JSON 数组，不要其他内容：
 [

@@ -118,11 +118,14 @@ class VRMWidget(QWidget):
             self._placeholder.setText("AI Pet: 加载失败")
             print(f"[Pet] WebEngine 加载失败: {e}")
 
-    def set_emotion(self, emotion: str, intensity: float = 1.0):
-        """驱动表情（兼容旧版 VRM 接口）"""
+    def set_emotion(self, emotion: str, intensity: float = 1.0,
+                    secondary: str = None, valence: float = 0.0):
+        """驱动表情（增强版：支持副情绪和效价）"""
         if not self._web:
             return
-        js = f"setEmotion('{emotion}', {intensity:.2f})"
+        import json
+        sec = json.dumps(secondary) if secondary else "null"
+        js = f"setEmotion({json.dumps(emotion)}, {intensity:.2f}, {sec}, {valence:.2f})"
         self._web.page().runJavaScript(js)
 
     def set_speaking(self, is_speaking: bool):
@@ -131,3 +134,17 @@ class VRMWidget(QWidget):
             return
         js = f"setSpeaking({str(is_speaking).lower()})"
         self._web.page().runJavaScript(js)
+
+    def start_lip_sync(self, text: str, duration_sec: float = 5.0):
+        """启动口型同步动画"""
+        if not self._web:
+            return
+        import json
+        js = f"startLipSync({json.dumps(text)}, {duration_sec:.1f})"
+        self._web.page().runJavaScript(js)
+
+    def stop_lip_sync(self):
+        """停止口型同步动画"""
+        if not self._web:
+            return
+        self._web.page().runJavaScript("stopLipSync()")

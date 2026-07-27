@@ -59,15 +59,40 @@ canvas{display:block;position:absolute;top:0;left:0}
   var canvas = document.getElementById("canvas");
   var app = null;
   var model = null;
-  var currentEmotion = "neutral";
-  var speaking = false;
   var modelIndex = 0;
   var tapCount = 0;
   var lastTapTime = 0;
 
+  // ── 情绪状态 ──
+  var currentEmotion = "neutral";
+  var emotionIntensity = 1.0;
+  var secondaryEmotion = null;
+  var emotionValence = 0;        // -1 ~ 1
+  var lastEmotionTime = Date.now();
+  var EMOTION_DECAY_MS = 60000;  // 60秒无新情绪 → 衰减到neutral
+
+  // ── 说话/口型同步 ──
+  var speaking = false;
+  var lipSyncActive = false;
+  var lipSyncPattern = [];       // [{open, hold}]
+  var lipSyncIndex = 0;
+  var lipSyncTime = 0;
+  var lipSyncMouthValue = 0;     // 当前嘴巴开合度 0~1
+  var lipSyncTotalDuration = 0;
+
+  // ── 模型自适应 ──
+  var availableExpressions = [];
+  var availableMotionGroups = {};
+  var expressionMap = {};        // generic → model-specific
+  var motionMap = {};            // emotion → motion group
+  var isCubism4 = false;
+
+  // ── 主动表情 ──
+  var lastInteractionTime = Date.now();
+  var lastProactiveTime = 0;
+  var proactiveInterval = 120000; // 2分钟检查一次
+
   // ── 模型列表 ──
-  // Haru/Shizuku 来自 guansss/pixi-live2d-display 测试资源
-  // Mao/Hiyori/Natori/Ren/Rice 来自 Live2D/CubismWebSamples 官方示例
   var MODELS = [
     {
       name: "Haru",
@@ -120,6 +145,13 @@ canvas{display:block;position:absolute;top:0;left:0}
     greet: [
       "你好！我是 AI 助手~", "欢迎回来！", "今天也要加油哦！",
     ],
+    // 情绪特定台词
+    happy: ["好开心~", "嘻嘻嘻~", "太棒了！"],
+    sad: ["呜呜...", "有点难过...", "唉..."],
+    angry: ["哼！", "生气了！", "不要惹我！"],
+    surprised: ["诶?!", "真的吗？！", "哇！"],
+    love: ["好喜欢~", "最棒了~", "嘿嘿~"],
+    thinking: ["让我想想...", "嗯...", "这个问题..."],
   };
 
   function pickLine(arr) {
@@ -152,6 +184,9 @@ canvas{display:block;position:absolute;top:0;left:0}
       return;
     }
 
+    // 添加自定义渲染循环（口型同步+表情衰减+主动表情）
+    app.ticker.add(tickerUpdate);
+
     var saved = localStorage.getItem("live2d_model_index");
     if (saved !== null) modelIndex = parseInt(saved) % MODELS.length;
 
@@ -175,14 +210,29 @@ canvas{display:block;position:absolute;top:0;left:0}
       fitModel();
       app.stage.addChild(model);
 
+      // 检测模型类型
+      isCubism4 = !!(model.internalModel && model.internalModel.coreModel &&
+                     model.internalModel.coreModel._model);
+
+      // 自动检测可用表情和动作
+      detectModelCapabilities();
+      buildExpressionMap();
+      buildMotionMap();
+
+      console.log("[Live2D] 模型加载成功:", cfg.name,
+                  "表情:", availableExpressions.join(","),
+                  "动作组:", Object.keys(availableMotionGroups).join(","));
+
       // 鼠标跟踪（眼睛跟随）
       canvas.addEventListener("mousemove", function (e) {
         if (model) model.focus(e.clientX, e.clientY);
+        lastInteractionTime = Date.now();
       });
 
       // ★ 点击互动
       model.on("hit", function (areas) {
         var now = Date.now();
+        lastInteractionTime = now;
         if (now - lastTapTime < 500) {
           tapCount++;
         } else {
@@ -191,14 +241,14 @@ canvas{display:block;position:absolute;top:0;left:0}
         lastTapTime = now;
 
         if (areas.indexOf("head") >= 0) {
-          try { model.motion("tap_head"); } catch (e) {}
+          playMotionForEmotion("happy");
           if (tapCount >= 3) {
             showBubble("好啦好啦！不要一直摸头！", 3000);
           } else {
             showBubble(pickLine(LINES.head), 3000);
           }
         } else if (areas.indexOf("body") >= 0) {
-          try { model.motion("tap_body"); } catch (e) {}
+          playMotionForEmotion("surprised");
           showBubble(pickLine(LINES.body), 3000);
         } else {
           showBubble(pickLine(LINES.idle), 3000);
@@ -206,23 +256,174 @@ canvas{display:block;position:absolute;top:0;left:0}
       });
 
       // 播放待机动作 + 打招呼
-      try { model.motion("idle"); } catch (e) {}
+      playMotion("Idle");
       setTimeout(function () {
         showBubble(pickLine(LINES.greet), 4000);
       }, 1500);
 
       // 随机闲置台词
       setInterval(function () {
-        if (!speaking && Math.random() < 0.3) {
+        if (!speaking && !lipSyncActive && Math.random() < 0.3) {
           showBubble(pickLine(LINES.idle), 3000);
         }
       }, 30000);
 
-      console.log("[Live2D] 模型加载成功:", cfg.name);
     }).catch(function (e) {
       console.error("[Live2D] 加载失败:", cfg.name, e);
       showBubble(cfg.name + " 加载失败，双击切换", 5000);
     });
+  }
+
+  // ── 检测模型可用能力 ──
+  function detectModelCapabilities() {
+    availableExpressions = [];
+    availableMotionGroups = {};
+
+    try {
+      var settings = model.internalModel.settings;
+      if (!settings) return;
+
+      // 检测表情
+      if (settings.expressions) {
+        for (var i = 0; i < settings.expressions.length; i++) {
+          var name = settings.expressions[i].Name || settings.expressions[i].name;
+          if (name) availableExpressions.push(name);
+        }
+      }
+
+      // 检测动作组
+      var motions = settings.motions || settings.Motions;
+      if (motions) {
+        for (var group in motions) {
+          if (motions.hasOwnProperty(group) && motions[group] && motions[group].length > 0) {
+            availableMotionGroups[group] = motions[group].length;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[Live2D] 检测模型能力失败:", e);
+    }
+  }
+
+  // ── 构建表情映射（generic → model-specific）──
+  function buildExpressionMap() {
+    // 候选列表：按优先级排列
+    var genericMap = {
+      happy:      ["Smile", "smile", "Happy", "happy", "Joy", "joy", "f01"],
+      sad:        ["Sad", "sad", "Cry", "cry", "f02"],
+      angry:      ["Angry", "angry", "Mad", "mad"],
+      surprised:  ["Surprised", "surprised", "Surprise", "surprise", "Shock"],
+      neutral:    ["Normal", "normal", "Default", "default"],
+      love:       ["Blushing", "blushing", "Love", "love", "Smile", "smile"],
+      thinking:   ["f01", "f02", "Thinking", "thinking", "Normal", "normal"],
+      fear:       ["Sad", "sad", "f02", "Surprised", "surprised"],
+      disgust:    ["Angry", "angry", "f02"],
+      anticipation:["Smile", "smile", "f01", "Normal"],
+      trust:      ["Normal", "normal", "Smile", "smile"],
+      nostalgic:  ["Sad", "sad", "f02", "Normal"],
+      curious:    ["Surprised", "surprised", "f01", "Normal"],
+    };
+
+    expressionMap = {};
+    for (var emotion in genericMap) {
+      if (!genericMap.hasOwnProperty(emotion)) continue;
+      var candidates = genericMap[emotion];
+      var found = false;
+      for (var i = 0; i < candidates.length; i++) {
+        if (availableExpressions.indexOf(candidates[i]) >= 0) {
+          expressionMap[emotion] = candidates[i];
+          found = true;
+          break;
+        }
+      }
+      // 没找到就用第一个可用表情或 Normal
+      if (!found) {
+        expressionMap[emotion] = availableExpressions[0] || "Normal";
+      }
+    }
+
+    console.log("[Live2D] 表情映射:", JSON.stringify(expressionMap));
+  }
+
+  // ── 构建动作映射（emotion → motion group）──
+  function buildMotionMap() {
+    var genericMotionMap = {
+      happy:      ["Tap", "Flick", "tap_body", "FlickUp", "Idle"],
+      sad:        ["FlickDown", "Idle", "flick_down", "Flick3"],
+      angry:      ["Shake", "Tap", "shake", "tap_body", "Flick"],
+      surprised:  ["FlickUp", "Flick", "flick_up", "Tap", "Idle"],
+      thinking:   ["Flick3", "Idle", "flick_03", "Flick"],
+      love:       ["Tap", "Flick", "tap_body", "FlickUp"],
+      neutral:    ["Idle"],
+      fear:       ["Shake", "FlickDown", "shake", "Idle"],
+      disgust:    ["Shake", "Flick", "shake"],
+      anticipation: ["Flick", "Tap", "Idle"],
+      trust:      ["Idle", "Flick"],
+      nostalgic:  ["FlickDown", "Idle", "Flick3"],
+      curious:    ["FlickUp", "Flick3", "Flick", "Idle"],
+    };
+
+    motionMap = {};
+    for (var emotion in genericMotionMap) {
+      if (!genericMotionMap.hasOwnProperty(emotion)) continue;
+      var candidates = genericMotionMap[emotion];
+      var found = false;
+      for (var i = 0; i < candidates.length; i++) {
+        if (availableMotionGroups[candidates[i]]) {
+          motionMap[emotion] = candidates[i];
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        motionMap[emotion] = "Idle";
+      }
+    }
+
+    console.log("[Live2D] 动作映射:", JSON.stringify(motionMap));
+  }
+
+  // ── 播放动作 ──
+  function playMotion(group) {
+    if (!model) return;
+    try {
+      var count = availableMotionGroups[group] || 0;
+      if (count > 0) {
+        var idx = Math.floor(Math.random() * count);
+        model.motion(group, idx);
+      } else {
+        model.motion(group);
+      }
+    } catch (e) {
+      // 忽略不存在的动作
+    }
+  }
+
+  function playMotionForEmotion(emotion) {
+    var group = motionMap[emotion] || motionMap["neutral"] || "Idle";
+    playMotion(group);
+  }
+
+  // ── 设置模型参数（口型/表情微调）──
+  function setParam(id, value) {
+    if (!model) return;
+    try {
+      var coreModel = model.internalModel.coreModel;
+      if (coreModel.setParameterValueById) {
+        coreModel.setParameterValueById(id, value);
+      } else if (coreModel._model && coreModel._model.parameters) {
+        // Cubism 4 内部参数
+        var params = coreModel._model.parameters;
+        for (var i = 0; i < params.count; i++) {
+          if (params.ids[i] === id) {
+            params.values[i] = value;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      // 参数可能不存在，静默忽略
+    }
   }
 
   // ── 适配模型 ──
@@ -232,9 +433,220 @@ canvas{display:block;position:absolute;top:0;left:0}
     var h = canvas.clientHeight;
     var s = Math.min(w / model.width, h / model.height) * 0.9;
     model.scale.set(s);
-    // model.x 左移 ~1cm（约 38px），让模型偏向窗口左侧
     model.x = (w - model.width * s) / 2 - 35;
     model.y = (h - model.height * s) / 2;
+  }
+
+  // ── 渲染循环 ──
+  function tickerUpdate(delta) {
+    // 1. 口型同步
+    if (lipSyncActive) {
+      updateLipSync(delta);
+    }
+
+    // 2. 表情强度微调（基于 valence）
+    if (currentEmotion !== "neutral" && emotionIntensity > 0) {
+      updateExpressionIntensity();
+    }
+
+    // 3. 表情衰减
+    updateEmotionDecay();
+
+    // 4. 主动表情
+    updateProactiveExpression();
+  }
+
+  // ── 口型同步更新 ──
+  function updateLipSync(delta) {
+    if (lipSyncIndex >= lipSyncPattern.length) {
+      // 口型动画完成，平滑关闭
+      lipSyncMouthValue *= 0.85;
+      if (lipSyncMouthValue < 0.02) {
+        lipSyncMouthValue = 0;
+        lipSyncActive = false;
+        setParam("PARAM_MOUTH_OPEN_Y", 0);
+      } else {
+        setParam("PARAM_MOUTH_OPEN_Y", lipSyncMouthValue);
+      }
+      return;
+    }
+
+    var frame = lipSyncPattern[lipSyncIndex];
+    lipSyncTime += delta;
+
+    // delta 是帧数（约 1/60 秒每帧），frame.hold 是毫秒
+    var holdFrames = frame.hold / 16.67; // 转 FPS 帧数
+
+    if (lipSyncTime >= holdFrames) {
+      lipSyncTime = 0;
+      lipSyncIndex++;
+    }
+
+    // 平滑插值嘴巴开合度
+    var target = frame.open;
+    lipSyncMouthValue += (target - lipSyncMouthValue) * 0.3;
+
+    // 设置口型参数
+    setParam("PARAM_MOUTH_OPEN_Y", lipSyncMouthValue);
+  }
+
+  // ── 表情强度微调 ──
+  function updateExpressionIntensity() {
+    if (!model) return;
+    try {
+      // 基于 valence 微调眉毛和眼睛
+      if (emotionValence > 0.2) {
+        // 正向：微微眯眼（笑眼效果）
+        setParam("PARAM_EYE_L_SMILE", Math.min(1, emotionValence * emotionIntensity));
+        setParam("PARAM_EYE_R_SMILE", Math.min(1, emotionValence * emotionIntensity));
+      } else if (emotionValence < -0.2) {
+        // 负向：微微皱眉
+        setParam("PARAM_BROW_L_Y", -0.2 * emotionIntensity);
+        setParam("PARAM_BROW_R_Y", -0.2 * emotionIntensity);
+      }
+    } catch (e) {
+      // 参数可能不存在
+    }
+  }
+
+  // ── 表情衰减 ──
+  function updateEmotionDecay() {
+    if (currentEmotion === "neutral") return;
+    var elapsed = Date.now() - lastEmotionTime;
+    if (elapsed > EMOTION_DECAY_MS) {
+      // 60秒无新情绪，渐变回 neutral
+      currentEmotion = "neutral";
+      emotionIntensity = 0.5;
+      emotionValence = 0;
+      try {
+        var exprName = expressionMap["neutral"] || "Normal";
+        model.expression(exprName);
+      } catch (e) {}
+    }
+  }
+
+  // ── 主动表情 ──
+  function updateProactiveExpression() {
+    var now = Date.now();
+    if (speaking || lipSyncActive) return;
+    if (now - lastProactiveTime < proactiveInterval) return;
+    if (now - lastInteractionTime < 60000) return; // 1分钟内有互动则不主动
+    lastProactiveTime = now;
+
+    var hour = new Date().getHours();
+    var emotion, text;
+
+    if (hour >= 23 || hour < 6) {
+      // 深夜：困倦
+      emotion = "sad";
+      text = "好困...还没睡吗？";
+    } else if (hour >= 6 && hour < 9) {
+      // 早晨：精神
+      emotion = "happy";
+      text = "早上好！新的一天~";
+    } else if (hour >= 12 && hour < 14) {
+      // 午间：慵懒
+      emotion = "thinking";
+      text = "午饭后好困...";
+    } else if (hour >= 22) {
+      // 晚间：疲倦
+      emotion = "sad";
+      text = "今天辛苦了~";
+    } else {
+      // 其他：随机闲置
+      emotion = Math.random() > 0.5 ? "happy" : "neutral";
+      text = pickLine(LINES.idle);
+    }
+
+    setEmotionInternal(emotion, 0.4, null, 0);
+    showBubble(text, 4000);
+  }
+
+  // ── 内部表情设置 ──
+  function setEmotionInternal(emotion, intensity, secondary, valence) {
+    currentEmotion = emotion;
+    emotionIntensity = intensity || 1.0;
+    secondaryEmotion = secondary || null;
+    emotionValence = valence || 0;
+    lastEmotionTime = Date.now();
+
+    if (!model) return;
+
+    // 设置主表情
+    var exprName = expressionMap[emotion] || expressionMap["neutral"] || "Normal";
+    try {
+      model.expression(exprName);
+    } catch (e) {}
+
+    // 播放对应动作
+    playMotionForEmotion(emotion);
+
+    // 如果有副情绪，延迟混合
+    if (secondary && secondary !== emotion) {
+      setTimeout(function () {
+        var secExprName = expressionMap[secondary] || expressionMap["neutral"];
+        if (secExprName && secExprName !== exprName) {
+          try {
+            model.expression(secExprName);
+          } catch (e) {}
+        }
+      }, 800);
+    }
+  }
+
+  // ── 生成口型动画模式 ──
+  function generateLipSyncPattern(text, durationMs) {
+    var pattern = [];
+
+    // 提取中文字符、标点和英文单词
+    var chars = [];
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (/[\u4e00-\u9fff]/.test(ch)) {
+        chars.push({ type: "char", ch: ch });
+      } else if (/[，。！？、；：,.!?;:\n\r]/.test(ch)) {
+        chars.push({ type: "punct", ch: ch });
+      } else if (/[a-zA-Z0-9]/.test(ch)) {
+        chars.push({ type: "latin", ch: ch });
+      }
+    }
+
+    if (chars.length === 0) {
+      // 无可识别字符，用简单节奏
+      var segments = Math.max(2, Math.floor(durationMs / 300));
+      for (var i = 0; i < segments; i++) {
+        pattern.push({ open: 0.3 + Math.random() * 0.4, hold: 150 });
+        pattern.push({ open: 0, hold: 80 });
+      }
+      return pattern;
+    }
+
+    var charTime = durationMs / chars.length;
+
+    for (var i = 0; i < chars.length; i++) {
+      var c = chars[i];
+      if (c.type === "punct") {
+        // 标点：闭嘴暂停
+        pattern.push({ open: 0, hold: charTime * 1.2 });
+      } else if (c.type === "char") {
+        // 中文字符：开→闭
+        var openAmount = 0.25 + Math.random() * 0.55;
+        // 声母/韵母影响开合度（简化处理）
+        if (/[吗呢吧啊哦呀嗯哈噢哇哎嘿]/.test(c.ch)) {
+          openAmount = 0.5 + Math.random() * 0.4; // 语气词嘴巴大
+        } else if (/[一二三四五六七八九十]/.test(c.ch)) {
+          openAmount = 0.3 + Math.random() * 0.3; // 数字嘴巴小
+        }
+        pattern.push({ open: openAmount, hold: charTime * 0.65 });
+        pattern.push({ open: openAmount * 0.2, hold: charTime * 0.35 });
+      } else {
+        // 拉丁字符：小幅度
+        pattern.push({ open: 0.2 + Math.random() * 0.3, hold: charTime * 0.6 });
+        pattern.push({ open: 0, hold: charTime * 0.4 });
+      }
+    }
+
+    return pattern;
   }
 
   // ── 切换模型 ──
@@ -244,42 +656,113 @@ canvas{display:block;position:absolute;top:0;left:0}
     loadModel();
   };
 
-  // ── 对外 API ──
-  window.setEmotion = function (emotion, intensity) {
-    currentEmotion = emotion;
-    if (speaking || !model) return;
-    try { model.expression(emotion); } catch (e) {}
-    var motionMap = {
-      happy: "tap_body", sad: "tap_body", angry: "tap_body",
-      surprised: "tap_head", thinking: "idle", love: "tap_body",
-    };
-    var motion = motionMap[emotion];
-    if (motion) { try { model.motion(motion); } catch (e) {} }
+  // ═══════════════════════════════════════════════
+  // ★ 对外 API（由 Python 端调用）
+  // ═══════════════════════════════════════════════
 
+  /**
+   * 设置表情
+   * @param {string} emotion - 情绪名（happy/sad/angry/surprised/neutral/love/thinking/fear/curious...）
+   * @param {number} intensity - 强度 0~1
+   * @param {string} [secondary] - 副情绪
+   * @param {number} [valence] - 效价 -1~1
+   */
+  window.setEmotion = function (emotion, intensity, secondary, valence) {
+    if (speaking || lipSyncActive) {
+      // 说话中只记录情绪，等说话结束再应用
+      currentEmotion = emotion;
+      emotionIntensity = intensity || 1.0;
+      secondaryEmotion = secondary || null;
+      emotionValence = valence || 0;
+      lastEmotionTime = Date.now();
+      return;
+    }
+    setEmotionInternal(emotion, intensity, secondary, valence);
+
+    // 情绪气泡
     var bubbleMap = {
       happy: "好开心!", sad: "有点难过...", angry: "哼！生气了！",
       surprised: "诶?!", thinking: "让我想想...", love: "好喜欢~",
-      neutral: "",
+      fear: "好害怕...", curious: "嗯？",
     };
     var text = bubbleMap[emotion] || "";
-    if (text) showBubble(text, 3000);
+    if (text && intensity > 0.3) showBubble(text, 3000);
   };
 
+  /**
+   * 设置说话状态（简单版，无口型同步）
+   */
   window.setSpeaking = function (isSpeaking) {
     speaking = isSpeaking;
     if (!model) return;
     if (isSpeaking) {
-      try { model.motion("tap_body"); } catch (e) {}
+      playMotion("Tap");
       showBubble("...", 60000);
     } else {
-      try { model.motion("idle"); } catch (e) {}
+      lipSyncActive = false;
+      lipSyncMouthValue = 0;
+      setParam("PARAM_MOUTH_OPEN_Y", 0);
+      playMotion("Idle");
       var el = document.getElementById("bubble");
       el.classList.remove("show");
-      window.setEmotion(currentEmotion);
+      // 恢复当前情绪表情
+      window.setEmotion(currentEmotion, emotionIntensity);
     }
   };
 
-  window.addEventListener("resize", function () { fitModel(); });
+  /**
+   * 开始口型同步（模拟版，基于文字分析）
+   * @param {string} text - 要朗读的文字
+   * @param {number} durationSec - 预计朗读时长（秒）
+   */
+  window.startLipSync = function (text, durationSec) {
+    if (!model) return;
+
+    speaking = true;
+    var durationMs = (durationSec || 5) * 1000;
+
+    // 生成口型模式
+    lipSyncPattern = generateLipSyncPattern(text, durationMs);
+    lipSyncIndex = 0;
+    lipSyncTime = 0;
+    lipSyncMouthValue = 0;
+    lipSyncActive = true;
+
+    // 播放说话动作
+    playMotion("Tap");
+
+    // 显示气泡（截断长文本）
+    var shortText = text.length > 20 ? text.substring(0, 20) + "..." : text;
+    showBubble(shortText, durationMs + 1000);
+
+    // 设定超时保护
+    setTimeout(function () {
+      if (lipSyncActive) {
+        lipSyncActive = false;
+        lipSyncMouthValue = 0;
+        setParam("PARAM_MOUTH_OPEN_Y", 0);
+        speaking = false;
+        playMotion("Idle");
+        var el = document.getElementById("bubble");
+        el.classList.remove("show");
+        window.setEmotion(currentEmotion, emotionIntensity);
+      }
+    }, durationMs + 2000);
+  };
+
+  /**
+   * 停止口型同步
+   */
+  window.stopLipSync = function () {
+    lipSyncActive = false;
+    lipSyncMouthValue = 0;
+    speaking = false;
+    setParam("PARAM_MOUTH_OPEN_Y", 0);
+    if (model) playMotion("Idle");
+    var el = document.getElementById("bubble");
+    el.classList.remove("show");
+    window.setEmotion(currentEmotion, emotionIntensity);
+  };
 
   // ── 键盘快捷键：S 切换模型 ──
   window.addEventListener("keydown", function (e) {
@@ -299,6 +782,8 @@ canvas{display:block;position:absolute;top:0;left:0}
     showBubble("切换模型...", 5000);
     window.switchModel();
   });
+
+  window.addEventListener("resize", function () { fitModel(); });
 
   // ── 启动 ──
   function tryInit() {

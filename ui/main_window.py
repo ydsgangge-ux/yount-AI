@@ -5973,13 +5973,14 @@ class MainWindow(QMainWindow):
         self._thinking_lbl = self.chat_page.add_thinking_indicator()
         self._status_mode.setText("🔄 处理中…")
 
-        # 桌面宠物: 用户发消息 → 好奇表情 + 开始说话动画
+        # 桌面宠物: 用户发消息 → 好奇表情（带副情绪thinking）
         vrm = getattr(self, "vrm_widget", None)
         if vrm:
             try:
-                from vrm_module.emotion_bridge import translate
-                name, val = translate("curious", 0.5)
-                vrm.set_emotion(name, val)
+                from vrm_module.emotion_bridge import translate_with_secondary
+                info = translate_with_secondary("curious", "thinking", 0.5, 0.0)
+                vrm.set_emotion(info["expression"], info["intensity"],
+                                info["secondary"], info["valence"])
                 vrm.set_speaking(True)
             except Exception:
                 pass
@@ -6058,17 +6059,18 @@ class MainWindow(QMainWindow):
                 f"情绪: {e.get('primary','?')} "
                 f"({int(e.get('intensity',0)*10)}/10)"
             )
-            # 桌面宠物: 更新表情
+            # 桌面宠物: 更新表情 + TTS口型同步
             vrm = getattr(self, "vrm_widget", None)
             if vrm:
                 try:
-                    from vrm_module.emotion_bridge import translate
-                    name, val = translate(
-                        e.get("primary", "neutral"),
-                        e.get("intensity", 0)
-                    )
-                    vrm.set_emotion(name, val)
-                    vrm.set_speaking(False)
+                    from vrm_module.emotion_bridge import translate_with_secondary
+                    primary = e.get("primary", "neutral")
+                    secondary = e.get("secondary")
+                    intensity = e.get("intensity", 0.3)
+                    valence = e.get("valence", 0.0)
+                    info = translate_with_secondary(primary, secondary, intensity, valence)
+                    vrm.set_emotion(info["expression"], info["intensity"],
+                                    info["secondary"], info["valence"])
                 except Exception:
                     pass
         else:
@@ -6082,17 +6084,32 @@ class MainWindow(QMainWindow):
         self._status_mode.setText("就绪")
         self._update_memory_count()
 
-        # TTS 自动朗读
+        # TTS 自动朗读 + 口型同步
+        vrm = getattr(self, "vrm_widget", None)
         try:
             cfg = load_config()
             if cfg.get("tts_enabled", False) and response_text:
                 from engine.tts_engine import get_tts
                 tts = get_tts()
-                tts.set_voice(cfg.get("tts_voice", "zh-CN-XiaoxiaoNeural"))
-                tts.set_rate(cfg.get("tts_rate", 0))
-                tts.speak(response_text)
+                if tts.is_available():
+                    # 估算朗读时长（中文约 0.15 秒/字）
+                    dur = max(2.0, len(response_text) * 0.15)
+                    if vrm:
+                        vrm.start_lip_sync(response_text, dur)
+                    tts.set_voice(cfg.get("tts_voice", "zh-CN-XiaoxiaoNeural"))
+                    tts.set_rate(cfg.get("tts_rate", 0))
+                    tts.speak(response_text,
+                              on_done=lambda: vrm.stop_lip_sync() if vrm else None)
+                else:
+                    if vrm:
+                        vrm.set_speaking(False)
         except Exception as e:
             print(f"[TTS] 自动朗读异常: {e}")
+            if vrm:
+                try:
+                    vrm.set_speaking(False)
+                except Exception:
+                    pass
 
     def _on_error(self, err: str):
         self.chat_page.remove_thinking_indicator()
@@ -6102,7 +6119,7 @@ class MainWindow(QMainWindow):
         vrm = getattr(self, "vrm_widget", None)
         if vrm:
             try:
-                vrm.set_speaking(False)
+                vrm.stop_lip_sync()
                 vrm.set_emotion("neutral", 0.5)
             except Exception:
                 pass

@@ -312,15 +312,24 @@ def _get_arc_summary() -> Optional[dict]:
         return {
             "title": arc.title,
             "description": arc.description,
+            "main_goal": arc.main_goal,
+            "antagonist": arc.antagonist,
+            "antagonist_motivation": arc.antagonist_motivation,
+            "threat_level": arc.threat_level,
             "progress_percent": arc.progress_percent,
             "current_stage": arc.current_stage.name if arc.current_stage else None,
             "current_stage_desc": arc.current_stage.description if arc.current_stage else None,
+            "current_stage_goal": arc.current_stage.goal if arc.current_stage else None,
+            "current_stage_type": arc.current_stage.stage_type if arc.current_stage else None,
+            "current_sub_goals": arc.current_stage.sub_goals if arc.current_stage else [],
+            "unresolved_threads": arc.unresolved_threads,
+            "consequences": arc.consequences,
             "stages_completed": arc.stages_completed,
             "total_stages": arc.total_stages,
             "days_elapsed": arc.days_elapsed,
             "duration_days": arc.duration_days,
             "stages": [
-                {"name": s.name, "status": s.status, "duration_days": s.duration_days}
+                {"name": s.name, "status": s.status, "duration_days": s.duration_days, "stage_type": s.stage_type, "goal": s.goal}
                 for s in arc.stages
             ],
         }
@@ -356,11 +365,7 @@ def _tick_non_modern():
     if not arc or arc.completed:
         prev_arc = None
         if arc:
-            prev_arc = {
-                "title": arc.title,
-                "description": arc.description,
-                "stages": [s.to_dict() for s in arc.stages],
-            }
+            prev_arc = arc.to_dict()  # 传递完整数据（含反派/后果/伏笔）
             archive_life_arc(arc)
             print(f"[SimLife] 主线「{arc.title}」已完成，已归档")
         try:
@@ -368,7 +373,23 @@ def _tick_non_modern():
             arc_data = generate_life_arc(character_card.model_dump(), previous_arc=prev_arc)
             arc = LifeArc(arc_data)
             save_life_arc(arc)
-            print(f"[SimLife] 新主线「{arc.title}」（{arc.total_stages} 个阶段，共 {arc.duration_days} 天）")
+            print(f"[SimLife] 新主线「{arc.title}」（威胁{arc.threat_level}/5，{arc.total_stages}阶段，{arc.duration_days}天，对手：{arc.antagonist}）")
+
+            # 新主线开始 → 刷新卡司（保留老NPC + 加入新反派阵营）
+            try:
+                from simlife.backend.generator import generate_story_cast
+                old_cast = _load_story_cast()
+                new_cast = generate_story_cast(
+                    character_card.model_dump(),
+                    arc=arc.to_dict(),
+                    existing_cast=old_cast,
+                )
+                _save_story_cast(new_cast)
+                cast_names = [c["name"] for c in new_cast]
+                print(f"[SimLife] 卡司已刷新：{'、'.join(cast_names)}")
+            except Exception as e:
+                print(f"[SimLife] 卡司刷新失败: {e}")
+
         except Exception as e:
             print(f"[SimLife] 主线生成失败: {e}")
             arc = None

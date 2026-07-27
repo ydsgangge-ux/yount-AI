@@ -830,13 +830,14 @@ class AGIApp:
             self.agent._proactive_context = self._pending_proactive_msg
             self._pending_proactive_msg = None
 
-        # 桌面宠物: 思考中
+        # 桌面宠物: 思考中（好奇表情+副情绪thinking）
         pet = getattr(self.main_win, "vrm_widget", None)
         if pet:
             try:
-                from vrm_module.emotion_bridge import translate
-                name, val = translate("curious", 0.5)
-                pet.set_emotion(name, val)
+                from vrm_module.emotion_bridge import translate_with_secondary
+                info = translate_with_secondary("curious", "thinking", 0.5, 0.0)
+                pet.set_emotion(info["expression"], info["intensity"],
+                                info["secondary"], info["valence"])
             except Exception:
                 pass
 
@@ -850,17 +851,38 @@ class AGIApp:
                 e.get("primary", "neutral"),
                 e.get("intensity", 0.3)
             )
-            # 桌面宠物: 根据 AI 回复情绪更新表情
+            # 桌面宠物: 根据 AI 回复情绪更新表情 + TTS口型同步
             pet = getattr(self.main_win, "vrm_widget", None)
             if pet:
                 try:
-                    from vrm_module.emotion_bridge import translate
-                    name, val = translate(
-                        e.get("primary", "neutral"),
-                        e.get("intensity", 0)
-                    )
-                    pet.set_emotion(name, val)
-                    pet.set_speaking(False)
+                    from vrm_module.emotion_bridge import translate_with_secondary
+                    primary = e.get("primary", "neutral")
+                    secondary = e.get("secondary")
+                    intensity = e.get("intensity", 0.3)
+                    valence = e.get("valence", 0.0)
+                    info = translate_with_secondary(primary, secondary, intensity, valence)
+                    pet.set_emotion(info["expression"], info["intensity"],
+                                    info["secondary"], info["valence"])
+
+                    # TTS 口型同步
+                    resp = r.get("response", "")
+                    if self.cfg.get("tts_enabled") and resp:
+                        try:
+                            from engine.tts_engine import get_tts
+                            tts = get_tts()
+                            if tts.is_available():
+                                # 估算朗读时长（中文约 0.15 秒/字）
+                                dur = max(2.0, len(resp) * 0.15)
+                                pet.start_lip_sync(resp, dur)
+                                tts.set_voice(self.cfg.get("tts_voice", "zh-CN-XiaoxiaoNeural"))
+                                tts.set_rate(self.cfg.get("tts_rate", 0))
+                                tts.speak(resp, on_done=lambda: pet.stop_lip_sync())
+                            else:
+                                pet.set_speaking(False)
+                        except Exception:
+                            pet.set_speaking(False)
+                    else:
+                        pet.set_speaking(False)
                 except Exception:
                     pass
             emoji = _emotion_emoji(e)
@@ -874,7 +896,7 @@ class AGIApp:
             pet = getattr(self.main_win, "vrm_widget", None)
             if pet:
                 try:
-                    pet.set_speaking(False)
+                    pet.stop_lip_sync()
                     pet.set_emotion("neutral", 0.5)
                 except Exception:
                     pass

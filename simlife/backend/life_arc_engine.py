@@ -24,17 +24,23 @@ class ArcStage:
         data = data or {}
         self.name: str = data.get("name", "")
         self.description: str = data.get("description", "")
+        self.goal: str = data.get("goal", "")  # 本阶段要达成的具体目标
+        self.stage_type: str = data.get("stage_type", "exploration")  # travel/preparation/exploration/conflict/climax/social/resolution
         self.duration_days: int = data.get("duration_days", 5)
         self.status: str = data.get("status", "pending")  # pending / active / completed
         self.key_events: List[str] = data.get("key_events", [])
+        self.sub_goals: List[str] = data.get("sub_goals", [])  # 子目标（2-4个）
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "description": self.description,
+            "goal": self.goal,
+            "stage_type": self.stage_type,
             "duration_days": self.duration_days,
             "status": self.status,
             "key_events": self.key_events,
+            "sub_goals": self.sub_goals,
         }
 
 
@@ -45,10 +51,16 @@ class LifeArc:
         self.arc_id: str = data.get("arc_id", f"arc_{uuid.uuid4().hex[:8]}")
         self.title: str = data.get("title", "")
         self.description: str = data.get("description", "")
+        self.main_goal: str = data.get("main_goal", "")
+        self.antagonist: str = data.get("antagonist", "")  # 反派/对抗力量描述
+        self.antagonist_motivation: str = data.get("antagonist_motivation", "")  # 反派动机
+        self.threat_level: int = data.get("threat_level", 1)  # 威胁等级 1-5，逐弧递增
         self.duration_days: int = data.get("duration_days", 30)
         self.start_date: str = data.get("start_date", datetime.now().strftime("%Y-%m-%d"))
         self.current_stage_index: int = data.get("current_stage_index", 0)
         self.stages: List[ArcStage] = [ArcStage(s) for s in data.get("stages", [])]
+        self.unresolved_threads: List[str] = data.get("unresolved_threads", [])  # 未解决的伏笔
+        self.consequences: str = data.get("consequences", "")  # 主线完成后的后果描述
         self.completed: bool = data.get("completed", False)
 
     @property
@@ -84,10 +96,16 @@ class LifeArc:
             "arc_id": self.arc_id,
             "title": self.title,
             "description": self.description,
+            "main_goal": self.main_goal,
+            "antagonist": self.antagonist,
+            "antagonist_motivation": self.antagonist_motivation,
+            "threat_level": self.threat_level,
             "duration_days": self.duration_days,
             "start_date": self.start_date,
             "current_stage_index": self.current_stage_index,
             "stages": [s.to_dict() for s in self.stages],
+            "unresolved_threads": self.unresolved_threads,
+            "consequences": self.consequences,
             "completed": self.completed,
         }
 
@@ -187,14 +205,39 @@ def get_stage_hint(arc: LifeArc) -> str:
     elapsed_in_stage = max(0, arc.days_elapsed - stage_start_day)
     remaining = max(0, stage.duration_days - elapsed_in_stage)
 
+    # 阶段类型→节奏引导
+    pacing_map = {
+        "travel": "本阶段以赶路为主，节奏偏慢。大部分时间在旅途上，可以安排沿途见闻、露营、偶遇等。不需要每天都有大事发生",
+        "preparation": "本阶段以准备为主，节奏中等。安排收集情报、采购装备、修炼提升等活动，为后续做铺垫",
+        "exploration": "本阶段以探索为主，节奏中等偏快。安排调查、发现线索、解开谜题等，逐步揭示信息",
+        "social": "本阶段以社交为主，节奏偏慢。安排与NPC交流、建立关系、参与当地活动等，注重角色互动",
+        "conflict": "本阶段以冲突为主，节奏偏快。安排对抗、危机、战斗等紧张事件，但也要有喘息的空间",
+        "climax": "本阶段是主线高潮，节奏最快。安排关键决战、重大抉择、转折等，是整个主线最紧张的部分",
+        "resolution": "本阶段是收尾，节奏偏慢。安排处理后果、休整、总结、为未来埋下种子等",
+    }
+    pacing = pacing_map.get(stage.stage_type, "活动应围绕当前阶段目标展开，体现推进感")
+
     hints = []
-    hints.append(f"当前主线：{arc.title}")
-    hints.append(f"当前阶段（第{arc.current_stage_index + 1}/{arc.total_stages}阶段）：{stage.name}")
+    hints.append(f"【主线】{arc.title}")
+    if arc.description:
+        hints.append(f"主线目标：{arc.description}")
+    if arc.antagonist:
+        hints.append(f"对抗力量：{arc.antagonist}")
+        if arc.antagonist_motivation:
+            hints.append(f"对方动机：{arc.antagonist_motivation}")
+        hints.append(f"威胁等级：{arc.threat_level}/5")
+    hints.append(f"【当前阶段】第{arc.current_stage_index + 1}/{arc.total_stages}阶段：{stage.name}（{stage.stage_type}）")
+    if stage.goal:
+        hints.append(f"阶段目标：{stage.goal}")
     if stage.description:
         hints.append(f"阶段描述：{stage.description}")
+    if stage.sub_goals:
+        hints.append(f"子目标（今天可以推进其中1-2个）：")
+        for i, sg in enumerate(stage.sub_goals, 1):
+            hints.append(f"  {i}. {sg}")
     if stage.key_events:
         hints.append(f"可能发生的事：{'、'.join(stage.key_events[:5])}")
-    hints.append(f"本阶段还剩约{remaining}天")
-    hints.append(f"日常活动应该围绕「{stage.name}」来安排，体现推进感")
+    hints.append(f"本阶段已过{elapsed_in_stage}天，还剩约{remaining}天")
+    hints.append(f"节奏指导：{pacing}")
 
     return "\n".join(hints)
