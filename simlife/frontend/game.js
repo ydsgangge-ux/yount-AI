@@ -142,9 +142,9 @@ const Game = {
         if (!arcEl) {
           arcEl = document.createElement('div');
           arcEl.id = 'life-arc-panel';
-          arcEl.style.cssText = 'margin-top:8px;padding:8px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.7;';
-          const logPanel = document.getElementById('log-panel');
-          if (logPanel) logPanel.parentElement.insertBefore(arcEl, logPanel.parentElement.firstChild);
+          arcEl.style.cssText = 'margin-top:4px;padding:8px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.7;';
+          const storyPanel = document.getElementById('story-panel');
+          if (storyPanel) storyPanel.appendChild(arcEl);
         }
         const arc = state.life_arc;
         const pct = arc.progress_percent || 0;
@@ -169,9 +169,9 @@ const Game = {
         if (!planEl) {
           planEl = document.createElement('div');
           planEl.id = 'day-plan-panel';
-          planEl.style.cssText = 'margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.6;';
-          const logPanel = document.getElementById('log-panel');
-          if (logPanel) logPanel.parentElement.appendChild(planEl);
+          planEl.style.cssText = 'margin-top:4px;padding:6px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.6;';
+          const storyPanel = document.getElementById('story-panel');
+          if (storyPanel) storyPanel.appendChild(planEl);
         }
         const progress = state.day_plan_progress || 0;
         const cast = state.story_cast || [];
@@ -249,6 +249,10 @@ const Game = {
     // 异世界模式：隐藏日志面板（内容由 day_plan 面板承载）
     const logPanel = document.getElementById('log-panel');
     if (logPanel) logPanel.style.display = isStoryMode ? 'none' : '';
+
+    // 异世界模式：显示故事面板容器
+    const storyPanel = document.getElementById('story-panel');
+    if (storyPanel) storyPanel.style.display = isStoryMode ? 'block' : 'none';
   },
 
   _getBgNpcCount(scene) {

@@ -57,26 +57,42 @@ body {
   min-height: 0;
   position: relative;
   gap: 0;
+  overflow: hidden;
 }
 #game-wrapper {
   display: flex;
   border-radius: 4px;
   box-shadow: 0 0 40px rgba(0,0,0,0.5);
   overflow: hidden;
+  max-height: 100%;
 }
 #game-canvas {
   image-rendering: auto;
   height: 540px;
-  max-height: calc(100vh - 200px);
+  max-height: 100%;
   display: block;
 }
 #char-canvas {
   image-rendering: auto;
   height: 540px;
-  max-height: calc(100vh - 200px);
+  max-height: 100%;
   display: block;
   background: #ffffff;
 }
+
+/* 异世界故事面板（主线进度 + 每日计划） */
+#story-panel {
+  max-height: 180px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  display: none;
+  background: linear-gradient(180deg, #12192e, var(--surface));
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+}
+#story-panel::-webkit-scrollbar { width: 4px; }
+#story-panel::-webkit-scrollbar-track { background: transparent; }
+#story-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 /* 状态栏 */
 #status-bar {
@@ -628,6 +644,9 @@ body {
     <span id="mood-value">87</span>
     <span id="activity-text">在改设计稿的细节</span>
   </div>
+
+  <!-- 异世界模式：主线进度 + 每日计划（固定高度，不挤压游戏区） -->
+  <div id="story-panel"></div>
 
   <div id="log-panel">
     <div class="log-header">
