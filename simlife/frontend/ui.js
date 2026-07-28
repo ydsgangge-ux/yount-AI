@@ -65,7 +65,7 @@ const UI = {
       if (w.world_id === 'modern') continue;
       const opt = document.createElement('option');
       opt.value = w.world_id;
-      const typeEmoji = { fantasy: '🗡️', scifi: '🚀', xianxia: '⛩️', post_apocalyptic: '☢️', custom: '🌈' };
+      const typeEmoji = { fantasy: '🗡️', modern_power: '⚡', scifi: '🚀', xianxia: '⛩️', post_apocalyptic: '☢️', custom: '🌈' };
       opt.textContent = (typeEmoji[w.world_type] || '🌍') + ' ' + w.world_name;
       sel.appendChild(opt);
     }
@@ -417,7 +417,7 @@ function onWorldChange() {
     const world = UI._worlds.find(w => w.world_id === val);
     if (world) {
       infoBar.style.display = '';
-      const typeNames = { fantasy: '奇幻魔法', scifi: '科幻未来', xianxia: '仙侠修真', post_apocalyptic: '末世废土', custom: '自定义' };
+      const typeNames = { fantasy: '奇幻魔法', modern_power: '现世超武', scifi: '科幻未来', xianxia: '仙侠修真', post_apocalyptic: '末世废土', custom: '自定义' };
       infoBar.textContent = '🌍 ' + world.world_name + '  |  类型：' + (typeNames[world.world_type] || world.world_type);
     }
   }

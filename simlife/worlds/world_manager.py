@@ -209,6 +209,7 @@ def build_character_guide(world_setting: Dict) -> str:
 
     # 自动生成简单引导
     name = world_setting.get("world_name", "这个世界")
+    wtype = world_setting.get("world_type", "")
     power = world_setting.get("power_system", {}).get("name", "")
     ps = ""
     if power:
@@ -218,6 +219,10 @@ def build_character_guide(world_setting: Dict) -> str:
     faction_hint = ""
     if factions:
         faction_hint = f"\n可能加入的组织：{'、'.join([f.get('name', '') for f in factions[:4]])}"
+
+    # 现世超武特殊引导
+    if wtype == "modern_power":
+        return f"\n\n【世界观角色生成引导】角色生活在「{name}」— 一个现代社会中隐藏着超能力者的世界。{ps}{faction_hint}\n角色卡应保留现代社会的字段结构（城市、通勤、日常作息等），但职业和日常活动要融入超能力元素。角色可能表面上是个普通上班族/学生，实际拥有异能或武道修为。"
 
     return f"\n\n【世界观角色生成引导】角色生活在「{name}」中。{ps}{faction_hint}\n角色卡的字段应适应这个世界观（如职业改为魔法师/战士/冒险者等）。"
 
@@ -231,6 +236,12 @@ def build_activity_guide(world_setting: Dict) -> str:
         return f"\n\n【世界观活动引导】{guide}"
 
     name = world_setting.get("world_name", "")
+    wtype = world_setting.get("world_type", "")
+
+    # 现世超武特殊引导
+    if wtype == "modern_power":
+        return f"\n\n【世界观活动引导】活动描述要符合「{name}」的世界观 — 现代社会+超能力。角色可能在正常上班/上学的同时，暗中修炼异能、执行秘密任务、与异能组织接触。活动描述可以包含现代元素（地铁、手机、咖啡店等），但要自然融入超能力相关内容。"
+
     return f"\n\n【世界观活动引导】活动描述要符合「{name}」的世界观设定。不要出现现代城市元素（如地铁、手机、咖啡店等），替换为该世界对应的行为和场景。"
 
 
@@ -243,9 +254,19 @@ def build_event_guide(world_setting: Dict) -> str:
         return f"\n\n【世界观事件引导】{guide}"
 
     name = world_setting.get("world_name", "")
+    wtype = world_setting.get("world_type", "")
     dangers = world_setting.get("dangers", {})
     dungeon_names = [d.get("name", "") for d in dangers.get("dungeons", [])]
     faction_names = [f.get("name", "") for f in world_setting.get("factions", [])]
+
+    # 现世超武特殊引导
+    if wtype == "modern_power":
+        hints = []
+        if faction_names:
+            hints.append(f"组织相关：{'、'.join(faction_names[:3])}的秘密行动、任务委托")
+        hints.append("异能失控事件、地下势力冲突、暗中修炼突破、超能力相关意外")
+        hints.append("日常生活事件（工作、社交等），偶尔穿插超能力元素")
+        return f"\n\n【世界观事件引导】角色生活在「{name}」中。{'; '.join(hints)}。事件可以包含现代生活元素，但要自然融入超能力维度。不要让超能力事件太过频繁，大部分时间角色还是过着正常的现代生活。"
 
     hints = []
     if dungeon_names:

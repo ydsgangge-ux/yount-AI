@@ -75,24 +75,58 @@ def generate_world_setting(
         "scifi": "科幻未来",
         "xianxia": "仙侠修真",
         "post_apocalyptic": "末世废土",
+        "modern_power": "现世超武",
         "custom": "自定义",
     }
     type_label = type_names.get(world_type, world_type)
 
-    prompt = f"""你是一个专业的世界观设计师。请创建一个{type_label}类型的世界观设定。
+    # 类型特定约束
+    type_constraints = ""
+    if world_type == "modern_power":
+        type_constraints = """
+重要：这是一个「现世超武」世界观 — 现代社会背景下存在超能力/武术/异能。
+- 社会结构和科技水平与现实世界基本一致（有手机、互联网、城市、公司、学校）
+- 但部分人拥有超能力、武道修为、异能觉醒等，形成隐藏的「另一面社会」
+- 超能力者有组织（如异能管理局、武道联盟），也有地下势力
+- 普通人可能完全不知道超能力者的存在，或者只听说传闻
+- 力量体系要接地气：不是飞天遁地，而是有限度的强化（如体术强化、元素操控、精神感应等）
+- 势力之间有现实感：有政府机构、有企业财团、有地下组织、有学术研究团体
+- 时间跨度要真实：学习一项技能需要数周到数月，修炼提升需要长期投入，不是几天就能速成
+- 种族基本是人类，可能有小比例的变异者或觉醒者
+"""
+    elif world_type in ("fantasy", "xianxia"):
+        type_constraints = """
+重要：时间跨度要真实可信：
+- 学习一项基础技能至少需要2-4周
+- 修炼提升一个等级通常需要1-3个月
+- 赶路旅行根据距离：相邻城镇1-3天，跨区域5-15天，跨国1-2个月
+- 建立关系信任需要数周的互动
+- 不是几天就能从新手变高手，成长是长期过程
+"""
+    elif world_type == "scifi":
+        type_constraints = """
+重要：时间跨度要真实可信：
+- 学习操作一项新设备至少1-2周
+- 星际旅行根据距离：近星系数天，远星系数周到数月
+- 研究一个课题通常需要数周到数月
+- 不是几个小时就能掌握复杂技术
+"""
 
+    prompt = f"""你是一个专业的世界观设计师。请创建一个{type_label}类型的世界观设定。
+{type_constraints}
 核心主题：{core_theme}
 角色在这个世界的身份：{character_role or '（未指定）'}
 
 设计要求：
 1. 世界观必须自洽：地理、种族、力量体系、势力之间要有合理的因果关系
 2. 细节要丰富：每个区域、种族、势力都要有独特性
-3. 要有故事潜力：留出冲突点和悬念
+3. 要有故事潜力：必须有明确的对抗力量和冲突根源，留出悬念
 4. 数量适当：区域4-8个，种族3-6个，势力3-5个，副本3-5个
 5. 所有名称要有风格统一性
+6. 时间跨度要真实：技能学习、修炼提升、旅途赶路都需要合理的时长，不能几天速成
 
 返回完整的 JSON 格式，必须包含以下顶层字段：
-world_id（英文小写id）、world_name、world_type、era、communication（device/device_description/narrative_style）、geography（overview/regions数组）、races数组、power_system、factions数组、history、daily_life、dangers（monster_types/dungeons数组）、character_generation_guide、activity_generation_guide、event_generation_guide
+world_id（英文小写id）、world_name、world_type、era、communication（device/device_description/narrative_style）、geography（overview/regions数组）、races数组、power_system（name/description/levels数组/description中要包含每个等级的典型修炼时长）、factions数组、history（overview/major_events数组/current_situation）、daily_life、dangers（monster_types/dungeons数组）、character_generation_guide、activity_generation_guide、event_generation_guide
 
 只返回JSON，不要任何其他文字。确保JSON可以直接被解析。"""
 
@@ -1083,31 +1117,118 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         except Exception:
             pass
 
-    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）规划一段人生主线任务。{prev_hint}
+    # ── 构建世界观硬约束 ──
+    world_setting = None
+    try:
+        from simlife.worlds.world_manager import load_world_setting
+        world_setting = load_world_setting()
+    except Exception:
+        pass
+
+    world_hard_constraints = ""
+    if world_setting:
+        ws = world_setting
+        wname = ws.get("world_name", "")
+        wtype = ws.get("world_type", "")
+
+        # 力量体系 — 剧情中的成长必须贴合这个体系
+        ps = ws.get("power_system", {})
+        if ps:
+            ps_name = ps.get("name", "")
+            ps_desc = ps.get("description", "")[:200]
+            levels = ps.get("levels", [])
+            level_info = ""
+            if levels:
+                level_info = "、".join([f"{l.get('name','')}({l.get('description','')[:30] if l.get('description') else ''})" for l in levels[:6]])
+            world_hard_constraints += f"\n【力量体系硬约束】体系名称：{ps_name}。{ps_desc}\n等级划分：{level_info}\n角色的成长、技能学习、战斗方式必须严格遵循此体系，不得自行发明其他体系。"
+
+        # 势力 — 反派必须从这些势力中选取或与它们密切相关
+        factions = ws.get("factions", [])
+        if factions:
+            faction_details = []
+            for f in factions[:5]:
+                fd = f"{f.get('name','')}（类型：{f.get('type','')}，立场：{f.get('alignment','')}，描述：{f.get('description','')[:50] if f.get('description') else ''}）"
+                faction_details.append(fd)
+            world_hard_constraints += f"\n【势力硬约束】世界观中的主要势力：{'；'.join(faction_details)}\n对抗力量（antagonist）必须来自这些势力之一，或与这些势力有直接关联。不得创建世界观中不存在的新势力作为反派。"
+
+        # 当前局势 — 剧情的起因必须从这里发展
+        history = ws.get("history", {})
+        if history.get("current_situation"):
+            world_hard_constraints += f"\n【局势硬约束】当前局势：{history['current_situation'][:300]}\n剧情的起因必须基于此局势发展，不得忽略当前局势另起炉灶。"
+
+        # 种族 — 角色身份必须匹配
+        races = ws.get("races", [])
+        if races:
+            race_names = "、".join([r.get("name", "") for r in races[:6]])
+            world_hard_constraints += f"\n【种族硬约束】可选种族：{race_names}。角色和NPC的种族必须来自这些种族。"
+
+        # 地理 — 赶路目的地必须真实存在于世界观中
+        regions = ws.get("geography", {}).get("regions", [])
+        if regions:
+            region_names = "、".join([r.get("name", "") for r in regions[:8]])
+            world_hard_constraints += f"\n【地理硬约束】主要区域：{region_names}。旅行目的地、事件发生地必须使用这些真实区域名，不得自行发明世界观中不存在的地方。"
+
+        # 危险/副本 — 可作为冲突来源
+        dangers = ws.get("dangers", {})
+        monster_types = dangers.get("monster_types", [])
+        dungeons = dangers.get("dungeons", [])
+        if monster_types or dungeons:
+            danger_info = ""
+            if monster_types:
+                danger_info += f"常见威胁：{'、'.join(monster_types[:5])}"
+            if dungeons:
+                danger_info += f"；副本：{'、'.join([d.get('name','') for d in dungeons[:5]])}"
+            world_hard_constraints += f"\n【危险硬约束】{danger_info}。冲突和危险事件必须使用这些已有的威胁类型和副本，不得自行发明新的怪物种类。"
+
+    # 如果没有完整世界设定，仍注入通用 context
+    if not world_hard_constraints:
+        world_context = _get_world_context()
+        if world_context:
+            world_hard_constraints = "\n" + world_context
+
+    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）规划一段人生主线任务。
+{prev_hint}
+{world_hard_constraints}
+
+## ⚠️ 世界观一致性要求（最高优先级）
+
+剧情必须严格贴合上述世界观设定：
+- 对抗力量必须来自世界观中已有的势力或人物，不得凭空创建世界观中不存在的反派组织
+- 角色的技能成长必须遵循世界观的力量体系等级，不得跳级或使用体系外的能力
+- 旅行目的地必须使用世界观中已有的区域名称
+- 危险和冲突必须使用世界观中已有的威胁类型
+- NPC的身份、种族、所属势力必须符合世界观设定
+- 如果世界观有「当前局势」，剧情的起因必须基于此局势
 
 ## 核心设计原则
 
 1. **目标层级**：主线是一个大目标，每个阶段是一个中目标，每个子目标是小目标。大目标拆解为中目标，中目标拆解为小目标
 2. **必须有对抗力量**：每条主线都必须有明确的 antagonist（反派/对抗力量）。没有反派的故事没有紧张感。对抗力量可以是：
-   - 具体的反派角色（黑魔法师、腐败的领主、宿敌刺客）
-   - 组织或势力（暗影教会、盗贼公会、侵略军队）
-   - 自然/超自然威胁（瘟疫、远古封印松动、异变魔兽）
+   - 具体的反派角色（黑魔法师、腐败的领主、宿敌刺客、野心勃勃的异能者）
+   - 组织或势力（暗影教会、盗贼公会、侵略军队、跨国犯罪集团）
+   - 自然/超自然威胁（瘟疫、远古封印松动、异变魔兽、异能失控事件）
    - 但必须有自己的动机，不是纯粹的"坏人"，要让玩家理解他们为什么这样做
 3. **威胁升级**：如果有前情提要，新主线的威胁等级必须高于上一条（threat_level + 1，最高5）。角色在成长，挑战也必须升级。可以是：
    - 之前的对手回来复仇/升级
    - 前一个事件意外引出了更大的威胁
    - 角色的新身份/新能力引来新的敌人
-4. **节奏多变**：不要每天都充满戏剧冲突。有些阶段是缓慢的赶路（可能持续3-5天），有些是紧张的决战（2-3天），有些是日常社交铺垫。张弛有度才是好故事
-5. **时长自由**：总时长由故事本身决定，不要刻意压缩。一个涉及远方旅程的主线可能需要40-60天，一个本地事件可能只要15-20天
+4. **节奏多变**：不要每天都充满戏剧冲突。有些阶段是缓慢的赶路（可能持续3-10天），有些是紧张的决战（2-3天），有些是日常社交铺垫。张弛有度才是好故事
+5. **时长真实**：总时长由故事本身决定，不要刻意压缩或拉长。时间跨度必须符合常识：
+   - 赶路旅行：相邻地区3-7天，跨区域10-20天，遥远目的地30-60天
+   - 学习技能/修炼：基础技能2-4周，进阶技能1-3个月
+   - 收集情报：3-10天，取决于情报的复杂程度
+   - 建立信任关系：至少数周的互动
+   - 准备一场大型行动：7-15天
+   - 一个本地事件主线通常15-30天，远行主线通常40-90天
 6. **阶段类型**：每个阶段标注类型，用于控制节奏：
-   - travel（旅行赶路）：以移动为主，节奏慢，可以持续多天
-   - preparation（准备）：收集情报、整备装备、修炼提升
-   - exploration（探索）：调查未知区域、发现线索
-   - social（社交）：与NPC互动、建立关系、获取帮助
-   - conflict（冲突）：对抗、战斗、危机
-   - climax（高潮）：主线最关键的事件
-   - resolution（收尾）：处理后果、休整、为新冒险埋种子
-7. **子目标**：每个阶段拆出2-4个具体可执行的小目标，让角色每天有事可做
+   - travel（旅行赶路）：以移动为主，节奏慢，根据距离持续3-20天
+   - preparation（准备）：收集情报、整备装备、修炼提升，持续5-15天（修炼类更长）
+   - exploration（探索）：调查未知区域、发现线索，持续3-10天
+   - social（社交）：与NPC互动、建立关系、获取帮助，持续5-15天
+   - conflict（冲突）：对抗、战斗、危机，持续2-5天
+   - climax（高潮）：主线最关键的事件，持续1-3天
+   - resolution（收尾）：处理后果、休整、为新冒险埋种子，持续5-10天
+7. **子目标**：每个阶段拆出2-4个具体可执行的小目标，让角色每天有事可做。子目标的完成时间也要合理
 8. **未解伏笔**：给出2-3个本主线结束后仍未解决的伏笔，为下一条主线埋种子
 9. **前情延续**：如果有【前情提要】，新主线必须基于前作的后果和未解伏笔自然发展，不是另起炉灶
 
@@ -1137,9 +1258,6 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
   ]
 }}"""
 
-    world_context = _get_world_context()
-    if world_context:
-        prompt = world_context + "\n\n" + prompt
     # 注入用户对剧情的影响
     story_influence = _get_story_influences()
     if story_influence:
@@ -1164,7 +1282,7 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
             if not isinstance(s, dict):
                 continue
             dur = int(s.get("duration_days", 5))
-            dur = max(2, min(20, dur))  # 放宽到20天
+            dur = max(2, min(60, dur))  # 远行主线阶段可达60天
             total_days += dur
             stages.append({
                 "name": str(s.get("name", "阶段")),
@@ -1271,6 +1389,12 @@ def generate_day_plan(
 4. 不要用感叹号
 5. activity 要精简概括，不要展开细节，细节会在到时间后按需展开
 6. 一天中至少 1-2 个节点涉及NPC互动
+
+## 时间真实性要求
+- 学习技能不能一天速成，如果今天是"修炼/学习"类活动，只能写"开始练习某某技能"或"继续练习某某技能（第X天）"，不要写"学会了"
+- 一天的活动安排要符合正常人的精力：不可能从早到晚全在修炼或战斗，要有休息、用餐、闲聊的时间
+- travel阶段如果需要赶远路，一天的时间大部分在旅途上，不要安排太多额外事件
+- 如果角色在准备阶段（preparation），情报收集、装备筹备等活动要逐步推进，不要一天搞定所有准备
 
 ## 节奏要求
 - 如果当前阶段是"travel"类型（赶路），大半天应该都在旅途上，不要安排太多事件，赶路本身就是内容
@@ -1475,7 +1599,26 @@ def generate_story_cast(character_card: dict, arc: dict = None, existing_cast: l
         old_brief = "\n".join([f"- {c.get('name', '?')}（{c.get('role', '?')}，信任度{c.get('trust', 50)}）" for c in existing_cast[:5]])
         old_cast_hint = f"\n\n角色已有的社交关系：\n{old_brief}\n可以保留1-2个关系最深的老面孔，其余换新。\n"
 
-    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）生成一组剧情NPC卡司。{arc_hint}{old_cast_hint}
+    # 注入世界观硬约束（NPC种族、势力必须符合世界观）
+    world_setting = None
+    try:
+        from simlife.worlds.world_manager import load_world_setting
+        world_setting = load_world_setting()
+    except Exception:
+        pass
+
+    ws_constraints = ""
+    if world_setting:
+        races = world_setting.get("races", [])
+        factions = world_setting.get("factions", [])
+        if races:
+            ws_constraints += f"\n可用种族：{'、'.join([r.get('name','') for r in races[:6]])}"
+        if factions:
+            faction_info = "；".join([f"{f.get('name','')}（{f.get('type','')}）" for f in factions[:5]])
+            ws_constraints += f"\n已有势力：{faction_info}\nNPC的所属势力必须来自这些已有势力。"
+        ws_constraints = "\n【世界观约束】" + ws_constraints
+
+    prompt = f"""你是人生模拟器的叙事系统。请为角色「{name}」（{occupation}，{age}岁，性格：{traits_str}）生成一组剧情NPC卡司。{arc_hint}{old_cast_hint}{ws_constraints}
 
 要求：
 1. 生成 4-6 个NPC，他们将在剧情中反复出现
@@ -1483,7 +1626,7 @@ def generate_story_cast(character_card: dict, arc: dict = None, existing_cast: l
 3. 如果有当前主线，必须包含1-2个与对抗力量相关的NPC
 4. 每个NPC要有独特的性格和说话风格，让对话有辨识度
 5. 每个NPC要有一个秘密或隐藏身份，为后续剧情埋伏笔
-6. NPC要完全符合世界观设定，不要出现现代元素
+6. NPC要完全符合世界观设定，种族和势力必须来自世界观中已有的
 7. 如果有已有社交关系，保留1-2个老面孔，维持关系连续性
 
 返回 JSON 数组，不要其他内容：
