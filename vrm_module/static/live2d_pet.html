@@ -53,6 +53,19 @@ canvas{display:block;position:absolute;top:0;left:0}
 (function () {
   "use strict";
 
+  // ★ 抑制 SoundManager / MotionManager 音频加载失败的控制台刷屏
+  // CDN 模型的音效文件在国内网络下无法加载，属于正常现象
+  var _suppressAudioErrors = function(args) {
+    var msg = Array.prototype.join.call(args, " ");
+    return msg.indexOf("SoundManager") !== -1 || msg.indexOf("MotionManager") !== -1;
+  };
+  var _origError = console.error;
+  console.error = function() { if (!_suppressAudioErrors(arguments)) _origError.apply(console, arguments); };
+  var _origWarn = console.warn;
+  console.warn = function() { if (!_suppressAudioErrors(arguments)) _origWarn.apply(console, arguments); };
+  var _origLog = console.log;
+  console.log = function() { if (!_suppressAudioErrors(arguments)) _origLog.apply(console, arguments); };
+
   // ★ 暴露 PIXI 到 window，pixi-live2d-display 需要引用
   window.PIXI = PIXI;
 
@@ -213,6 +226,10 @@ canvas{display:block;position:absolute;top:0;left:0}
         model.destroy();
       }
       model = m;
+
+      // 静音：CDN 模型的音效文件无法加载，避免 DOMException 刷屏
+      try { model.soundManager.volume = 0; } catch(e) {}
+
       fitModel();
       app.stage.addChild(model);
 
