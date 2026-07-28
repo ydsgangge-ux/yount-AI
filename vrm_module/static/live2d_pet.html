@@ -194,7 +194,13 @@ canvas{display:block;position:absolute;top:0;left:0}
   }
 
   // ── 加载模型 ──
+  var isLoading = false;          // 防止并发加载
+  var idleLineTimer = null;       // 闲置台词定时器（切换时清理）
+
   function loadModel() {
+    if (isLoading) return;        // 正在加载中，忽略重复请求
+    isLoading = true;
+
     var cfg = MODELS[modelIndex];
     showBubble("加载: " + cfg.name + "...", 8000);
     console.log("[Live2D] 加载模型:", cfg.name, cfg.url);
@@ -261,16 +267,24 @@ canvas{display:block;position:absolute;top:0;left:0}
         showBubble(pickLine(LINES.greet), 4000);
       }, 1500);
 
-      // 随机闲置台词
-      setInterval(function () {
-        if (!speaking && !lipSyncActive && Math.random() < 0.3) {
-          showBubble(pickLine(LINES.idle), 3000);
-        }
-      }, 30000);
+      // 随机闲置台词（可清理的 setTimeout 链，避免切换模型时定时器堆积）
+      if (idleLineTimer) clearTimeout(idleLineTimer);
+      function scheduleIdleLine() {
+        idleLineTimer = setTimeout(function () {
+          if (!speaking && !lipSyncActive && Math.random() < 0.3) {
+            showBubble(pickLine(LINES.idle), 3000);
+          }
+          scheduleIdleLine();
+        }, 30000);
+      }
+      scheduleIdleLine();
+
+      isLoading = false;   // 加载完成，释放锁
 
     }).catch(function (e) {
       console.error("[Live2D] 加载失败:", cfg.name, e);
       showBubble(cfg.name + " 加载失败，双击切换", 5000);
+      isLoading = false;   // 加载失败也释放锁
     });
   }
 
