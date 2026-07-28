@@ -1186,14 +1186,16 @@ class MemoryPage(QWidget):
                 conn.commit()
 
             # 清除 agent 内存中的对话历史（否则会影响新人格回复）
-            if scope == "all" and self.agent and hasattr(self.agent, 'conversation_history'):
-                self.agent.conversation_history.clear()
+            main_win = self.window()
+            agent = getattr(main_win, 'agent', None)
+            if scope == "all" and agent and hasattr(agent, 'conversation_history'):
+                agent.conversation_history.clear()
 
             # 清除聊天页面的气泡显示
             if scope == "all":
-                self._clear_chat_bubbles()
+                main_win._clear_chat_bubbles()
                 # 同步清除悬浮窗消息
-                fw = getattr(self, 'float_win', None)
+                fw = getattr(main_win, 'float_win', None)
                 if fw and hasattr(fw, 'clear_messages'):
                     try:
                         fw.clear_messages()
@@ -1208,23 +1210,6 @@ class MemoryPage(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "清除失败", f"❌ 操作失败：{e}")
-
-    def _clear_chat_bubbles(self):
-        """清除聊天页面的所有消息气泡"""
-        try:
-            chat = self.chat_page
-            layout = chat._msg_layout
-            # 倒序移除所有气泡（保留最后的 stretch）
-            for i in range(layout.count() - 1, -1, -1):
-                item = layout.itemAt(i)
-                if item and item.widget():
-                    w = item.widget()
-                    layout.removeWidget(w)
-                    w.deleteLater()
-            # 重新添加 stretch
-            layout.addStretch()
-        except Exception:
-            pass
 
     def search(self):
         q = self._search.text().strip()
@@ -5150,6 +5135,21 @@ class MainWindow(QMainWindow):
 
         # 启动后 2 秒检查离线消息
         QTimer.singleShot(2000, self._check_offline_messages)
+
+    def _clear_chat_bubbles(self):
+        """清除聊天页面的所有消息气泡"""
+        try:
+            chat = self.chat_page
+            layout = chat._msg_layout
+            for i in range(layout.count() - 1, -1, -1):
+                item = layout.itemAt(i)
+                if item and item.widget():
+                    w = item.widget()
+                    layout.removeWidget(w)
+                    w.deleteLater()
+            layout.addStretch()
+        except Exception:
+            pass
 
     def _setup_ui(self):
         central = QWidget()
