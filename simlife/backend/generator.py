@@ -1059,6 +1059,10 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
     """
     llm = get_llm_client()
 
+    # 防御：character_card 可能是异常类型
+    if not isinstance(character_card, dict):
+        character_card = {}
+
     name = character_card.get("basic", {}).get("name", "")
     occupation = character_card.get("basic", {}).get("occupation", "")
     personality = character_card.get("basic", {}).get("personality_traits", [])
@@ -1068,7 +1072,10 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
     # 前情提要：上一段主线的摘要
     prev_hint = ""
     prev_threat_level = 0
-    if previous_arc:
+    # 如果 previous_arc 是 list（异常数据），取第一个 dict 元素
+    if isinstance(previous_arc, list):
+        previous_arc = previous_arc[0] if previous_arc and isinstance(previous_arc[0], dict) else None
+    if previous_arc and isinstance(previous_arc, dict):
         prev_title = previous_arc.get("title", "")
         prev_desc = previous_arc.get("description", "")
         prev_goal = previous_arc.get("main_goal", "")
@@ -1126,7 +1133,7 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         pass
 
     world_hard_constraints = ""
-    if world_setting:
+    if world_setting and isinstance(world_setting, dict):
         ws = world_setting
         wname = ws.get("world_name", "")
         wtype = ws.get("world_type", "")
@@ -1374,7 +1381,9 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         }
 
     except Exception as e:
+        import traceback
         print(f"[SimLife] 主线生成失败: {e}")
+        traceback.print_exc()
         return _default_life_arc(name)
 
 
