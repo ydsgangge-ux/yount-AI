@@ -1175,7 +1175,8 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         if monster_types or dungeons:
             danger_info = ""
             if monster_types:
-                danger_info += f"常见威胁：{'、'.join(monster_types[:5])}"
+                mt_names = [m.get("name", str(m)) if isinstance(m, dict) else str(m) for m in monster_types[:5]]
+                danger_info += f"常见威胁：{'、'.join(mt_names)}"
             if dungeons:
                 danger_info += f"；副本：{'、'.join([d.get('name','') for d in dungeons[:5]])}"
             world_hard_constraints += f"\n【危险硬约束】{danger_info}。冲突和危险事件必须使用这些已有的威胁类型和副本，不得自行发明新的怪物种类。"
@@ -1264,7 +1265,7 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         prompt = prompt + "\n\n" + story_influence
 
     try:
-        response = llm.generate(prompt, max_tokens=1000, temperature=0.85)
+        response = llm.generate(prompt, max_tokens=2000, temperature=0.85)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -1272,7 +1273,61 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
             if response.endswith("```"):
                 response = response[:-3]
             response = response.strip()
-        result = json.loads(response)
+
+        # 尝试修复被截断的 JSON：补全未闭合的字符串和括号
+        import re as _re
+        def _repair_json(s: str) -> str:
+            # 提取最外层的 { ... }
+            match = _re.search(r'\{[\s\S]*', s)
+            if match:
+                s = match.group(0)
+            # 统计未闭合的括号
+            open_curly = s.count('{') - s.count('}')
+            open_square = s.count('[') - s.count(']')
+            # 检查是否在字符串中间截断（最后一个引号后没有配对）
+            # 简单修复：闭合引号
+            in_str = False
+            escaped = False
+            for ch in s:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == '\\':
+                    escaped = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+            if in_str:
+                s += '"'
+            # 补全括号
+            s += ']' * max(0, open_square)
+            s += '}' * max(0, open_curly)
+            return s
+
+        try:
+            result = json.loads(response)
+        except json.JSONDecodeError:
+            # 尝试修复
+            repaired = _repair_json(response)
+            try:
+                result = json.loads(repaired)
+            except json.JSONDecodeError:
+                # 最终尝试：用正则提取 JSON 对象
+                json_match = _re.search(r'\{[\s\S]*\}', response)
+                if json_match:
+                    repaired2 = _repair_json(json_match.group(0))
+                    result = json.loads(repaired2)
+                else:
+                    raise
+
+        # 如果 LLM 返回数组而非对象，取第一个元素
+        if isinstance(result, list):
+            if len(result) == 0:
+                return _default_life_arc(name)
+            result = result[0] if isinstance(result[0], dict) else {}
+
+        if not isinstance(result, dict):
+            return _default_life_arc(name)
 
         # 规范化
         stages_raw = result.get("stages", [])
@@ -1823,6 +1878,11 @@ def generate_future_events(
                 response = response[:-3]
             response = response.strip()
         events = json.loads(response)
+        # 如果返回的是 dict 而非 list，尝试提取
+        if isinstance(events, dict):
+            events = events.get("events", events.get("event_list", [events]))
+        if not isinstance(events, list):
+            events = [events]
 
         tomorrow = (datetime.now() + timedelta(days=1)).date()
         for i, evt in enumerate(events):
