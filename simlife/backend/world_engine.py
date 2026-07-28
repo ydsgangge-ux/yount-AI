@@ -567,7 +567,11 @@ def catchup_world_state(
     work_style = _get_work_style(card)
 
     if hours_offline < 6:
-        scene_label = SCENE_LABELS.get(SceneEnum(last_state.current_scene), last_state.current_scene)
+        # 容错：如果 current_scene 不是有效枚举值，直接用原字符串
+        try:
+            scene_label = SCENE_LABELS.get(SceneEnum(last_state.current_scene), last_state.current_scene)
+        except ValueError:
+            scene_label = last_state.current_scene
         logs.append(f"你不在的时候，{name}一直在{scene_label}")
     elif hours_offline < 24:
         activities = ["睡了个午觉", "发了一会儿呆", "刷了一会儿手机", "出去走了走"]
