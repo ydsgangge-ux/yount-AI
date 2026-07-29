@@ -544,8 +544,12 @@ window.generateWorld = async function() {
   const sel = document.getElementById('inp-world');
   const isModern = sel.value === 'modern';
 
+  // 如果选了现代世界，确保切换回去（之前可能选了异世界）
+  if (isModern) {
+    await doSwitchWorld('modern');
+  }
   // 如果选了自定义世界观但未实际切换
-  if (!isModern && sel.value !== '__ai_generate' && sel.value !== '__import') {
+  else if (sel.value !== '__ai_generate' && sel.value !== '__import') {
     await doSwitchWorld(sel.value);
   }
 

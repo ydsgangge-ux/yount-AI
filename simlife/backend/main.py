@@ -1258,6 +1258,8 @@ def api_switch_world(data: dict):
     if world_id not in valid_ids:
         raise HTTPException(400, f"无效的世界观 ID: {world_id}")
     set_current_world(world_id)
+    global current_world_id
+    current_world_id = world_id
     return {"status": "ok", "world_id": world_id}
 
 
@@ -1270,8 +1272,11 @@ def api_import_world(data: dict):
     world_id = setting.get("world_id", "custom")
     if not world_id or world_id == "modern":
         raise HTTPException(400, "世界观 ID 无效（不能使用 'modern'）")
-    from simlife.worlds.world_manager import save_world_setting
+    from simlife.worlds.world_manager import save_world_setting, set_current_world
     save_world_setting(world_id, setting)
+    set_current_world(world_id)
+    global current_world_id
+    current_world_id = world_id
     return {"status": "ok", "world_id": world_id, "world_name": setting.get("world_name", "")}
 
 
@@ -1300,6 +1305,8 @@ def api_generate_world(data: dict):
         world_id = setting.get("world_id", "custom")
         save_world_setting(world_id, setting)
         set_current_world(world_id)
+        global current_world_id
+        current_world_id = world_id
         return {
             "status": "ok",
             "world_id": world_id,
@@ -1419,9 +1426,18 @@ if FRONTEND_DIR.exists():
 
 @app.on_event("startup")
 def on_startup():
-    global character_card, world_state, agidpa_reader, weather_service
+    global character_card, world_state, agidpa_reader, weather_service, current_world_id
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 加载当前世界观 ID
+    try:
+        from simlife.worlds.world_manager import get_current_world_id as _get_wid
+        current_world_id = _get_wid()
+        if current_world_id != "modern":
+            print(f"[SimLife] 当前世界观: {current_world_id}")
+    except Exception:
+        pass
 
     # 加载人物卡
     character_card = _load_character_card()
