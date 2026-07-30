@@ -219,10 +219,11 @@ class EngineLoader(QThread):
             simlife_client = None
             try:
                 from engine.simlife_client import SimLifeClient
-                _sl = SimLifeClient()
-                if _sl.is_available():
-                    simlife_client = _sl
+                simlife_client = SimLifeClient()
+                if simlife_client.is_available():
                     print("[SimLife] 生活状态模块已连接")
+                else:
+                    print("[SimLife] 模块已加载（角色卡未初始化，死亡模式可用）")
             except Exception as e:
                 print(f"[SimLife] 未启用（{e}）")
 
@@ -245,7 +246,8 @@ class EngineLoader(QThread):
                 print("=" * 56)
                 print("  [SimLife] 生活模拟模块尚未初始化")
                 print("  请在浏览器中打开 http://127.0.0.1:8769")
-                print("  填写基本信息后点击「开始生成」即可")
+                print("  选择世界观后可：「开始生成」进入剧情模式")
+                print("  或点「☠️ 死亡模式」进入高挑战模式")
                 print("  初始化后重启本程序即可生效")
                 print("=" * 56)
                 print()
@@ -888,6 +890,11 @@ class AGIApp:
                     pass
             emoji = _emotion_emoji(e)
             resp = r.get("response", "…")
+            # 死亡模式系统消息（独立显示）
+            dm_msg = r.get("dm_system_message", "")
+            dm_choices = r.get("dm_choices", [])
+            if dm_msg:
+                self.float_win.add_dm_system_message(dm_msg, choices=dm_choices)
             self.float_win.add_message(f"{emoji} {resp}" if emoji else resp)
 
         def on_err(err):

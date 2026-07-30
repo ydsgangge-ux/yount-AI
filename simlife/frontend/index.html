@@ -68,31 +68,92 @@ body {
 }
 #game-canvas {
   image-rendering: auto;
-  height: 540px;
+  height: 320px;
   max-height: 100%;
   display: block;
 }
 #char-canvas {
   image-rendering: auto;
-  height: 540px;
+  height: 320px;
   max-height: 100%;
   display: block;
   background: #ffffff;
 }
 
-/* 异世界故事面板（主线进度 + 每日计划） */
+/* 异世界故事面板（主线进度 + 剧情正文） */
 #story-panel {
-  max-height: 180px;
-  overflow-y: auto;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
   display: none;
+  flex-direction: column;
   background: linear-gradient(180deg, #12192e, var(--surface));
   border-top: 1px solid var(--border);
-  padding: 6px 16px;
+  padding: 8px 16px 6px;
 }
-#story-panel::-webkit-scrollbar { width: 4px; }
-#story-panel::-webkit-scrollbar-track { background: transparent; }
-#story-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#story-panel.show { display: flex; }
+/* 进度条（紧凑） */
+#day-plan-panel {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.35);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+  max-height: 70px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+#day-plan-panel::-webkit-scrollbar { height: 3px; }
+#day-plan-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.plan-node {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-right: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.plan-node.past { color: #666; border-color: rgba(255,255,255,0.05); }
+.plan-node.now { color: #a78bfa; border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.1); font-weight: bold; }
+.plan-node.future { color: #444; border-color: rgba(255,255,255,0.03); }
+.plan-node.selected { color: #fff; border-color: var(--accent); background: rgba(233,69,96,0.15); }
+.plan-node:hover { border-color: var(--accent); }
+/* 剧情正文区（核心，可滚动） */
+#story-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px;
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  font-size: 13.5px;
+  line-height: 1.85;
+  color: #d8dde5;
+}
+#story-content::-webkit-scrollbar { width: 4px; }
+#story-content::-webkit-scrollbar-track { background: transparent; }
+#story-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#story-content .scn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+#story-content .scn-time { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
+#story-content .scn-label { color: #a78bfa; font-size: 13px; font-weight: bold; }
+#story-content .scn-npc { color: var(--mood-good); font-size: 12px; }
+#story-content .scn-body { color: #d8dde5; }
+#story-content .scn-empty { color: #555; font-size: 12px; text-align: center; padding: 30px 0; }
+#story-content .scn-loading { color: var(--text-dim); font-size: 12px; text-align: center; padding: 30px 0; }
 
 /* 状态栏 */
 #status-bar {
@@ -584,6 +645,7 @@ body {
           <option value="custom">🌈 完全自定义</option>
         </select>
       </div>
+      <!-- 死亡模式入口已移至主界面（世界观生成后显示），不再在设置面板中显示 -->
       <div class="field">
         <label>核心主题 / 想法（可选）</label>
         <input id="inp-ai-world-theme" placeholder="如：类似原神的提瓦特大陆、刀剑神域VRMMO、巨兽背上的世界…" value="">
@@ -606,6 +668,8 @@ body {
       <button id="btn-skip" onclick="skipSetup()">跳过</button>
       <button id="btn-generate" onclick="generateWorld()">✨ 开始生成</button>
     </div>
+    <!-- 死亡模式入口（仅在世界观已选中且非现代世界时显示） -->
+    <button id="btn-death-mode-setup" onclick="enterDeathModeSetup()" style="display:none;width:100%;padding:12px;background:linear-gradient(135deg,#da3633,#f85149);color:white;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:bold;margin-top:10px;">☠️ 死亡模式（高挑战 · 角色会死）</button>
     <div id="setup-status"></div>
   </div>
 </div>
@@ -619,12 +683,13 @@ body {
     <span class="weather" id="disp-weather">⛅</span>
     <span id="scene-tag">晚间放松</span><span id="freeze-indicator">⏸ 场景冻结</span>
     <span style="flex:1;"></span>
-    <button id="user-enter-btn" onclick="toggleUserPanel()">🏠 进入世界</button>
+    <button id="user-enter-btn" onclick="toggleUserPanel()" title="设置你在 SimLife 世界中的身份（名字、与角色的关系等）">🏠 进入世界</button>
     <button id="settings-btn" onclick="toggleSettingsMenu()">⚙️</button>
     <div id="settings-menu">
       <button onclick="openSetupForReinit()">🔄 重新初始化角色</button>
       <button onclick="openUserPanelFromMenu()">🏠 设置我的身份</button>
       <button onclick="openStoryArchive()">📖 剧情存档</button>
+      <button onclick="openDeathMode()">☠️ 死亡模式</button>
       <div class="menu-divider"></div>
       <button class="danger" onclick="doResetSimLife()">🗑️ 重置 SimLife（清空所有数据）</button>
     </div>
@@ -646,8 +711,11 @@ body {
     <span id="activity-text">在改设计稿的细节</span>
   </div>
 
-  <!-- 异世界模式：主线进度 + 每日计划（固定高度，不挤压游戏区） -->
-  <div id="story-panel"></div>
+  <!-- 异世界模式：主线进度 + 剧情正文 -->
+  <div id="story-panel">
+    <div id="day-plan-panel"></div>
+    <div id="story-content"><div class="scn-empty">暂无剧情</div></div>
+  </div>
 
   <div id="log-panel">
     <div class="log-header">
@@ -696,6 +764,7 @@ body {
 
 <script src="/static/renderer.js"></script>
 <script src="/static/ui.js"></script>
+<script src="/static/death_mode_ui.js"></script>
 <script src="/static/game.js"></script>
 </body>
 </html>

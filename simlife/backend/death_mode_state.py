@@ -1,0 +1,254 @@
+"""
+死亡模式状态管理
+独立于原有 SimLife 系统，不影响现代/异世界模式
+"""
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Dict, List, Any
+
+DATA_DIR = Path(__file__).parent.parent / "data"
+STATE_FILE = DATA_DIR / "death_mode_state.json"
+HALL_FILE = DATA_DIR / "death_hall.json"
+
+
+# ── 职业模板（按世界类型分组）──────────────────────────
+
+# 属性统一为：strength(力量/体术) agility(敏捷/身法) intelligence(智力/悟性) vitality(体质/根骨) luck(运气/机缘)
+
+CLASS_TEMPLATES = {
+    # ── 奇幻魔法 ──
+    "fantasy": {
+        "warrior": {"name": "战士", "icon": "⚔️", "description": "近战物理输出，高生命值和防御力", "base_stats": {"strength": 15, "agility": 8, "intelligence": 5, "vitality": 15, "luck": 5}, "base_hp": 150, "base_mp": 20, "starting_skills": ["重击", "格挡"]},
+        "mage": {"name": "法师", "icon": "🔮", "description": "远程魔法输出，高魔力但生命值低", "base_stats": {"strength": 5, "agility": 8, "intelligence": 18, "vitality": 6, "luck": 8}, "base_hp": 70, "base_mp": 100, "starting_skills": ["火球术", "魔法护盾"]},
+        "rogue": {"name": "盗贼", "icon": "🗡️", "description": "高敏捷，擅长暴击和闪避", "base_stats": {"strength": 10, "agility": 16, "intelligence": 8, "vitality": 8, "luck": 10}, "base_hp": 100, "base_mp": 40, "starting_skills": ["偷袭", "闪避"]},
+        "archer": {"name": "弓箭手", "icon": "🏹", "description": "远程物理输出，平衡型", "base_stats": {"strength": 12, "agility": 14, "intelligence": 8, "vitality": 10, "luck": 7}, "base_hp": 110, "base_mp": 35, "starting_skills": ["精准射击", "快速移动"]},
+        "cleric": {"name": "牧师", "icon": "✨", "description": "治疗和辅助，生存能力强", "base_stats": {"strength": 7, "agility": 7, "intelligence": 14, "vitality": 12, "luck": 8}, "base_hp": 120, "base_mp": 80, "starting_skills": ["治愈术", "祝福"]},
+    },
+    # ── 仙侠修真 ──
+    "xianxia": {
+        "sword_cultivator": {"name": "剑修", "icon": "🗡️", "description": "以剑入道，攻击凌厉，剑意破万法", "base_stats": {"strength": 14, "agility": 14, "intelligence": 10, "vitality": 10, "luck": 7}, "base_hp": 120, "base_mp": 60, "starting_skills": ["御剑术", "剑气斩"]},
+        "body_cultivator": {"name": "体修", "icon": "💪", "description": "炼体成圣，肉身不灭，近战无敌", "base_stats": {"strength": 18, "agility": 6, "intelligence": 5, "vitality": 16, "luck": 5}, "base_hp": 180, "base_mp": 20, "starting_skills": ["金刚拳", "铜皮铁骨"]},
+        "pill_cultivator": {"name": "丹修", "icon": "⚗️", "description": "炼丹入道，丹药辅助，续航极强", "base_stats": {"strength": 6, "agility": 8, "intelligence": 16, "vitality": 10, "luck": 12}, "base_hp": 90, "base_mp": 90, "starting_skills": ["回春丹", "毒丹术"]},
+        "talisman_cultivator": {"name": "符修", "icon": "📜", "description": "符箓之道，攻守兼备，变化多端", "base_stats": {"strength": 7, "agility": 10, "intelligence": 15, "vitality": 8, "luck": 12}, "base_hp": 85, "base_mp": 85, "starting_skills": ["雷符", "护身符"]},
+        "soul_cultivator": {"name": "魂修", "icon": "👻", "description": "修炼神魂，精神攻击，诡异莫测", "base_stats": {"strength": 5, "agility": 10, "intelligence": 18, "vitality": 6, "luck": 10}, "base_hp": 75, "base_mp": 110, "starting_skills": ["神识刺", "摄魂术"]},
+    },
+    # ── 末世废土 ──
+    "post_apocalyptic": {
+        "esper": {"name": "异能者", "icon": "⚡", "description": "觉醒超能力，远程能量攻击", "base_stats": {"strength": 8, "agility": 10, "intelligence": 16, "vitality": 8, "luck": 8}, "base_hp": 90, "base_mp": 90, "starting_skills": ["念动力", "能量护盾"]},
+        "scavenger": {"name": "拾荒者", "icon": "🎒", "description": "废土生存专家，资源利用大师", "base_stats": {"strength": 12, "agility": 14, "intelligence": 8, "vitality": 12, "luck": 10}, "base_hp": 120, "base_mp": 30, "starting_skills": ["废土搜刮", "陷阱制作"]},
+        "mechanic": {"name": "机械师", "icon": "🔧", "description": "改造机械，科技战力", "base_stats": {"strength": 10, "agility": 8, "intelligence": 15, "vitality": 10, "luck": 7}, "base_hp": 100, "base_mp": 60, "starting_skills": ["无人机召唤", "电磁脉冲"]},
+        "mutant": {"name": "变异者", "icon": "🧬", "description": "基因变异，肉体强化", "base_stats": {"strength": 16, "agility": 10, "intelligence": 6, "vitality": 14, "luck": 5}, "base_hp": 160, "base_mp": 25, "starting_skills": ["利爪撕裂", "再生"]},
+        "survivor": {"name": "生存者", "icon": "🛡️", "description": "全能型废土生存者，均衡发展", "base_stats": {"strength": 10, "agility": 10, "intelligence": 10, "vitality": 12, "luck": 10}, "base_hp": 115, "base_mp": 45, "starting_skills": ["急救术", "战术撤退"]},
+    },
+    # ── 现世超武 ──
+    "modern_power": {
+        "martial_artist": {"name": "武道者", "icon": "👊", "description": "古武术传人，内力深厚", "base_stats": {"strength": 15, "agility": 12, "intelligence": 8, "vitality": 13, "luck": 6}, "base_hp": 140, "base_mp": 50, "starting_skills": ["崩拳", "气功罩"]},
+        "awakened": {"name": "觉醒者", "icon": "🌀", "description": "异能觉醒，能力多变", "base_stats": {"strength": 8, "agility": 12, "intelligence": 14, "vitality": 8, "luck": 10}, "base_hp": 95, "base_mp": 85, "starting_skills": ["念动力", "感知强化"]},
+        "ancient_inheritor": {"name": "古武传人", "icon": "🗡️", "description": "传承古老武学，招式精妙", "base_stats": {"strength": 13, "agility": 15, "intelligence": 8, "vitality": 10, "luck": 8}, "base_hp": 110, "base_mp": 45, "starting_skills": ["连环掌", "轻功"]},
+        "dark_ability": {"name": "暗能力者", "icon": "🌑", "description": "隐秘能力，暗影操控", "base_stats": {"strength": 10, "agility": 14, "intelligence": 12, "vitality": 7, "luck": 10}, "base_hp": 90, "base_mp": 70, "starting_skills": ["暗影潜行", "影刃"]},
+        "enhancer": {"name": "强化者", "icon": "💎", "description": "身体全方位强化，无短板", "base_stats": {"strength": 12, "agility": 12, "intelligence": 8, "vitality": 14, "luck": 6}, "base_hp": 130, "base_mp": 40, "starting_skills": ["力量强化", "速度强化"]},
+    },
+    # ── 科幻未来 ──
+    "scifi": {
+        "mecha_pilot": {"name": "机甲师", "icon": "🤖", "description": "驾驶战斗机甲，火力强大", "base_stats": {"strength": 14, "agility": 8, "intelligence": 12, "vitality": 14, "luck": 6}, "base_hp": 160, "base_mp": 40, "starting_skills": ["导弹齐射", "能量护盾"]},
+        "nano_soldier": {"name": "纳米战士", "icon": "🔬", "description": "纳米改造身体，自适应战斗", "base_stats": {"strength": 13, "agility": 13, "intelligence": 10, "vitality": 12, "luck": 7}, "base_hp": 130, "base_mp": 55, "starting_skills": ["纳米修复", "形态变化"]},
+        "hacker": {"name": "黑客", "icon": "💻", "description": "信息战专家，远程干扰控制", "base_stats": {"strength": 5, "agility": 10, "intelligence": 18, "vitality": 7, "luck": 10}, "base_hp": 80, "base_mp": 100, "starting_skills": ["系统入侵", "电磁干扰"]},
+        "gene_modified": {"name": "基因改造者", "icon": "🧬", "description": "基因编辑强化，超越人类极限", "base_stats": {"strength": 15, "agility": 12, "intelligence": 8, "vitality": 13, "luck": 6}, "base_hp": 145, "base_mp": 35, "starting_skills": ["基因爆发", "快速再生"]},
+        "energy_manipulator": {"name": "能量操控者", "icon": "⚡", "description": "操控纯能量，攻防一体", "base_stats": {"strength": 7, "agility": 10, "intelligence": 16, "vitality": 8, "luck": 9}, "base_hp": 85, "base_mp": 95, "starting_skills": ["能量弹", "能量壁"]},
+    },
+}
+
+
+def _get_world_type_from_setting(world_setting: Dict) -> str:
+    """从世界设定中推断世界类型"""
+    if not world_setting:
+        return "fantasy"
+    wtype = world_setting.get("world_type", "fantasy")
+    # 直接匹配
+    if wtype in CLASS_TEMPLATES:
+        return wtype
+    # 模糊匹配
+    if "xianxia" in wtype or "仙" in str(world_setting.get("world_name", "")):
+        return "xianxia"
+    if "apocal" in wtype or "末" in str(world_setting.get("world_name", "")):
+        return "post_apocalyptic"
+    if "modern" in wtype or "超" in str(world_setting.get("world_name", "")):
+        return "modern_power"
+    if "sci" in wtype:
+        return "scifi"
+    return "fantasy"
+
+
+def get_available_classes(world_type: str = None, world_setting: Dict = None) -> List[Dict]:
+    """获取可选职业列表（根据世界类型）"""
+    if world_type is None and world_setting:
+        world_type = _get_world_type_from_setting(world_setting)
+    if world_type is None:
+        world_type = "fantasy"
+
+    classes = CLASS_TEMPLATES.get(world_type, CLASS_TEMPLATES["fantasy"])
+    return [
+        {
+            "id": k,
+            "name": v["name"],
+            "icon": v["icon"],
+            "description": v["description"],
+            "base_stats": v["base_stats"],
+            "base_hp": v["base_hp"],
+            "base_mp": v["base_mp"],
+            "starting_skills": v["starting_skills"],
+        }
+        for k, v in classes.items()
+    ]
+
+
+def get_class_template(world_type: str, class_id: str) -> Optional[Dict]:
+    """获取特定职业模板"""
+    classes = CLASS_TEMPLATES.get(world_type, CLASS_TEMPLATES["fantasy"])
+    return classes.get(class_id)
+
+
+# ── 状态结构 ──────────────────────────────────────────
+
+def create_initial_state(
+    character_name: str,
+    class_id: str,
+    world_setting: Dict,
+    growth_mode: str = "normal",
+    custom_stat_points: Optional[Dict] = None,
+) -> Dict:
+    """创建死亡模式初始状态"""
+    world_type = _get_world_type_from_setting(world_setting)
+    cls = get_class_template(world_type, class_id)
+    if not cls:
+        # 回退到奇幻战士
+        cls = CLASS_TEMPLATES["fantasy"]["warrior"]
+
+    stats = dict(cls["base_stats"])
+    # 自由分配点数（初始5点）
+    remaining_points = 5
+    if custom_stat_points:
+        for k, v in custom_stat_points.items():
+            if k in stats and v > 0 and remaining_points >= v:
+                stats[k] += v
+                remaining_points -= v
+
+    return {
+        "mode": "death_mode",
+        "character": {
+            "name": character_name,
+            "class_id": class_id,
+            "class_name": cls["name"],
+            "class_icon": cls["icon"],
+            "level": 1,
+            "hp": cls["base_hp"],
+            "max_hp": cls["base_hp"],
+            "mp": cls["base_mp"],
+            "max_mp": cls["base_mp"],
+            "stats": stats,
+            "skills": list(cls["starting_skills"]),
+            "equipment": [],
+            "inventory": [],
+            "experience": 0,
+            "exp_to_next": 100,
+            "gold": 50,
+        },
+        "world_setting": world_setting,
+        "world_type": world_type,
+        "growth_mode": growth_mode,  # "fast" (爽文) / "normal" (平衡) / "slow" (慢热)
+        "story": {
+            "current_chapter": 1,
+            "current_scene_id": None,
+            "scene_description": "",
+            "choices": [],
+            "history": [],
+            "pending_action": None,
+        },
+        "enemy": None,  # 当前遭遇的敌人信息（兼容旧版）
+        "enemies": [],  # 当前遭遇的敌人列表（支持一群怪）
+        "in_combat": False,  # 是否在战斗中
+        "is_alive": True,
+        "death_cause": None,
+        "play_time_days": 1,
+        "start_time": datetime.now().isoformat(),  # 游戏开始时间（天数按实际时间计算）
+        "kill_count": 0,
+        "created_at": datetime.now().isoformat(),
+        # ── 地图与NPC系统 ──
+        "world_map": {},      # WorldMap.to_dict() 序列化
+        "npc_system": {},     # NPCSystem.to_dict() 序列化
+        "npc_death_records": [],  # NPC死亡记录（冗余存储，方便快速查询）
+        # ── 行动日志 ──
+        "action_log": [],     # 所有行动记录，网页端用
+    }
+
+
+# ── 持久化 ────────────────────────────────────────────
+
+def save_state(state: Dict):
+    """保存死亡模式状态"""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def load_state() -> Optional[Dict]:
+    """加载死亡模式状态"""
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data and data.get("is_alive"):
+                return data
+        except Exception:
+            pass
+    return None
+
+
+def clear_state():
+    """清除死亡模式状态（角色死亡后）"""
+    if STATE_FILE.exists():
+        try:
+            STATE_FILE.rename(STATE_FILE.with_suffix(".json.dead"))
+        except Exception:
+            pass
+
+
+def save_to_hall(state: Dict, death_cause: str, death_description: str):
+    """将死亡角色保存到名人堂"""
+    hall = []
+    if HALL_FILE.exists():
+        try:
+            with open(HALL_FILE, "r", encoding="utf-8") as f:
+                hall = json.load(f)
+        except Exception:
+            pass
+
+    char = state.get("character", {})
+    hall.append({
+        "name": char.get("name", "无名"),
+        "class_name": char.get("class_name", ""),
+        "class_icon": char.get("class_icon", ""),
+        "level": char.get("level", 1),
+        "kill_count": state.get("kill_count", 0),
+        "play_time_days": state.get("play_time_days", 0),
+        "death_cause": death_cause,
+        "death_description": death_description[:500],
+        "died_at": datetime.now().isoformat(),
+    })
+
+    # 只保留最近 50 条
+    hall = hall[-50:]
+    with open(HALL_FILE, "w", encoding="utf-8") as f:
+        json.dump(hall, f, ensure_ascii=False, indent=2)
+
+
+def load_hall() -> List[Dict]:
+    """加载死亡名人堂"""
+    if HALL_FILE.exists():
+        try:
+            with open(HALL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []

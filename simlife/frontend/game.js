@@ -12,9 +12,17 @@ const Game = {
   initialized: false,
   pollInterval: null,
   _activeNpcIds: [],
+  _storySelectedIdx: -1,   // 剧情面板当前选中的节点索引（-1 表示跟随当前进度）
+  _storyExpanded: {},      // 缓存节点展开文本：{idx: text}
+  _storyLoading: {},       // 正在加载的节点
 
   async init() {
     UI.init();
+
+    // 初始化死亡模式（检查是否有进行中的游戏）
+    if (window.DeathModeUI) {
+      DeathModeUI.init();
+    }
 
     const canvas = document.getElementById('game-canvas');
     const charCanvas = document.getElementById('char-canvas');
@@ -136,15 +144,17 @@ const Game = {
       // 隐藏非现代世界不相关的UI元素
       this._applyStoryModeUI(isStoryMode);
 
-      // 主线进度展示（非现代世界）
+      // 主线进度展示（非现代世界）— 插入到 day-plan-panel 之前
       if (state.life_arc) {
         let arcEl = document.getElementById('life-arc-panel');
+        const storyPanel = document.getElementById('story-panel');
+        const planElRef = document.getElementById('day-plan-panel');
         if (!arcEl) {
           arcEl = document.createElement('div');
           arcEl.id = 'life-arc-panel';
-          arcEl.style.cssText = 'margin-top:4px;padding:8px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.7;';
-          const storyPanel = document.getElementById('story-panel');
-          if (storyPanel) storyPanel.appendChild(arcEl);
+          arcEl.style.cssText = 'flex-shrink:0;padding:6px 10px;background:rgba(0,0,0,0.35);border-radius:8px;font-size:11px;line-height:1.6;margin-bottom:6px;';
+          if (storyPanel && planElRef) storyPanel.insertBefore(arcEl, planElRef);
+          else if (storyPanel) storyPanel.appendChild(arcEl);
         }
         const arc = state.life_arc;
         const pct = arc.progress_percent || 0;
@@ -154,51 +164,20 @@ const Game = {
           html += `<div style="color:#ccc;margin-bottom:4px;">当前：${arc.current_stage}</div>`;
         }
         if (arc.stages && arc.stages.length > 0) {
+          html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
           arc.stages.forEach(s => {
             const color = s.status === 'completed' ? '#22c55e' : s.status === 'active' ? '#f59e0b' : '#555';
             const marker = s.status === 'completed' ? '✓' : s.status === 'active' ? '▶' : '○';
-            html += `<div style="color:${color}">${marker} ${s.name}（${s.duration_days}天）</div>`;
+            html += `<span style="color:${color};white-space:nowrap;">${marker} ${s.name}</span>`;
           });
+          html += '</div>';
         }
         arcEl.innerHTML = html;
       }
 
-      // 当天大纲展示（非现代世界）— 渐进式，只显示已到达的节点
+      // 当天剧情（非现代世界）— 进度条 + 正文
       if (state.day_plan && state.day_plan.length > 0 && isStoryMode) {
-        let planEl = document.getElementById('day-plan-panel');
-        if (!planEl) {
-          planEl = document.createElement('div');
-          planEl.id = 'day-plan-panel';
-          planEl.style.cssText = 'margin-top:4px;padding:6px 10px;background:rgba(0,0,0,0.5);border-radius:8px;font-size:11px;line-height:1.6;';
-          const storyPanel = document.getElementById('story-panel');
-          if (storyPanel) storyPanel.appendChild(planEl);
-        }
-        const progress = state.day_plan_progress || 0;
-        const cast = state.story_cast || [];
-        const total = state.day_plan.length;
-        let html = '<div style="color:#a78bfa;margin-bottom:4px;">今日剧情 <span style="color:#555;font-size:10px;">' + progress + '/' + total + '</span></div>';
-        state.day_plan.forEach((item, idx) => {
-          // 只显示已到达的节点，未来的不显示
-          if (idx > progress) return;
-          const isPast = idx < progress;
-          const isNow = idx === progress;
-          const color = isPast ? '#666' : '#a78bfa';
-          const marker = isPast ? '✓' : '▶';
-
-          // NPC名字
-          let npcName = '';
-          if (item.npc && cast.length > 0) {
-            const npc = cast.find(c => c.id === item.npc);
-            if (npc) npcName = ' <span style="color:#f59e0b;">💬' + npc.name + '</span>';
-          }
-
-          html += '<div style="color:' + color + '" id="plan-item-' + idx + '">' + marker + ' ' + item.time + ' ' + item.label + npcName + '</div>';
-          // 显示简短的activity
-          if (item.activity) {
-            html += '<div style="color:#555;margin:1px 0 3px 16px;font-size:11px;">' + item.activity + '</div>';
-          }
-        });
-        planEl.innerHTML = html;
+        this._renderStoryPanel(state);
       }
       if (state.weather && this.renderer && !isStoryMode) {
         const wMap = { 'rainy': 'rainy', 'heavy_rain': 'heavy_rain', 'snow': 'snow', 'cloudy': 'cloudy', 'sunny': 'cloudy' };
@@ -246,13 +225,151 @@ const Game = {
     const weatherEl = document.getElementById('disp-weather');
     if (weatherEl) weatherEl.style.display = isStoryMode ? 'none' : '';
 
-    // 异世界模式：隐藏日志面板（内容由 day_plan 面板承载）
+    // 异世界模式：隐藏日志面板（内容由 story-panel 承载）
     const logPanel = document.getElementById('log-panel');
     if (logPanel) logPanel.style.display = isStoryMode ? 'none' : '';
 
     // 异世界模式：显示故事面板容器
     const storyPanel = document.getElementById('story-panel');
-    if (storyPanel) storyPanel.style.display = isStoryMode ? 'block' : 'none';
+    if (storyPanel) storyPanel.classList.toggle('show', !!isStoryMode);
+
+    // 异世界模式：game-area 收缩到内容高度，把空间让给 story-panel
+    const gameArea = document.getElementById('game-area');
+    if (gameArea) {
+      if (isStoryMode) {
+        gameArea.style.flex = '0 0 auto';
+        gameArea.style.padding = '8px 0';
+      } else {
+        gameArea.style.flex = '1';
+        gameArea.style.padding = '';
+      }
+    }
+  },
+
+  // ── 剧情面板渲染（异世界模式） ──────────────────────
+  _renderStoryPanel(state) {
+    const plan = state.day_plan || [];
+    const progress = state.day_plan_progress || 0;
+    const cast = state.story_cast || [];
+    const total = plan.length;
+
+    // 同步缓存后端已经展开过的节点
+    plan.forEach((node, idx) => {
+      if (node && node.expanded && !this._storyExpanded[idx]) {
+        this._storyExpanded[idx] = node.expanded;
+      }
+    });
+
+    // 决定选中节点：-1 或无效时跟随当前进度
+    let sel = this._storySelectedIdx;
+    if (sel < 0 || sel >= total) sel = progress;
+    if (sel > progress) sel = progress;  // 不允许选未来
+    if (sel < 0) sel = 0;
+    this._storySelectedIdx = sel;
+
+    // ── 进度条 ──
+    const planEl = document.getElementById('day-plan-panel');
+    if (planEl) {
+      let html = `<span style="color:#a78bfa;font-size:11px;margin-right:8px;">今日剧情 ${progress}/${total}</span>`;
+      plan.forEach((item, idx) => {
+        const isPast = idx < progress;
+        const isNow = idx === progress;
+        const isFuture = idx > progress;
+        const cls = ['plan-node'];
+        if (isPast) cls.push('past');
+        if (isNow) cls.push('now');
+        if (isFuture) cls.push('future');
+        if (idx === sel) cls.push('selected');
+        const marker = isPast ? '✓' : isNow ? '▶' : '○';
+        const label = isFuture ? '？？' : (item.label || item.time || '');
+        html += `<span class="${cls.join(' ')}" data-idx="${idx}">${marker} ${item.time || ''} ${label}</span>`;
+      });
+      planEl.innerHTML = html;
+      planEl.querySelectorAll('.plan-node').forEach(el => {
+        el.addEventListener('click', (e) => {
+          const idx = parseInt(e.currentTarget.dataset.idx, 10);
+          if (idx > progress) return;  // 未来节点不可选
+          this._storySelectedIdx = idx;
+          this._renderStoryContent(state, idx);
+          // 更新选中态
+          planEl.querySelectorAll('.plan-node').forEach(n => n.classList.remove('selected'));
+          e.currentTarget.classList.add('selected');
+        });
+      });
+      // 滚动到当前节点
+      const selEl = planEl.querySelector('.plan-node.selected');
+      if (selEl) selEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+
+    // ── 正文 ──
+    this._renderStoryContent(state, sel);
+  },
+
+  _renderStoryContent(state, idx) {
+    const contentEl = document.getElementById('story-content');
+    if (!contentEl) return;
+    const plan = state.day_plan || [];
+    const progress = state.day_plan_progress || 0;
+    const cast = state.story_cast || [];
+    const node = plan[idx];
+    if (!node) {
+      contentEl.innerHTML = '<div class="scn-empty">暂无剧情</div>';
+      return;
+    }
+
+    // NPC 名字
+    let npcName = '';
+    if (node.npc && cast.length > 0) {
+      const npc = cast.find(c => c.id === node.npc);
+      if (npc) npcName = `<span class="scn-npc">💬 ${npc.name}</span>`;
+    }
+
+    const head = `<div class="scn-head">
+      <span class="scn-time">${node.time || ''}</span>
+      <span class="scn-label">${node.label || ''}</span>
+      ${npcName}
+    </div>`;
+
+    // 已有缓存文本 → 直接显示
+    if (this._storyExpanded[idx]) {
+      contentEl.innerHTML = head + `<div class="scn-body">${this._escapeHtml(this._storyExpanded[idx])}</div>`;
+      contentEl.scrollTop = contentEl.scrollHeight;
+      return;
+    }
+
+    // 节点尚未到达
+    if (idx > progress) {
+      contentEl.innerHTML = head + '<div class="scn-empty">该时刻尚未到来…</div>';
+      return;
+    }
+
+    // 已到达但还没展开 → 异步调用后端展开接口
+    if (this._storyLoading[idx]) return;
+    this._storyLoading[idx] = true;
+    contentEl.innerHTML = head + '<div class="scn-loading">正在展开剧情…</div>';
+    fetch(API_BASE + `/api/story/expand/${idx}`, { method: 'POST' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('展开失败')))
+      .then(data => {
+        const text = data.text || '';
+        this._storyExpanded[idx] = text;
+        // 仍选中同一节点时才更新，避免覆盖用户已切换的查看
+        if (this._storySelectedIdx === idx) {
+          contentEl.innerHTML = head + `<div class="scn-body">${this._escapeHtml(text)}</div>`;
+          contentEl.scrollTop = contentEl.scrollHeight;
+        }
+      })
+      .catch(() => {
+        if (this._storySelectedIdx === idx) {
+          const fallback = node.activity ? `（简略）${node.activity}` : '剧情展开失败，稍后重试。';
+          contentEl.innerHTML = head + `<div class="scn-body" style="color:#8899aa;">${this._escapeHtml(fallback)}</div>`;
+        }
+      })
+      .finally(() => { this._storyLoading[idx] = false; });
+  },
+
+  _escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   },
 
   _getBgNpcCount(scene) {

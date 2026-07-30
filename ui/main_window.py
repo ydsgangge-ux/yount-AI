@@ -496,12 +496,19 @@ class ChatPage(QWidget):
 
     message_sent = pyqtSignal(str)
     simlife_toggled = pyqtSignal(bool)  # SimLife 场景模式切换
+    _dm_action_result_signal = pyqtSignal(dict, str)  # 死亡模式行动结果
+    _dm_action_error_signal = pyqtSignal(str)          # 死亡模式行动错误
+    _dm_login_status_signal = pyqtSignal(dict)         # 登录后死亡模式状态
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._completer = SlashCompleter(self)
         self._completer.load_commands()
         self._setup_ui()
+        # 死亡模式行动信号（后台线程 → 主线程）
+        self._dm_action_result_signal.connect(self._on_dm_action_result)
+        self._dm_action_error_signal.connect(self._on_dm_action_error)
+        self._dm_login_status_signal.connect(self._on_dm_login_status)
 
     def _setup_ui(self):
         outer = QHBoxLayout(self)
@@ -859,6 +866,256 @@ class ChatPage(QWidget):
             self._msg_layout.count() - 1, bubble
         )
         self._scroll_to_bottom()
+
+    def add_dm_system_message(self, text: str, choices: list = None):
+        """死亡模式系统消息 — 无气泡、灰色字体、独立于A层对话
+        choices: 可选行动列表 [{"id": "A", "text": "检查徽章", "risk": "low"}, ...]
+        """
+        container = QWidget()
+        container.setStyleSheet("background:transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # 文本内容
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setMinimumWidth(400)
+        lbl.setStyleSheet(
+            "color:#9ca3af;"
+            "font-size:12px;"
+            "font-family:'Microsoft YaHei','SimHei',sans-serif;"
+            "padding:12px 20px;"
+            "background:rgba(139,148,158,0.06);"
+            "border-left:3px solid #6b7280;"
+            "border-radius:0px;"
+            "line-height:1.6;"
+        )
+        lbl.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(lbl)
+
+        # 可点击选项按钮
+        if choices:
+            btn_layout = QVBoxLayout()
+            btn_layout.setSpacing(4)
+            btn_layout.setContentsMargins(20, 0, 20, 4)
+
+            risk_colors = {"low": "#3fb950", "medium": "#d29922", "high": "#f85149"}
+            risk_labels = {"low": "低风险", "medium": "中风险", "high": "高风险"}
+
+            for c in choices:
+                cid = c.get("id", "?")
+                ctext = c.get("text", "")
+                risk = c.get("risk", "")
+                risk_color = risk_colors.get(risk, "#8b949e")
+                risk_label = risk_labels.get(risk, "")
+
+                btn = QPushButton(f"  {cid}. {ctext}  ({risk_label})")
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        text-align: left;
+                        color: #c9d1d9;
+                        font-size: 12px;
+                        padding: 8px 14px;
+                        background: #161b22;
+                        border: 1px solid {risk_color};
+                        border-left: 3px solid {risk_color};
+                        border-radius: 6px;
+                    }}
+                    QPushButton:hover {{
+                        background: #21262d;
+                        border-color: #58a6ff;
+                    }}
+                    QPushButton:pressed {{
+                        background: #30363d;
+                    }}
+                """)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                # 点击选项时自动填入输入框并发送
+                btn.clicked.connect(lambda checked, ch=cid, ct=ctext: self._on_dm_choice(ch, ct))
+                btn_layout.addWidget(btn)
+
+            layout.addLayout(btn_layout)
+
+        # 自由行动输入框（始终显示，不依赖选项）
+        free_action_row = QHBoxLayout()
+        free_action_row.setContentsMargins(20, 2, 20, 4)
+
+        free_input = QLineEdit()
+        free_input.setPlaceholderText("自由行动（如：探索、和NPC说话、搜索房间...）")
+        free_input.setStyleSheet("""
+            QLineEdit {
+                color: #c9d1d9; font-size: 12px;
+                padding: 6px 10px; background: #0d1117;
+                border: 1px solid #30363d; border-radius: 6px;
+            }
+            QLineEdit:focus {
+                border-color: #58a6ff;
+            }
+        """)
+
+        send_btn = QPushButton("执行")
+        send_btn.setStyleSheet("""
+            QPushButton {
+                color: #c9d1d9; font-size: 11px;
+                padding: 6px 12px; background: #21262d;
+                border: 1px solid #30363d; border-radius: 6px;
+            }
+            QPushButton:hover { background: #30363d; border-color: #58a6ff; }
+        """)
+
+        def _send_free_action():
+            text = free_input.text().strip()
+            if text:
+                self._execute_dm_action_directly(free_action=text)
+
+        send_btn.clicked.connect(_send_free_action)
+        free_input.returnPressed.connect(_send_free_action)
+
+        free_action_row.addWidget(free_input, 1)
+        free_action_row.addWidget(send_btn)
+        layout.addLayout(free_action_row)
+
+        self._msg_layout.insertWidget(
+            self._msg_layout.count() - 1, container
+        )
+        self._scroll_to_bottom()
+
+    def _on_dm_choice(self, choice_id: str, choice_text: str):
+        """用户点击了死亡模式选项 — 直接调用死亡模式API，不走聊天"""
+        self._execute_dm_action_directly(choice_id=choice_id)
+
+    def _execute_dm_action_directly(self, choice_id: str = None, free_action: str = None):
+        """直接执行死亡模式行动（不走A层聊天，直接调API）"""
+        import threading
+        import urllib.request
+        import json
+
+        action_label = choice_id if choice_id else free_action
+        self.add_dm_system_message(f"⏳ 执行中：{action_label}...")
+
+        def _do():
+            try:
+                url = "http://127.0.0.1:8769/api/death-mode/action"
+                payload = {}
+                if choice_id:
+                    payload["choice_id"] = choice_id
+                if free_action:
+                    payload["free_action"] = free_action
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    result = json.loads(r.read().decode("utf-8"))
+
+                # 用信号在主线程显示结果
+                self._dm_action_result_signal.emit(result, action_label)
+            except Exception as e:
+                self._dm_action_error_signal.emit(str(e))
+
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+
+    def _on_dm_action_result(self, result: dict, action: str):
+        """主线程：显示死亡模式行动结果"""
+        parts = [f"──── ☠️ 行动：{action} ────"]
+
+        if result.get("narrative"):
+            parts.append(result["narrative"])
+
+        cr = result.get("combat_result") or {}
+        if cr:
+            if cr.get("victory"):
+                parts.append("⚔️ 胜利！")
+            if cr.get("combat_log"):
+                parts.extend(cr["combat_log"][:5])
+            if cr.get("fled"):
+                parts.append("🏃 成功逃跑！")
+            if cr.get("flee_failed"):
+                parts.append(f"🏃 逃跑失败！被追击受到 {cr.get('pursuit_damage', 0)} 伤害")
+            if result.get("user_fled"):
+                parts.append("👤 用户已撤离，AI角色独自战斗！")
+
+        if result.get("exp_gained"):
+            parts.append(f"经验+{result['exp_gained']}")
+        if result.get("gold_gained"):
+            parts.append(f"金币+{result['gold_gained']}")
+        if result.get("leveled_up"):
+            parts.append(f"🎉 升级到 Lv.{result.get('new_level')}！")
+
+        if cr.get("drops"):
+            for d in cr["drops"]:
+                parts.append(f"🎁 {d['name']}（{d.get('rarity_name', '普通')}）")
+
+        if result.get("character_died"):
+            parts.append(f"☠️ 角色阵亡：{result.get('death_description', '')}")
+
+        # 追加最新状态
+        try:
+            import urllib.request, json
+            url = "http://127.0.0.1:8769/api/death-mode/state"
+            with urllib.request.urlopen(url, timeout=5) as r:
+                fresh = json.loads(r.read().decode("utf-8"))
+            if fresh.get("active"):
+                char = fresh.get("character", {})
+                hp = char.get("hp", 0)
+                max_hp = char.get("max_hp", 0)
+                level = char.get("level", 1)
+                parts.append(f"──── ⚔️ {char.get('name','?')}（{char.get('class_name','')} Lv.{level}）HP:{hp}/{max_hp} ────")
+                if fresh.get("in_combat"):
+                    enemies = fresh.get("enemies", [])
+                    alive = [f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in enemies if e.get("hp",0) > 0]
+                    if alive:
+                        parts.append(f"⚠️ 战斗中！敌人：{'、'.join(alive)}")
+                        parts.append("（和AI讨论策略，AI会自主决策战斗）")
+                else:
+                    parts.append("（可以继续聊天或选择行动）")
+        except Exception:
+            pass
+
+        self.add_dm_system_message("\n".join(parts))
+
+    def _on_dm_action_error(self, err: str):
+        """主线程：显示死亡模式行动错误"""
+        self.add_dm_system_message(f"❌ 行动执行失败：{err}")
+
+    def _on_dm_login_status(self, dm_state: dict):
+        """主线程：登录后显示死亡模式状态"""
+        if not dm_state or not dm_state.get("active"):
+            return
+
+        char = dm_state.get("character", {})
+        parts = [
+            f"──── ☠️ 死亡模式 ────",
+            f"⚔️ {char.get('name','?')}（{char.get('class_name','')} Lv.{char.get('level',1)}）HP:{char.get('hp',0)}/{char.get('max_hp',0)} MP:{char.get('mp',0)}/{char.get('max_mp',0)} EXP:{char.get('experience',0)}/{char.get('exp_to_next',100)}",
+            f"💰 金币:{char.get('gold',0)}",
+        ]
+
+        # 用户角色
+        uc = dm_state.get("user_character", {})
+        if uc and uc.get("class_name"):
+            parts.append(f"👤 {uc.get('name','用户')}（{uc.get('class_name','')} Lv.{uc.get('level',1)}）HP:{uc.get('hp',0)}/{uc.get('max_hp',0)}")
+
+        # 地点
+        story = dm_state.get("story", {})
+        if story.get("current_location"):
+            parts.append(f"📍 {story['current_location']}")
+
+        # 战斗中
+        if dm_state.get("in_combat"):
+            enemies = dm_state.get("enemies", [])
+            alive = [f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in enemies if e.get("hp",0) > 0]
+            if alive:
+                parts.append(f"⚠️ 战斗中！敌人：{'、'.join(alive)}")
+                parts.append("（和AI讨论策略，AI会自主决策战斗）")
+
+        # 场景
+        if story.get("scene_description"):
+            parts.append(f"📖 {story['scene_description'][:200]}")
+
+        parts.append(f"📅 第{dm_state.get('play_time_days',1)}天")
+
+        choices = story.get("choices", [])
+        self.add_dm_system_message("\n".join(parts), choices=choices)
 
     def add_thinking_indicator(self) -> QLabel:
         lbl = QLabel("⏳ 思考中…")
@@ -5817,8 +6074,34 @@ class MainWindow(QMainWindow):
             self._status_auth.setStyleSheet("color:#3fb950;font-size:11px;")
             self._status_auth.setCursor(Qt.CursorShape.ArrowCursor)
             self.chat_page.add_ai_message(f"✅ 欢迎回来，{name}")
+
+            # 登录后检查死亡模式状态，有则显示
+            self._show_dm_status_on_login()
+
         self._update_personality_auth()
         self._update_tab_visibility()
+
+    def _show_dm_status_on_login(self):
+        """登录后检查死亡模式状态，有则显示"""
+        import threading
+        import urllib.request
+        import json
+
+        def _check():
+            try:
+                url = "http://127.0.0.1:8769/api/death-mode/state"
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                if data.get("active") and data.get("is_alive"):
+                    # 在主线程显示状态
+                    from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                    # 用信号方式
+                    self.chat_page._dm_login_status_signal.emit(data)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_check, daemon=True)
+        t.start()
 
     def _update_tab_visibility(self):
         """根据认证状态控制隐私相关标签的显隐"""
@@ -6047,6 +6330,12 @@ class MainWindow(QMainWindow):
     def _on_result(self, result: dict):
         self.chat_page.remove_thinking_indicator()
         response_text = result.get("response", "")
+
+        # 死亡模式系统消息（独立显示，不经过A层）
+        dm_msg = result.get("dm_system_message", "")
+        dm_choices = result.get("dm_choices", [])
+        if dm_msg:
+            self.chat_page.add_dm_system_message(dm_msg, choices=dm_choices)
 
         # 方案D：根据情绪添加 emoji 前缀
         _emoji_map = {

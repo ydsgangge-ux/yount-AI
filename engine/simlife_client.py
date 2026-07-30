@@ -216,6 +216,67 @@ class SimLifeClient:
         except Exception:
             return False
 
+    def get_death_mode_state(self) -> Optional[dict]:
+        """获取死亡模式状态（独立于角色卡）"""
+        try:
+            url = f"http://127.0.0.1:{self.port}/api/death-mode/state"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read().decode("utf-8"))
+                if data.get("active"):
+                    return data
+        except Exception:
+            pass
+        return None
+
+    def _format_death_mode_prompt(self, dm: dict) -> str:
+        """将死亡模式状态格式化为A层prompt文本"""
+        char = dm.get("character", {})
+        story = dm.get("story", {})
+        lines = ["【死亡模式·冒险状态】"]
+
+        if char:
+            lines.append(f"角色：{char.get('name', '?')}（{char.get('class_name', '')} Lv.{char.get('level', 1)}）")
+            lines.append(f"HP: {char.get('hp', 0)}/{char.get('max_hp', 0)}")
+            stats = char.get("stats", {})
+            if stats:
+                lines.append(f"属性：力量{stats.get('strength',5)} 敏捷{stats.get('agility',5)} 智力{stats.get('intelligence',5)}")
+
+        if dm.get("is_alive"):
+            lines.append(f"状态：存活中（第{dm.get('play_time_days', 1)}天，击杀{dm.get('kill_count', 0)}）")
+        else:
+            lines.append("状态：已死亡")
+
+        # 战斗状态
+        if dm.get("in_combat"):
+            enemies = dm.get("enemies", [])
+            if enemies:
+                enemy_list = "、".join([f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)} Lv.{e.get('level',1)})" for e in enemies if e.get("hp",0) > 0])
+                lines.append(f"⚠️ 战斗中！敌人：{enemy_list}")
+                lines.append("（回合制：可以说攻击/防御/逃跑/使用技能，也可以和我讨论策略）")
+
+        location = story.get("current_location", "")
+        if location:
+            lines.append(f"所在地：{location}")
+
+        scene = story.get("scene_description", "")
+        if scene:
+            lines.append(f"当前场景：{scene[:200]}")
+
+        choices = story.get("choices", [])
+        if choices:
+            choice_text = "、".join([f"{c.get('id','')}:{c.get('text','')}" for c in choices[:4]])
+            lines.append(f"可选行动：{choice_text}")
+
+        # 用户角色
+        user_char = dm.get("user_character", {})
+        if user_char and user_char.get("class_name"):
+            lines.append(f"用户角色：{user_char.get('name', '用户')}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）")
+
+        lines.append("（你正在死亡模式中冒险，角色可能会死亡。以上是你的冒险状态。）")
+        lines.append("（用户可以通过对话和你讨论策略，不一定每次都要选择行动。只有当用户明确说选A/选B/攻击/探索/继续等行动指令时，才执行行动。普通聊天不要触发行动。）")
+        return "\n".join(lines)
+
     # ── 剧情影响系统 ──────────────────────────────────────────
     _STORY_INFLUENCE_MAX = 10
 
@@ -282,6 +343,10 @@ class SimLifeClient:
         if not state or "error" in state:
             state = self._read_file_state()
         if not state:
+            # 没有角色卡时，检查是否有死亡模式
+            dm = self.get_death_mode_state()
+            if dm and dm.get("active"):
+                return self._format_death_mode_prompt(dm)
             return ""
 
         character = self._read_character()
@@ -492,4 +557,5 @@ class SimLifeClient:
             "weather": weather_str,
             "time_str": time_str,
             "holiday": holiday,
+            "death_mode": state.get("death_mode"),
         }

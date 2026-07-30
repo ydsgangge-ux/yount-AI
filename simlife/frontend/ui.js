@@ -99,7 +99,7 @@ const UI = {
       this.$userEnterBtn.innerHTML = '🏠 进入世界';
     } else {
       this.$userEnterBtn.className = '';
-      this.$userEnterBtn.innerHTML = '🏠 设置身份';
+      this.$userEnterBtn.innerHTML = '👤 设置我的身份';
     }
   },
 
@@ -432,6 +432,16 @@ function onWorldChange() {
       nameModern.value = nameCw.value;
     }
   }
+
+  // 死亡模式按钮：仅在选中已生成的非现代世界观时显示
+  const dmBtn = document.getElementById('btn-death-mode-setup');
+  if (dmBtn) {
+    if (val && val !== 'modern' && val !== '__ai_generate' && val !== '__import') {
+      dmBtn.style.display = '';
+    } else {
+      dmBtn.style.display = 'none';
+    }
+  }
 }
 
 async function doSwitchWorld(worldId) {
@@ -611,6 +621,33 @@ function openStoryArchive() {
   const overlay = document.getElementById('archive-overlay');
   overlay.style.display = 'flex';
   loadArchiveList();
+}
+
+function openDeathMode() {
+  document.getElementById('settings-menu').classList.remove('show');
+  if (window.DeathModeUI) {
+    // 检查是否有进行中的游戏
+    fetch('/api/death-mode/state')
+      .then(r => r.json())
+      .then(data => {
+        if (data.active && data.is_alive) {
+          DeathModeUI._state = data;
+          DeathModeUI.showGamePanel();
+        } else {
+          DeathModeUI.showCreatePanel();
+        }
+      })
+      .catch(() => {
+        DeathModeUI.showCreatePanel();
+      });
+  }
+}
+
+function enterDeathModeSetup() {
+  // 从setup-overlay进入死亡模式设定
+  if (window.DeathModeUI) {
+    DeathModeUI.showCreatePanel();
+  }
 }
 
 function closeStoryArchive() {

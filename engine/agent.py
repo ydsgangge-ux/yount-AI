@@ -491,6 +491,34 @@ class ConsciousnessAgent:
         tool_steps  = []
         tools_used  = []
 
+        # ── 死亡模式 ──
+        # 如果死亡模式活跃，每次聊天都显示当前状态
+        dm_system_message = ""  # 死亡模式系统消息（独立显示，不注入A层）
+        dm_choices = []        # 可点击选项（UI用）
+        dm_state = None
+        if self.simlife:
+            try:
+                dm_state = self.simlife.get_death_mode_state()
+                if dm_state and dm_state.get("active") and dm_state.get("is_alive"):
+                    # 将死亡模式场景注入A层上下文（让AI知道当前处境）
+                    dm_context = self._build_dm_context_for_prompt(dm_state)
+                    if dm_context:
+                        simlife_context += "\n\n" + dm_context
+
+                    # 1. 检测是否是行动指令
+                    dm_result = self._try_death_mode_action(user_input, dm_state)
+                    if dm_result:
+                        dm_system_message = dm_result  # 行动结果
+                        need_tools = False
+                    else:
+                        # 2. 普通聊天：显示当前状态摘要
+                        dm_system_message = self._get_dm_status_brief(dm_state)
+                        # 提取可选行动供UI显示为按钮
+                        story = dm_state.get("story", {})
+                        dm_choices = story.get("choices", [])
+            except Exception as e:
+                self._log("死亡模式", f"行动检测失败: {e}")
+
         # ── 自动处理行程计划（仅记录，不直接调工具 ──
         #  A层只记录 schedule_info 信息在响应中输出，
         #  由 B层（executor）或外部调用方负责执行对应工具
@@ -720,6 +748,8 @@ class ConsciousnessAgent:
             "storage_decision": storage_decision,
             "stored_ids":       stored_ids,
             "response":         response,
+            "dm_system_message": dm_system_message,  # 死亡模式系统消息（独立显示）
+            "dm_choices": dm_choices,  # 可点击选项按钮
             "timestamp":        datetime.now().isoformat()
         }
 
@@ -880,6 +910,490 @@ class ConsciousnessAgent:
         if not self.simlife:
             return
         self.simlife.push_story_influence(summary, importance)
+
+    def _build_dm_context_for_prompt(self, dm_state: dict) -> str:
+        """构建死亡模式上下文，注入A层感知prompt，让AI知道当前场景和选项"""
+        if not dm_state or not dm_state.get("active") or not dm_state.get("is_alive"):
+            return ""
+
+        char = dm_state.get("character", {})
+        story = dm_state.get("story", {})
+        parts = []
+
+        # 角色身份
+        name = char.get("name", "?")
+        cls = char.get("class_name", "")
+        lv = char.get("level", 1)
+        hp = char.get("hp", 0)
+        max_hp = char.get("max_hp", 0)
+        parts.append(f"【死亡模式】你现在是{name}（{cls} Lv.{lv}），HP:{hp}/{max_hp}。")
+
+        # 地点
+        location = story.get("current_location", "")
+        if location:
+            parts.append(f"当前位置：{location}")
+
+        # 当前场景描述
+        scene = story.get("scene_description", "")
+        if scene:
+            parts.append(f"当前场景：{scene}")
+
+        # 可选行动
+        choices = story.get("choices", [])
+        if choices:
+            choice_lines = []
+            for c in choices:
+                risk_label = {"low": "低风险", "medium": "中风险", "high": "高风险"}.get(c.get("risk", ""), "")
+                choice_lines.append(f"- {c['id']}. {c['text']}（{risk_label}）")
+            parts.append("可选行动：\n" + "\n".join(choice_lines))
+
+        # 战斗中
+        if dm_state.get("in_combat"):
+            enemies = dm_state.get("enemies", [])
+            alive = [f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in enemies if e.get("hp",0) > 0]
+            if alive:
+                parts.append(f"⚠️ 战斗中！敌人：{'、'.join(alive)}")
+
+        parts.append("重要：你身处异世界冒险中，必须基于当前场景和选项来回应。不要编造与当前场景无关的剧情。如果用户同意行动，可以建议选择某个选项。")
+
+        return "\n".join(parts)
+
+    def _try_death_mode_action(self, user_input: str, dm_state: dict) -> str:
+        """
+        检测用户输入是否是死亡模式行动选择。
+        - 非战斗：用户明确选择选项才触发，普通聊天不触发
+        - 战斗中：A层自主决策，用户可以讨论策略但不直接控制
+        """
+        story = dm_state.get("story", {})
+        choices = story.get("choices", [])
+        in_combat = dm_state.get("in_combat", False)
+
+        input_lower = user_input.strip().lower()
+
+        if in_combat:
+            # ── 战斗中：A层自主决策 + 用户可单独逃跑 ──
+            combat_commands = ["攻击", "防御", "逃跑", "撤退", "使用", "施放", "释放",
+                               "技能", "普攻", "平A", "格挡", "闪避", "反击"]
+            is_combat_cmd = any(cmd in user_input for cmd in combat_commands)
+
+            if is_combat_cmd:
+                # 用户选择逃跑 → 用户逃离，AI角色留下继续战斗
+                if any(w in user_input for w in ["逃跑", "撤退"]):
+                    return self._execute_death_mode_action(free_action="用户逃跑，AI继续战斗")
+                return self._execute_death_mode_action(free_action=user_input)
+            else:
+                # 普通聊天：A层基于人格自主决策
+                return self._auto_combat_decision(dm_state)
+
+        # ── 非战斗状态：用户选择触发 ──
+        # 行动指令
+        explore_commands = ["选a", "选b", "选c", "选d", "选e",
+                           "选项a", "选项b", "选项c", "选项d",
+                           "我选", "选择", "执行", "发动",
+                           "前往", "进入", "离开", "移动",
+                           "探索", "搜索", "检查", "查看",
+                           "休息", "睡觉", "等待",
+                           "继续探索", "继续前进", "继续冒险", "开始探索", "开始冒险",
+                           "继续", "出发", "前进",
+                           "走吧", "走呀", "出发吧", "我们走", "那就走",
+                           "那就选", "就选", "我选了", "那就去",
+                           "试试", "去看看", "去检查", "去探索",
+                           "我们选", "就这个", "就这个吧", "就这么办",
+                           "那就这么", "听你的", "好的走", "好走吧"]
+
+        is_action = False
+        for trigger in explore_commands:
+            if trigger in input_lower or trigger in user_input:
+                is_action = True
+                break
+
+        if not is_action:
+            return ""  # 普通对话，不触发行动
+
+        # 没有选项时，只有"继续/探索/出发"类指令才生成新场景
+        if not choices:
+            if any(w in user_input for w in ["继续", "出发", "探索", "前进", "开始", "继续探索", "继续前进"]):
+                return self._execute_death_mode_scene()
+            return ""
+
+        # 1. 精确匹配选项ID
+        input_stripped = user_input.strip().upper()
+        for c in choices:
+            cid = c.get("id", "").upper()
+            if input_stripped == cid or input_stripped == f"选{cid}":
+                return self._execute_death_mode_action(choice_id=c.get("id"))
+
+        # 2. 匹配"选A"/"选B"等
+        for c in choices:
+            cid = c.get("id", "").upper()
+            if f"选{cid}" in user_input.upper() or f"选项{cid}" in user_input.upper():
+                return self._execute_death_mode_action(choice_id=c.get("id"))
+
+        # 3. 匹配选项文本
+        for c in choices:
+            ctext = c.get("text", "")
+            if len(ctext) >= 4 and ctext in user_input:
+                return self._execute_death_mode_action(choice_id=c.get("id"))
+
+        # 4. 自由行动
+        free_action_words = ["攻击", "防御", "逃跑", "使用", "前往", "进入", "探索", "搜索",
+                             "检查", "休息", "施放", "释放", "移动", "离开"]
+        if any(w in user_input for w in free_action_words):
+            return self._execute_death_mode_action(free_action=user_input)
+
+        return ""
+
+    def _auto_combat_decision(self, dm_state: dict) -> str:
+        """A层战斗自主决策：由LLM基于人格和局势做出选择，不硬编码"""
+        char = dm_state.get("character", {})
+        enemies = dm_state.get("enemies", [])
+        alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+
+        if not alive_enemies:
+            return ""
+
+        # 构建局势信息，让LLM基于人格决策
+        combat_context = self._build_combat_decision_context(dm_state)
+        decision = self._ask_combat_decision(combat_context)
+
+        if decision:
+            return self._execute_death_mode_action(free_action=decision)
+        return ""
+
+    def _build_combat_decision_context(self, dm_state: dict) -> str:
+        """构建战斗决策上下文，让LLM基于人格做出选择"""
+        char = dm_state.get("character", {})
+        enemies = dm_state.get("enemies", [])
+        alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+
+        hp = char.get("hp", 0)
+        max_hp = char.get("max_hp", 0)
+        mp = char.get("mp", 0)
+        max_mp = char.get("max_mp", 0)
+        level = char.get("level", 1)
+
+        # 敌人信息
+        enemy_desc = []
+        for e in alive_enemies:
+            e_hp = e.get("hp", 0)
+            e_max_hp = e.get("max_hp", 0)
+            e_level = e.get("level", 1)
+            e_name = e.get("name", "?")
+            e_type = e.get("type", "normal")
+            hp_pct = int(e_hp / e_max_hp * 100) if e_max_hp > 0 else 0
+            enemy_desc.append(f"- {e_name}(Lv.{e_level},{e_type},HP:{hp_pct}%)")
+
+        # 可用战术
+        tactic_names = ["攻击", "防御", "逃跑"]
+        try:
+            from simlife.backend.combat_system import TacticalSystem
+            tactics = TacticalSystem.get_available_tactics(dm_state)
+            for t in tactics:
+                tactic_names.append(f"{t['name']}({t['description']})")
+        except Exception:
+            pass
+
+        # 用户角色状态
+        uc = dm_state.get("user_character", {})
+        uc_info = ""
+        if uc and uc.get("class_name"):
+            uc_hp = uc.get("hp", 0)
+            uc_max_hp = uc.get("max_hp", 0)
+            uc_info = f"队友（用户）：{uc.get('name','用户')} HP:{uc_hp}/{uc_max_hp}"
+
+        context = f"""你是{char.get('name','?')}（{char.get('class_name','')} Lv.{level}），HP:{hp}/{max_hp} MP:{mp}/{max_mp}
+当前敌人：
+{chr(10).join(enemy_desc)}
+
+可用行动：{', '.join(tactic_names)}
+{uc_info}
+
+请基于你的人格、与队友的关系、当前局势，做出你的战斗决策。"""
+
+        return context
+
+    def _ask_combat_decision(self, combat_context: str) -> str:
+        """让LLM基于人格做出战斗决策"""
+        prompt = f"""{combat_context}
+
+{self.personality.to_prompt()}
+
+你必须做出一个战斗决策。不要犹豫，不要分析，直接选择你的行动。
+
+请只输出一个JSON：
+{{"action": "攻击"/"防御"/"逃跑"/"伏击"/"侧翼包抄"/"防御阵型"/"集中攻击"/"地形攻击", "reason": "你内心的一句话（为什么这样选）"}}
+
+重要：这是你的人格在生死关头的真实反应。勇敢的人会坚守，胆小的人会逃跑，忠诚的人会保护队友，自私的人会只顾自己。你的选择必须符合你的人格。"""
+
+        try:
+            from engine.llm_client import create_client
+            import os
+            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+            llm = self.b.llm if hasattr(self, 'b') and self.b else None
+            if llm is None:
+                return "攻击"
+
+            resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.9)
+            # 解析JSON
+            import re
+            json_match = re.search(r'\{[^}]+\}', resp)
+            if json_match:
+                data = json.loads(json_match.group())
+                action = data.get("action", "攻击")
+                reason = data.get("reason", "")
+                self._log("战斗决策", f"{action} — {reason}")
+                return action
+        except Exception as e:
+            self._log("战斗决策", f"LLM决策失败: {e}，回退到攻击")
+
+        return "攻击"
+
+    def _execute_death_mode_scene(self) -> str:
+        """开始新场景"""
+        try:
+            import urllib.request, json
+            url = f"http://127.0.0.1:{self.simlife.port}/api/death-mode/scene"
+            req = urllib.request.Request(url, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            scene = data.get("scene_description", "")
+            location = data.get("location", "")
+            choices = data.get("choices", [])
+            self._log("死亡模式", f"新场景已生成（{len(choices)}个选项）")
+            result = "──── ☠️ 死亡模式 ────\n"
+            if location:
+                result += f"📍 {location}\n"
+            result += f"{scene}\n"
+            if choices:
+                result += "可选行动：\n"
+                for c in choices:
+                    risk_label = {"low": "低风险", "medium": "中风险", "high": "高风险"}.get(c.get("risk", ""), "")
+                    result += f"  {c['id']}. {c['text']} ({risk_label})\n"
+            return result
+        except Exception as e:
+            self._log("死亡模式", f"场景生成失败: {e}")
+            return f"⚠️ 死亡模式场景生成失败: {e}"
+
+    def _execute_death_mode_action(self, choice_id: str = None, free_action: str = None) -> str:
+        """执行死亡模式行动"""
+        try:
+            import urllib.request, json
+            url = f"http://127.0.0.1:{self.simlife.port}/api/death-mode/action"
+            payload = {}
+            if choice_id:
+                payload["choice_id"] = choice_id
+            elif free_action:
+                payload["free_action"] = free_action
+            req = urllib.request.Request(
+                url, method="POST",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = json.loads(r.read().decode("utf-8"))
+
+            result = "──── ☠️ 死亡模式 ────\n"
+            if data.get("narrative"):
+                result += f"{data['narrative']}\n"
+
+            if data.get("combat_result"):
+                cr = data["combat_result"]
+                if cr.get("victory"):
+                    enemies_defeated = cr.get("enemies_defeated", [])
+                    if enemies_defeated:
+                        result += f"⚔️ 击败：{'、'.join(enemies_defeated)}！\n"
+                    else:
+                        result += f"⚔️ 战斗胜利！\n"
+                    result += f"经验+{data.get('exp_gained',0)} 金币+{data.get('gold_gained',0)}\n"
+                    if cr.get("combat_log"):
+                        result += f"战斗日志：{'; '.join(cr['combat_log'][-3:])}\n"
+                elif cr.get("player_died"):
+                    result += f"☠️ 角色被击败！{cr.get('death_cause','')}\n"
+                elif cr.get("fled"):
+                    result += f"🏃 成功逃跑！\n"
+                elif cr.get("flee_failed"):
+                    result += f"🏃 逃跑失败！受到{cr.get('pursuit_damage',0)}点追击伤害\n"
+                    if cr.get("pursued_by"):
+                        result += f"被{cr['pursued_by']}追击！\n"
+                elif cr.get("trap_damage"):
+                    result += f"🪤 触发陷阱！受到{cr['trap_damage']}点伤害\n"
+                elif cr.get("rest_heal"):
+                    result += f"🏕️ 休息恢复 HP+{cr['rest_heal']} MP+{cr.get('mp_recover',0)}\n"
+
+            # 战斗中的敌人信息
+            if data.get("in_combat") and data.get("enemies"):
+                enemies_info = "、".join([f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in data["enemies"] if e.get("hp",0) > 0])
+                if enemies_info:
+                    result += f"\n👹 当前敌人：{enemies_info}\n"
+                    result += "（战斗中：说攻击/防御/逃跑/使用技能，或和AI讨论策略）\n"
+
+            if data.get("leveled_up"):
+                result += f"🎉 升级到 Lv.{data.get('new_level',2)}！\n"
+                if data.get("new_skills"):
+                    result += f"新技能：{'、'.join(data['new_skills'])}\n"
+
+            if data.get("character_died"):
+                result += f"\n☠️ 角色已死亡！{data.get('death_description','')}\n"
+                result += "存档已进入名人堂。可重新开始新的冒险。\n"
+                return result
+
+            if data.get("next_scene"):
+                result += "\n可以继续探索，说「继续」或描述下一步行动。\n"
+
+            # 行动后立即刷新最新状态
+            try:
+                fresh_state = self.simlife.get_death_mode_state()
+                if fresh_state and fresh_state.get("active"):
+                    fresh_brief = self._get_dm_status_brief(fresh_state)
+                    if fresh_brief:
+                        result += "\n" + fresh_brief
+            except Exception:
+                pass
+
+            self._log("死亡模式", f"行动完成{'(死亡)' if data.get('character_died') else ''}")
+            return result
+        except Exception as e:
+            self._log("死亡模式", f"行动执行失败: {e}")
+            return f"⚠️ 死亡模式行动失败: {e}"
+
+    def _get_dm_status_brief(self, dm_state: dict) -> str:
+        """生成死亡模式当前状态摘要（每次聊天都显示）"""
+        char = dm_state.get("character", {})
+        story = dm_state.get("story", {})
+        parts = []
+
+        # 角色状态
+        name = char.get("name", "?")
+        cls = char.get("class_name", "")
+        lv = char.get("level", 1)
+        hp = char.get("hp", 0)
+        max_hp = char.get("max_hp", 0)
+        mp = char.get("mp", 0)
+        max_mp = char.get("max_mp", 0)
+        exp = char.get("experience", 0)
+        exp_next = char.get("exp_to_next", 100)
+        gold = char.get("gold", 0)
+        parts.append(f"⚔️ {name}（{cls} Lv.{lv}）HP:{hp}/{max_hp} MP:{mp}/{max_mp} EXP:{exp}/{exp_next} 💰{gold}")
+
+        # 装备
+        equipment = char.get("equipment", [])
+        if equipment:
+            eq_parts = []
+            for eq in equipment:
+                type_icon = {"weapon": "🗡️", "outfit": "🛡️"}.get(eq.get("type", ""), "📦")
+                rarity = eq.get("rarity_name", "")
+                eq_parts.append(f"{type_icon}{eq.get('name', '?')}")
+            parts.append("装备：" + "、".join(eq_parts))
+
+        # 地点（从地图信息中获取更详细的信息）
+        location = story.get("current_location", "")
+        if location:
+            parts.append(f"📍 {location}")
+
+        # 地图信息：当前区域、怪物、BOSS、可达区域
+        world_map_data = dm_state.get("world_map", {})
+        if world_map_data:
+            current_region_id = world_map_data.get("current_region_id", "")
+            regions = world_map_data.get("regions", {})
+            current_region = regions.get(current_region_id, {})
+
+            if current_region:
+                # 当前区域怪物
+                monsters = current_region.get("monsters", [])
+                if monsters:
+                    m_names = [m.get("name", "?") for m in monsters]
+                    parts.append(f"👹 出没：{'、'.join(m_names)}")
+
+                # BOSS
+                boss = current_region.get("boss")
+                if boss and not current_region.get("boss_defeated", False):
+                    parts.append(f"💀 BOSS：{boss.get('name', '?')}")
+
+                # 可达区域
+                connections = current_region.get("connections", [])
+                if connections:
+                    adj_names = []
+                    for cid in connections:
+                        cr = regions.get(cid, {})
+                        if cr:
+                            cname = cr.get("name", "?")
+                            explored = cr.get("explored", False)
+                            danger = cr.get("danger_level", 0)
+                            danger_str = "★" * danger if danger else "安全"
+                            if explored:
+                                adj_names.append(f"{cname}({danger_str})")
+                            else:
+                                adj_names.append("❓未知")
+                    if adj_names:
+                        parts.append(f"🗺️ 可达：{'、'.join(adj_names)}")
+
+        # 当前区域NPC
+        npc_data = dm_state.get("npc_system", {})
+        if npc_data and current_region_id:
+            npcs = npc_data.get("npcs", {})
+            local_npcs = []
+            for nid, ndata in npcs.items():
+                if ndata.get("location") == current_region_id and ndata.get("alive", True):
+                    nname = ndata.get("name", "?")
+                    nrole = ndata.get("role", "")
+                    relation = ndata.get("relationship", 0)
+                    if relation >= 20:
+                        rel_label = "友好"
+                    elif relation >= -20:
+                        rel_label = "中立"
+                    else:
+                        rel_label = "敌对"
+                    trade = "💰" if ndata.get("can_trade") else ""
+                    quest = "📋" if ndata.get("can_quest") and not ndata.get("quest_given") else ""
+                    local_npcs.append(f"{nname}({nrole},{rel_label}){trade}{quest}")
+            if local_npcs:
+                parts.append(f"👥 人物：{'、'.join(local_npcs)}")
+
+        # NPC死亡记录
+        npc_deaths = dm_state.get("npc_death_records", [])
+        if npc_deaths:
+            recent_deaths = npc_deaths[-3:]
+            death_names = [f"{d.get('name','?')}({d.get('role','?')})" for d in recent_deaths]
+            parts.append(f"💀 已故：{'、'.join(death_names)}")
+
+        # 战斗状态
+        if dm_state.get("in_combat"):
+                enemies = dm_state.get("enemies", [])
+                if enemies:
+                    alive = [f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in enemies if e.get("hp",0) > 0]
+                    if alive:
+                        parts.append(f"⚠️ 战斗中！敌人：{'、'.join(alive)}")
+                        # 显示可用战术
+                        try:
+                            from simlife.backend.combat_system import TacticalSystem
+                            tactics = TacticalSystem.get_available_tactics(dm_state)
+                            if tactics:
+                                tactic_str = "、".join([f"{t['icon']}{t['name']}" for t in tactics[:3]])
+                                parts.append(f"可用战术：{tactic_str}")
+                        except Exception:
+                            pass
+                        parts.append("（和AI讨论策略，AI会自主决策战斗）")
+
+        # 当前场景
+        scene = story.get("scene_description", "")
+        if scene:
+            parts.append(f"📋 {scene[:120]}")
+
+        # 可选行动
+        choices = story.get("choices", [])
+        if choices:
+            choice_lines = []
+            for c in choices:
+                risk_label = {"low": "低风险", "medium": "中风险", "high": "高风险"}.get(c.get("risk", ""), "")
+                choice_lines.append(f"  {c['id']}. {c['text']} ({risk_label})")
+            parts.append("可选行动：\n" + "\n".join(choice_lines))
+        elif not dm_state.get("in_combat"):
+            parts.append("（说「继续」探索新场景）")
+
+        # 天数
+        parts.append(f"📅 第{dm_state.get('play_time_days', 1)}天")
+
+        return "──── ☠️ 死亡模式 ────\n" + "\n".join(parts)
 
     def _get_config(self, key, default=None):
         """从配置文件读取值，带缓存"""

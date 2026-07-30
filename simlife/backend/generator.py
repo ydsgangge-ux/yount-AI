@@ -15,6 +15,21 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from engine.llm_client import create_client
 
 
+def _safe_json_loads(text: str):
+    """安全解析JSON：先清理控制字符再解析"""
+    import re as _re_sj
+    def _strip_controls(s):
+        # 在JSON字符串值内部替换未转义的控制字符
+        def fix_string(m):
+            inner = m.group(1)
+            inner = inner.replace('\t', ' ').replace('\n', '\\n').replace('\r', '')
+            return '"' + inner + '"'
+        s = _re_sj.sub(r'"((?:[^"\\]|\\.)*)"', fix_string, s)
+        return s
+    cleaned = _strip_controls(text)
+    return json.loads(cleaned)
+
+
 def _get_world_context() -> str:
     """获取当前世界观的 context 文本，现代世界返回空字符串"""
     try:
@@ -138,7 +153,7 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
         if json_match:
             response = json_match.group(0)
 
-        setting = json.loads(response)
+        setting = _safe_json_loads(response)
 
         # 确保 world_id 合法
         if not setting.get("world_id") or setting["world_id"] == "modern":
@@ -241,7 +256,7 @@ def generate_character_card(anchor: dict, agidpa_personality: dict = None) -> di
                 response = response[:-3]
             response = response.strip()
 
-        card = json.loads(response)
+        card = _safe_json_loads(response)
         card["basic"]["name"] = name
         # 确保有 work_style
         if "work_style" not in card.get("basic", {}):
@@ -965,7 +980,7 @@ def generate_npc_cards(character_card: dict) -> list:
             if response.endswith("```"):
                 response = response[:-3]
             response = response.strip()
-        npcs = json.loads(response)
+        npcs = _safe_json_loads(response)
         # ── 自动为每个 NPC 补充生日 ──
         from .birthday_engine import auto_generate_birthday
         for npc in npcs:
@@ -1312,18 +1327,18 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
             return s
 
         try:
-            result = json.loads(response)
+            result = _safe_json_loads(response)
         except json.JSONDecodeError:
             # 尝试修复
             repaired = _repair_json(response)
             try:
-                result = json.loads(repaired)
+                result = _safe_json_loads(repaired)
             except json.JSONDecodeError:
                 # 最终尝试：用正则提取 JSON 对象
                 json_match = _re.search(r'\{[\s\S]*\}', response)
                 if json_match:
                     repaired2 = _repair_json(json_match.group(0))
-                    result = json.loads(repaired2)
+                    result = _safe_json_loads(repaired2)
                 else:
                     raise
 
@@ -1498,7 +1513,7 @@ def generate_day_plan(
                 response = response[:-3]
             response = response.strip()
 
-        plan = json.loads(response)
+        plan = _safe_json_loads(response)
         if not isinstance(plan, list) or len(plan) == 0:
             raise ValueError("空列表")
 
@@ -1724,7 +1739,7 @@ def generate_story_cast(character_card: dict, arc: dict = None, existing_cast: l
                 response = response[:-3]
             response = response.strip()
 
-        cast = json.loads(response)
+        cast = _safe_json_loads(response)
         if not isinstance(cast, list) or len(cast) == 0:
             return _default_story_cast(name)
 
@@ -1886,7 +1901,7 @@ def generate_future_events(
             if response.endswith("```"):
                 response = response[:-3]
             response = response.strip()
-        events = json.loads(response)
+        events = _safe_json_loads(response)
         # 如果返回的是 dict 而非 list，尝试提取
         if isinstance(events, dict):
             events = events.get("events", events.get("event_list", [events]))

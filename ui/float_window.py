@@ -199,15 +199,102 @@ class SimLifePanel(QWidget):
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._log_layout.insertWidget(0, self._empty_lbl)
 
+        # ── 死亡模式状态区 ──
+        self._death_mode_container = QWidget()
+        self._death_mode_container.setStyleSheet("background:transparent;")
+        dm_layout = QVBoxLayout(self._death_mode_container)
+        dm_layout.setContentsMargins(0, 0, 0, 0)
+        dm_layout.setSpacing(4)
+
+        # 死亡模式标题
+        dm_header = QHBoxLayout()
+        dm_header.setSpacing(6)
+        dm_title = QLabel("☠️ 死亡模式")
+        dm_title.setStyleSheet("color:#f85149; font-size:11px; font-weight:600;")
+        dm_header.addWidget(dm_title)
+        dm_header.addStretch()
+        self._dm_status_lbl = QLabel("未激活")
+        self._dm_status_lbl.setStyleSheet("color:#484f58; font-size:10px;")
+        dm_header.addWidget(self._dm_status_lbl)
+        dm_layout.addLayout(dm_header)
+
+        # AI角色状态
+        self._dm_char_row = QHBoxLayout()
+        self._dm_char_row.setSpacing(4)
+        self._dm_char_icon = QLabel("⚔️")
+        self._dm_char_icon.setStyleSheet("font-size:14px;")
+        self._dm_char_info = QLabel("AI角色：-")
+        self._dm_char_info.setStyleSheet("color:#c9d1d9; font-size:11px;")
+        self._dm_char_info.setWordWrap(True)
+        self._dm_char_row.addWidget(self._dm_char_icon)
+        self._dm_char_row.addWidget(self._dm_char_info, 1)
+        dm_layout.addLayout(self._dm_char_row)
+
+        # AI角色 HP 条
+        self._dm_hp_bar_container = QWidget()
+        self._dm_hp_bar_container.setFixedHeight(8)
+        self._dm_hp_bar = QLabel()
+        self._dm_hp_bar.setStyleSheet("background:#238636; border-radius:4px;")
+        self._dm_hp_bar.setFixedHeight(8)
+        self._dm_hp_bg = QLabel()
+        self._dm_hp_bg.setStyleSheet("background:#21262d; border-radius:4px;")
+        self._dm_hp_bg.setFixedHeight(8)
+        hp_bar_layout = QHBoxLayout(self._dm_hp_bar_container)
+        hp_bar_layout.setContentsMargins(0, 0, 0, 0)
+        hp_bar_layout.setSpacing(0)
+        hp_bar_layout.addWidget(self._dm_hp_bar)
+        hp_bar_layout.addStretch()
+        dm_layout.addWidget(self._dm_hp_bar_container)
+
+        # 用户角色状态
+        self._dm_user_row = QHBoxLayout()
+        self._dm_user_row.setSpacing(4)
+        self._dm_user_icon = QLabel("👤")
+        self._dm_user_icon.setStyleSheet("font-size:14px;")
+        self._dm_user_info = QLabel("用户角色：-")
+        self._dm_user_info.setStyleSheet("color:#8b949e; font-size:11px;")
+        self._dm_user_info.setWordWrap(True)
+        self._dm_user_row.addWidget(self._dm_user_icon)
+        self._dm_user_row.addWidget(self._dm_user_info, 1)
+        dm_layout.addLayout(self._dm_user_row)
+
+        # 用户角色 HP 条
+        self._dm_user_hp_container = QWidget()
+        self._dm_user_hp_container.setFixedHeight(6)
+        self._dm_user_hp_bar = QLabel()
+        self._dm_user_hp_bar.setStyleSheet("background:#238636; border-radius:3px;")
+        self._dm_user_hp_bar.setFixedHeight(6)
+        uhp_layout = QHBoxLayout(self._dm_user_hp_container)
+        uhp_layout.setContentsMargins(0, 0, 0, 0)
+        uhp_layout.setSpacing(0)
+        uhp_layout.addWidget(self._dm_user_hp_bar)
+        uhp_layout.addStretch()
+        dm_layout.addWidget(self._dm_user_hp_container)
+
+        # 死亡模式详细信息（可展开）
+        self._dm_detail = QLabel("")
+        self._dm_detail.setStyleSheet("color:#8b949e; font-size:10px;")
+        self._dm_detail.setWordWrap(True)
+        dm_layout.addWidget(self._dm_detail)
+
+        # 默认隐藏
+        self._death_mode_container.hide()
+        root.addWidget(self._death_mode_container)
+
     def update_data(self, summary: dict):
         """用 SimLife 数据更新面板"""
         if not summary:
             return
 
+        # 判断是否只有死亡模式（无角色卡）
+        dm_only = not summary.get("name") and summary.get("death_mode")
+
         # 角色名
         name = summary.get("name", "")
         if name:
             self._name_lbl.setText(name)
+        elif dm_only:
+            self._name_lbl.setText("☠️ 死亡模式")
 
         # 场景
         scene = summary.get("scene", "")
@@ -260,6 +347,62 @@ class SimLifePanel(QWidget):
         self._log_count_lbl.setText(f"{len(logs)} 条")
         self._render_logs(logs)
 
+        # 死亡模式状态
+        dm = summary.get("death_mode")
+        if dm and dm.get("active"):
+            self._death_mode_container.show()
+            self._dm_status_lbl.setText("进行中" if dm.get("is_alive") else "已死亡")
+            self._dm_status_lbl.setStyleSheet(
+                "color:#3fb950; font-size:10px;" if dm.get("is_alive") else "color:#f85149; font-size:10px;"
+            )
+
+            # AI角色
+            char = dm.get("character", {})
+            icon = char.get("class_icon", "⚔️")
+            name = char.get("name", "?")
+            cls = char.get("class_name", "")
+            lv = char.get("level", 1)
+            hp = char.get("hp", 0)
+            max_hp = char.get("max_hp", 1)
+            self._dm_char_icon.setText(icon)
+            self._dm_char_info.setText(f"{name} · {cls} Lv.{lv}  HP:{hp}/{max_hp}")
+
+            # HP条
+            hp_pct = min(100, int(hp / max(max_hp, 1) * 100))
+            hp_color = "#3fb950" if hp_pct > 60 else "#d29922" if hp_pct > 30 else "#f85149"
+            self._dm_hp_bar.setStyleSheet(f"background:{hp_color}; border-radius:4px;")
+            self._dm_hp_bar.setFixedWidth(int(self._dm_hp_bar_container.width() * hp_pct / 100) if self._dm_hp_bar_container.width() > 0 else 60)
+
+            # 用户角色
+            user_char = dm.get("user_character", {})
+            u_name = user_char.get("name", "用户")
+            u_cls = user_char.get("class_name", "")
+            u_lv = user_char.get("level", 1)
+            u_hp = user_char.get("hp", 0)
+            u_max_hp = user_char.get("max_hp", 1)
+            if u_cls:
+                u_stats = user_char.get("stats", {})
+                stat_str = f"力{u_stats.get('strength',5)} 敏{u_stats.get('agility',5)} 智{u_stats.get('intelligence',5)}"
+                self._dm_user_info.setText(f"{u_name} · {u_cls} Lv.{u_lv}  HP:{u_hp}/{u_max_hp}  {stat_str}")
+                # 用户HP条
+                u_hp_pct = min(100, int(u_hp / max(u_max_hp, 1) * 100))
+                u_hp_color = "#3fb950" if u_hp_pct > 60 else "#d29922" if u_hp_pct > 30 else "#f85149"
+                self._dm_user_hp_bar.setStyleSheet(f"background:{u_hp_color}; border-radius:3px;")
+                self._dm_user_hp_bar.setFixedWidth(int(200 * u_hp_pct / 100))
+            else:
+                self._dm_user_info.setText(f"{u_name}（未设定职业）")
+                self._dm_user_hp_bar.setFixedWidth(0)
+
+            # 详细信息
+            days = dm.get("play_time_days", 1)
+            kills = dm.get("kill_count", 0)
+            chapter = dm.get("story", {}).get("current_chapter", 1) if dm.get("story") else 1
+            growth = dm.get("growth_mode", "normal")
+            growth_name = {"fast": "爽文", "normal": "平衡", "slow": "慢热"}.get(growth, growth)
+            self._dm_detail.setText(f"第{days}天 · 第{chapter}章 · 击杀{kills} · {growth_name}模式")
+        else:
+            self._death_mode_container.hide()
+
     def _render_logs(self, logs: list, page: int = 0):
         """渲染日志列表（按页）"""
         # 清除旧日志（保留 stretch）
@@ -311,6 +454,8 @@ class FloatingWindow(QWidget):
     - 半透明背景
     - 内嵌 SimLife 生活状态面板
     """
+    _dm_action_result_signal = pyqtSignal(dict, str)  # 死亡模式行动结果
+    _dm_action_error_signal = pyqtSignal(str)          # 死亡模式行动错误
 
     message_sent    = pyqtSignal(str)   # 用户发送消息
     screenshot_requested = pyqtSignal() # 请求截图
@@ -345,6 +490,9 @@ class FloatingWindow(QWidget):
         self._setup_ui()
         self._setup_animation()
         self._position_bottom_right()
+        # 死亡模式行动信号（后台线程 → 主线程）
+        self._dm_action_result_signal.connect(self._on_dm_action_result)
+        self._dm_action_error_signal.connect(self._on_dm_action_error)
 
     def _setup_ui(self):
         # 给主窗口自身加 Layout，确保 container 完美贴合
@@ -590,6 +738,24 @@ class FloatingWindow(QWidget):
                 self._simlife_indicator.setStyleSheet(
                     f"background:{bg}; border-radius:9px; font-size:10px;"
                 )
+            else:
+                # 没有角色卡时，也尝试获取死亡模式状态
+                dm_state = self.simlife_client.get_death_mode_state()
+                if dm_state:
+                    self._simlife_panel.update_data({
+                        "name": "",
+                        "scene": "",
+                        "activity": "",
+                        "mood": 0,
+                        "mood_emoji": "☠️",
+                        "today_log": [],
+                        "death_mode": dm_state,
+                    })
+                    self._simlife_brief.setText("死亡模式进行中")
+                    self._simlife_indicator.setText("☠️")
+                    self._simlife_indicator.setStyleSheet(
+                        "background:#da3633; border-radius:9px; font-size:10px;"
+                    )
         except Exception:
             pass
 
@@ -666,6 +832,181 @@ class FloatingWindow(QWidget):
         QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()
         ))
+
+    def add_dm_system_message(self, text: str, choices: list = None):
+        """死亡模式系统消息 — 无气泡、灰色字体、独立于A层对话
+        choices: 可选行动列表 [{"id": "A", "text": "检查徽章", "risk": "low"}, ...]
+        """
+        container = QWidget()
+        container.setStyleSheet("background:transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(3)
+
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setMinimumWidth(200)
+        lbl.setStyleSheet(
+            "color:#9ca3af;"
+            "font-size:11px;"
+            "font-family:'Microsoft YaHei','SimHei',sans-serif;"
+            "padding:8px 12px;"
+            "background:rgba(139,148,158,0.06);"
+            "border-left:3px solid #6b7280;"
+            "border-radius:0px;"
+        )
+        lbl.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(lbl)
+
+        # 可点击选项按钮
+        if choices:
+            btn_layout = QVBoxLayout()
+            btn_layout.setSpacing(3)
+            btn_layout.setContentsMargins(12, 0, 12, 2)
+
+            risk_colors = {"low": "#3fb950", "medium": "#d29922", "high": "#f85149"}
+            risk_labels = {"low": "低", "medium": "中", "high": "高"}
+
+            for c in choices:
+                cid = c.get("id", "?")
+                ctext = c.get("text", "")
+                risk = c.get("risk", "")
+                risk_color = risk_colors.get(risk, "#8b949e")
+                risk_label = risk_labels.get(risk, "")
+
+                btn = QPushButton(f" {cid}. {ctext} ({risk_label})")
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        color: #c9d1d9; font-size: 11px;
+                        padding: 5px 10px; background: #161b22;
+                        border: 1px solid {risk_color};
+                        border-left: 2px solid {risk_color};
+                        border-radius: 4px; text-align: left;
+                    }}
+                    QPushButton:hover {{ background: #21262d; }}
+                """)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda checked, ch=cid: self._on_dm_choice(ch))
+                btn_layout.addWidget(btn)
+
+            layout.addLayout(btn_layout)
+
+        # 自由行动输入框（始终显示）
+        free_row = QHBoxLayout()
+        free_row.setContentsMargins(12, 2, 12, 2)
+
+        free_input = QLineEdit()
+        free_input.setPlaceholderText("自由行动...")
+        free_input.setStyleSheet("""
+            QLineEdit {
+                color: #c9d1d9; font-size: 11px;
+                padding: 4px 8px; background: #0d1117;
+                border: 1px solid #30363d; border-radius: 4px;
+            }
+            QLineEdit:focus { border-color: #58a6ff; }
+        """)
+
+        send_btn = QPushButton("→")
+        send_btn.setStyleSheet("""
+            QPushButton {
+                color: #c9d1d9; font-size: 11px;
+                padding: 4px 8px; background: #21262d;
+                border: 1px solid #30363d; border-radius: 4px;
+            }
+            QPushButton:hover { background: #30363d; }
+        """)
+
+        def _send_free():
+            text = free_input.text().strip()
+            if text:
+                    self._execute_dm_action_directly(free_action=text)
+
+            send_btn.clicked.connect(_send_free)
+            free_input.returnPressed.connect(_send_free)
+
+            free_row.addWidget(free_input, 1)
+            free_row.addWidget(send_btn)
+            layout.addLayout(free_row)
+
+        self._msg_layout.insertWidget(
+            self._msg_layout.count() - 1, container
+        )
+        QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
+        ))
+
+    def _on_dm_choice(self, choice_id: str):
+        """用户点击了死亡模式选项 — 直接调用API"""
+        self._execute_dm_action_directly(choice_id=choice_id)
+
+    def _execute_dm_action_directly(self, choice_id: str = None, free_action: str = None):
+        """直接执行死亡模式行动（不走聊天，直接调API）"""
+        import threading
+        import urllib.request
+        import json
+
+        action_label = choice_id if choice_id else free_action
+        self.add_dm_system_message(f"⏳ 执行中：{action_label}...")
+
+        def _do():
+            try:
+                url = "http://127.0.0.1:8769/api/death-mode/action"
+                payload = {}
+                if choice_id:
+                    payload["choice_id"] = choice_id
+                if free_action:
+                    payload["free_action"] = free_action
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    result = json.loads(r.read().decode("utf-8"))
+
+                self._dm_action_result_signal.emit(result, action_label)
+            except Exception as e:
+                self._dm_action_error_signal.emit(str(e))
+
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+
+    def _on_dm_action_result(self, result: dict, action: str):
+        """主线程：显示行动结果"""
+        parts = [f"──── ☠️ 行动：{action} ────"]
+        if result.get("narrative"):
+            parts.append(result["narrative"])
+        cr = result.get("combat_result") or {}
+        if cr:
+            if cr.get("victory"):
+                parts.append("⚔️ 胜利！")
+            if cr.get("combat_log"):
+                parts.extend(cr["combat_log"][:3])
+            if cr.get("fled"):
+                parts.append("🏃 成功逃跑！")
+            if cr.get("flee_failed"):
+                parts.append(f"🏃 逃跑失败！追击伤害 {cr.get('pursuit_damage', 0)}")
+        if result.get("exp_gained"):
+            parts.append(f"经验+{result['exp_gained']}")
+        if result.get("gold_gained"):
+            parts.append(f"金币+{result['gold_gained']}")
+        if result.get("leveled_up"):
+            parts.append(f"🎉 升级 Lv.{result.get('new_level')}！")
+        if result.get("character_died"):
+            parts.append(f"☠️ 阵亡：{result.get('death_description', '')}")
+
+        try:
+            import urllib.request, json
+            url2 = "http://127.0.0.1:8769/api/death-mode/state"
+            with urllib.request.urlopen(url2, timeout=5) as r2:
+                fresh = json.loads(r2.read().decode("utf-8"))
+            if fresh.get("active"):
+                char = fresh.get("character", {})
+                parts.append(f"──── ⚔️ {char.get('name','?')} Lv.{char.get('level',1)} HP:{char.get('hp',0)}/{char.get('max_hp',0)} ────")
+        except Exception:
+            pass
+
+        self.add_dm_system_message("\n".join(parts))
+
+    def _on_dm_action_error(self, err: str):
+        self.add_dm_system_message(f"❌ 行动失败：{err}")
 
     def clear_messages(self):
         """清除所有消息气泡"""

@@ -302,6 +302,36 @@ def _map_fantasy_bg(scene_name: str) -> str:
     return "town_square"
 
 
+def _get_death_mode_state() -> Optional[dict]:
+    """获取死亡模式状态（供 UI 面板展示）"""
+    try:
+        from simlife.backend.death_mode import DeathModeEngine
+        engine = DeathModeEngine()
+        dm_state = engine.get_game_state()
+        if not dm_state.get("active"):
+            return None
+        # 附加用户角色状态
+        user_profile = _load_user_profile()
+        dm_state["user_character"] = {
+            "name": user_profile.get("name", "用户"),
+            "class_id": user_profile.get("class_id", ""),
+            "class_name": user_profile.get("class_name", ""),
+            "level": user_profile.get("level", 1),
+            "hp": user_profile.get("hp", 0),
+            "max_hp": user_profile.get("max_hp", 0),
+            "mp": user_profile.get("mp", 0),
+            "max_mp": user_profile.get("max_mp", 0),
+            "stats": user_profile.get("stats", {}),
+            "skills": user_profile.get("skills", []),
+            "gold": user_profile.get("gold", 0),
+            "experience": user_profile.get("experience", 0),
+            "exp_to_next": user_profile.get("exp_to_next", 100),
+        }
+        return dm_state
+    except Exception:
+        return None
+
+
 def _get_arc_summary() -> Optional[dict]:
     """获取当前主线的摘要信息，供 API 返回"""
     try:
@@ -978,6 +1008,7 @@ def api_world_state():
             "name": user_profile.get("name", ""),
             "relation": user_profile.get("relation", ""),
         },
+        "death_mode": _get_death_mode_state(),
     }
 
 
@@ -1162,7 +1193,8 @@ def api_reset():
         for f in ["character_card.json", "world_state.json", "user_profile.json",
                    "story_cast.json", "life_arc.json", "life_arc_history.json",
                    "event_history.json", "npc_cards.json", "scheduled_events.json",
-                   "weather_cache.json"]:
+                   "weather_cache.json",
+                   "death_mode_state.json", "death_mode_state.json.dead", "death_hall.json"]:
             p = DATA_DIR / f
             if p.exists():
                 p.unlink()
@@ -1328,6 +1360,237 @@ def api_get_world_template():
     return {}
 
 
+# ── 死亡模式 API ──────────────────────────────────────
+
+@app.get("/api/death-mode/classes")
+def api_death_mode_classes(world_id: str = None):
+    """获取可选职业列表（根据世界观类型）"""
+    from simlife.backend.death_mode_state import get_available_classes, _get_world_type_from_setting
+    from simlife.worlds.world_manager import load_world_setting
+
+    world_setting = None
+    if world_id:
+        world_setting = load_world_setting(world_id)
+
+    world_type = _get_world_type_from_setting(world_setting) if world_setting else None
+    return {"classes": get_available_classes(world_type=world_type, world_setting=world_setting), "world_type": world_type or "fantasy"}
+
+
+@app.post("/api/death-mode/start")
+def api_death_mode_start(data: dict):
+    """开始死亡模式新游戏"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.worlds.world_manager import load_world_setting
+
+    character_name = data.get("character_name", "").strip()
+    class_id = data.get("class_id", "warrior")
+    user_class_id = data.get("user_class_id", "warrior")
+    user_name = data.get("user_name", "").strip()
+    world_id = data.get("world_id", "")
+    growth_mode = data.get("growth_mode", "normal")
+    custom_stat_points = data.get("custom_stat_points")
+
+    if not character_name:
+        raise HTTPException(400, "请填写角色名字")
+    if not world_id:
+        raise HTTPException(400, "请选择世界观")
+
+    world_setting = load_world_setting(world_id)
+    if not world_setting:
+        raise HTTPException(400, "世界观设定不存在")
+
+    engine = DeathModeEngine()
+    result = engine.start_game(
+        character_name=character_name,
+        class_id=class_id,
+        world_setting=world_setting,
+        growth_mode=growth_mode,
+        custom_stat_points=custom_stat_points,
+    )
+
+    # 同步用户角色能力设定（用户角色使用用户选择的职业）
+    user_profile = _load_user_profile()
+    from simlife.backend.death_mode_state import get_class_template, _get_world_type_from_setting
+    world_type = _get_world_type_from_setting(world_setting)
+    user_cls = get_class_template(world_type, user_class_id)
+    if user_cls:
+        user_profile["class_id"] = user_class_id
+        user_profile["class_name"] = user_cls["name"]
+        user_profile["stats"] = {k: max(1, v // 2) for k, v in user_cls["base_stats"].items()}
+        user_profile["hp"] = user_cls["base_hp"] // 2
+        user_profile["max_hp"] = user_cls["base_hp"] // 2
+        user_profile["mp"] = user_cls["base_mp"] // 2
+        user_profile["max_mp"] = user_cls["base_mp"] // 2
+        user_profile["level"] = 1
+        user_profile["skills"] = []
+        if user_name:
+            user_profile["name"] = user_name
+        _save_user_profile(user_profile)
+
+    return result
+
+
+@app.get("/api/death-mode/state")
+def api_death_mode_state():
+    """获取死亡模式当前状态（含用户角色状态）"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    result = engine.get_game_state()
+
+    # 附加用户角色状态
+    user_profile = _load_user_profile()
+    result["user_character"] = {
+        "name": user_profile.get("name", "用户"),
+        "class_id": user_profile.get("class_id", ""),
+        "class_name": user_profile.get("class_name", ""),
+        "level": user_profile.get("level", 1),
+        "hp": user_profile.get("hp", 0),
+        "max_hp": user_profile.get("max_hp", 0),
+        "mp": user_profile.get("mp", 0),
+        "max_mp": user_profile.get("max_mp", 0),
+        "stats": user_profile.get("stats", {}),
+        "skills": user_profile.get("skills", []),
+        "equipment": user_profile.get("equipment", []),
+        "gold": user_profile.get("gold", 0),
+        "experience": user_profile.get("experience", 0),
+        "exp_to_next": user_profile.get("exp_to_next", 100),
+    }
+
+    return result
+
+
+@app.post("/api/death-mode/scene")
+def api_death_mode_scene():
+    """生成新场景"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    result = engine.start_scene()
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.post("/api/death-mode/action")
+def api_death_mode_action(data: dict):
+    """处理用户行动"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    choice_id = data.get("choice_id")
+    free_action = data.get("free_action")
+    result = engine.process_choice(choice_id=choice_id, free_action=free_action)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/death-mode/hall")
+def api_death_mode_hall():
+    """获取死亡名人堂"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return {"hall": engine.get_hall()}
+
+
+@app.get("/api/death-mode/map")
+def api_death_mode_map():
+    """获取当前地图信息"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.get_map_info()
+
+
+@app.post("/api/death-mode/move")
+def api_death_mode_move(data: dict):
+    """移动到指定区域"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    target_id = data.get("region_id", "")
+    return engine.move_to_region(target_id)
+
+
+@app.post("/api/death-mode/npc-interact")
+def api_death_mode_npc_interact(data: dict):
+    """与NPC交互"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    npc_name = data.get("npc_name", "")
+    interaction = data.get("type", "talk")
+    return engine.interact_npc(npc_name, interaction)
+
+
+@app.get("/api/death-mode/npc-deaths")
+def api_death_mode_npc_deaths():
+    """获取NPC死亡记录"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return {"records": engine.get_npc_death_records()}
+
+
+@app.get("/api/death-mode/equipment")
+def api_death_mode_equipment():
+    """获取当前装备和背包"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.equipment_system import EquipmentSystem
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        return {"error": "no_game"}
+    char = state.get("character", {})
+    return {
+        "equipment": char.get("equipment", []),
+        "inventory": char.get("inventory", []),
+        "equipment_summary": EquipmentSystem.get_equipment_summary(char),
+        "inventory_summary": EquipmentSystem.get_inventory_summary(char),
+        "gold": char.get("gold", 0),
+    }
+
+
+@app.post("/api/death-mode/equip")
+def api_death_mode_equip(data: dict):
+    """穿戴背包中的装备"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.equipment_system import EquipmentSystem
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        return {"error": "no_game"}
+    item_name = data.get("item_name", "")
+    # 从背包中找到装备
+    inventory = state["character"].get("inventory", [])
+    item = next((i for i in inventory if i.get("name") == item_name), None)
+    if not item:
+        return {"error": "item_not_found", "message": f"背包中没有{item_name}"}
+    # 从背包移除
+    state["character"]["inventory"] = [i for i in inventory if i.get("name") != item_name]
+    # 穿戴
+    result = EquipmentSystem.equip_item(state["character"], item)
+    engine._save()
+    return result
+
+
+@app.post("/api/death-mode/sell")
+def api_death_mode_sell(data: dict):
+    """出售背包中的装备"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.equipment_system import EquipmentSystem
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        return {"error": "no_game"}
+    item_name = data.get("item_name", "")
+    result = EquipmentSystem.sell_item(state["character"], item_name)
+    engine._save()
+    return result
+
+
+@app.get("/api/death-mode/log")
+def api_death_mode_log(limit: int = 50, offset: int = 0):
+    """获取行动日志（网页端展示用）"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.get_action_log(limit=limit, offset=offset)
+
+
 # ── 用户入驻管理 API ─────────────────────────────────
 
 USER_PROFILE_PATH = DATA_DIR / "user_profile.json"
@@ -1365,6 +1628,21 @@ def api_set_user_profile(data: dict):
     profile["name"] = data.get("name", "") or profile.get("name", "")
     profile["relation"] = data.get("relation", "")
     profile["world_role"] = data.get("world_role", "")
+
+    # 死亡模式能力设定（仅在非现代世界时有效）
+    if data.get("class_id"):
+        profile["class_id"] = data.get("class_id")
+    if data.get("stats"):
+        profile["stats"] = data.get("stats")
+    if data.get("skills"):
+        profile["skills"] = data.get("skills")
+    if data.get("hp") is not None:
+        profile["hp"] = data.get("hp")
+    if data.get("max_hp") is not None:
+        profile["max_hp"] = data.get("max_hp")
+    if data.get("level") is not None:
+        profile["level"] = data.get("level")
+
     if profile["relation"]:
         _save_user_profile(profile)
     return {"status": "ok", "profile": profile}
@@ -1422,6 +1700,12 @@ def serve_index():
 # 挂载前端静态文件（JS/CSS/图片）
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# favicon 路由（避免404）
+@app.get("/favicon.ico")
+async def favicon():
+    from fastapi.responses import Response
+    return Response(content=b'', media_type="image/x-icon")
 
 
 @app.on_event("startup")
