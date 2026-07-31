@@ -39,9 +39,9 @@
       }
     ],
     "inventory": [],
-    "experience": 8,
+    "experience": 107,
     "exp_to_next": 172,
-    "gold": 338,
+    "gold": 371,
     "world_type": "fantasy"
   },
   "world_setting": {
@@ -455,7 +455,7 @@
   "world_type": "fantasy",
   "growth_mode": "fast",
   "story": {
-    "current_chapter": 6,
+    "current_chapter": 7,
     "current_scene_id": null,
     "scene_description": "",
     "choices": [],
@@ -633,6 +633,24 @@
         "summary": "你警惕地扫视四周，发现身处一片幽暗的森林边缘，空气中弥漫着潮湿的泥土气息。远处的灌木丛轻微晃动了一下，隐约可见一双发光的眼睛正注视着你，随即消失在阴影中。脚下的地面似乎有些松动，像是被什么东西翻动过，",
         "action": "yount继续看看四周是什么情况，焕灵警戒",
         "outcome": "discovery"
+      },
+      {
+        "chapter": 6,
+        "summary": "你沿着泥泞的小路折返，穿过Primus Arcus边缘稀疏的灌木丛。村庄的轮廓在暮色中逐渐清晰，炊烟从酒馆烟囱升起。推开酒馆木门，温暖的灯光和烤面包的气味扑面而来。老板娘递上一杯麦酒和热汤，你肌肉的酸",
+        "action": "回村庄去恢复状态",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 7,
+        "summary": "你盘膝坐在Silvamagica的树根旁，深吸一口气，让身体从紧绷的战斗状态中逐渐松弛下来。肌肉的酸痛感缓缓退去，精神也似乎恢复了些许清明。远处传来一声不知名的兽吼，提醒着你安全只是暂时的。",
+        "action": "yount也恢复状态",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 7,
+        "summary": "你靠在一棵古树的粗壮根系上，闭上眼睛，调整呼吸。四周的魔法粒子缓缓涌入你的身体，伤口以肉眼可见的速度愈合，疲劳感也逐渐消退。当你再次睁开眼时，感觉浑身充满了力量。远处传来一阵低沉的咆哮声，似乎有什么东",
+        "action": "yount把状态恢复满",
+        "outcome": "rest"
       }
     ],
     "pending_action": null,
@@ -645,7 +663,7 @@
   "death_cause": null,
   "play_time_days": 1,
   "start_time": "2026-07-31T13:40:38.674173",
-  "kill_count": 6,
+  "kill_count": 7,
   "created_at": "2026-07-31T13:40:38.674179",
   "shared_inventory": [
     {
@@ -668,7 +686,7 @@
     "class_name": "战士",
     "class_icon": "⚔️",
     "level": 5,
-    "hp": 270,
+    "hp": 104,
     "max_hp": 270,
     "mp": 80,
     "max_mp": 80,
@@ -698,7 +716,7 @@
         "sell_price": 8
       }
     ],
-    "experience": 8,
+    "experience": 107,
     "exp_to_next": 172,
     "gold": 0,
     "world_type": "fantasy",
@@ -1755,6 +1773,87 @@
         "outcome": "discovery",
         "narrative": "你警惕地扫视四周，发现身处一片幽暗的森林边缘，空气中弥漫着潮湿的泥土气息。远处的灌木丛轻微晃动了一下，隐约可见一双发光的眼睛正注视着你，随即消失在阴影中。脚下的地面似乎有些松动，像是被什么东西翻动过，露出几缕奇怪的银色纹路。你握紧铁剑，感觉某种无形的威胁正在逼近。",
         "gold_gained": 64
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T19:37:55.190792",
+      "day": 1,
+      "data": {
+        "action": "继续扫荡附近的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "伤痕累累的焕灵和yount在风中收刀，Aerodrakes的嘶鸣彻底沉寂——二十七回合的缠斗，以两处被击穿的甲缝和满身血污作为代价，总算换来对方碎裂的鳞甲与一袋沉甸甸的金币。110点有效输出钉死了这场硬仗的注脚，而237点创伤则提醒他们，绷带和药剂马上就要告罄。远处林间传来新的枝叶簌响，或许是猎物，又或许是追债的人。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第4回合：Aerodrakes暴击！yount闪避判断失误，攻击命中，造成19点伤害 → yount",
+            "第8回合：Aerodrakes暴击！yount闪避判断失误，攻击命中，造成23点伤害 → yount",
+            "第27回合：击杀Aerodrakes",
+            "⚡ 扫荡结束 — 共27回合"
+          ],
+          "rounds": 27,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T19:39:21.721480",
+      "day": 1,
+      "data": {
+        "action": "回村庄去恢复状态",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你沿着泥泞的小路折返，穿过Primus Arcus边缘稀疏的灌木丛。村庄的轮廓在暮色中逐渐清晰，炊烟从酒馆烟囱升起。推开酒馆木门，温暖的灯光和烤面包的气味扑面而来。老板娘递上一杯麦酒和热汤，你肌肉的酸痛在香气中缓缓消散。一些玩家在角落谈论着城外出现的Feral Crystal群，似乎比往常更活跃。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 71
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T19:40:07.819009",
+      "day": 1,
+      "data": {
+        "action": "yount也恢复状态",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你盘膝坐在Silvamagica的树根旁，深吸一口气，让身体从紧绷的战斗状态中逐渐松弛下来。肌肉的酸痛感缓缓退去，精神也似乎恢复了些许清明。远处传来一声不知名的兽吼，提醒着你安全只是暂时的。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 30,
+        "mp_change": 20
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T19:41:27.484223",
+      "day": 1,
+      "data": {
+        "action": "yount把状态恢复满",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你靠在一棵古树的粗壮根系上，闭上眼睛，调整呼吸。四周的魔法粒子缓缓涌入你的身体，伤口以肉眼可见的速度愈合，疲劳感也逐渐消退。当你再次睁开眼时，感觉浑身充满了力量。远处传来一阵低沉的咆哮声，似乎有什么东西正朝这边靠近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 270,
+        "mp_change": 80
       }
     }
   ]

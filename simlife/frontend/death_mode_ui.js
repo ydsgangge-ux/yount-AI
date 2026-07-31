@@ -763,6 +763,18 @@ const DeathModeUI = {
         const mpSign = d.mp_change > 0 ? '+' : '';
         tradeHtml += `<div style="font-size:11px;color:${mpColor};margin-top:2px;">💧 MP${mpSign}${d.mp_change}</div>`;
       }
+      // 用户角色（同伴）的 HP/MP 变化
+      const uName = this._userName || '用户';
+      if (d.user_hp_change) {
+        const hpColor = d.user_hp_change > 0 ? '#3fb950' : '#f85149';
+        const hpSign = d.user_hp_change > 0 ? '+' : '';
+        tradeHtml += `<div style="font-size:11px;color:${hpColor};margin-top:2px;">👤 ${uName} ❤️ HP${hpSign}${d.user_hp_change}</div>`;
+      }
+      if (d.user_mp_change) {
+        const mpColor = d.user_mp_change > 0 ? '#58a6ff' : '#f85149';
+        const mpSign = d.user_mp_change > 0 ? '+' : '';
+        tradeHtml += `<div style="font-size:11px;color:${mpColor};margin-top:2px;">👤 ${uName} 💧 MP${mpSign}${d.user_mp_change}</div>`;
+      }
 
       // 死亡
       let deathHtml = '';

@@ -811,13 +811,28 @@ class DeathModeEngine:
                     result["last_words"] = state.get("last_words", "")
                     return result
 
-            # 休息恢复
+            # 休息恢复（AI角色和用户角色同时恢复）
             elif action_type_value == "rest" or outcome_type == "rest":
                 heal_amount = int(char["max_hp"] * 0.2)
                 mp_recover = int(char["max_mp"] * 0.3)
                 char["hp"] = min(char["max_hp"], char["hp"] + heal_amount)
                 char["mp"] = min(char["max_mp"], char["mp"] + mp_recover)
                 result["combat_result"] = {"rest_heal": heal_amount, "mp_recover": mp_recover, "hp_remaining": char["hp"]}
+                # 前端展示AI角色恢复数值
+                result["hp_change"] = heal_amount
+                result["mp_change"] = mp_recover
+
+                # 用户角色也同时恢复（各自按自己的max计算）
+                user_char = state.get("user_character", {})
+                if user_char and user_char.get("class_name"):
+                    u_heal = int(user_char.get("max_hp", 0) * 0.2)
+                    u_mp = int(user_char.get("max_mp", 0) * 0.3)
+                    user_char["hp"] = min(user_char.get("max_hp", 0), user_char.get("hp", 0) + u_heal)
+                    user_char["mp"] = min(user_char.get("max_mp", 0), user_char.get("mp", 0) + u_mp)
+                    result["combat_result"]["user_rest_heal"] = u_heal
+                    result["combat_result"]["user_mp_recover"] = u_mp
+                    result["user_hp_change"] = u_heal
+                    result["user_mp_change"] = u_mp
 
             # 发现宝箱
             elif outcome_type == "discovery":
@@ -860,16 +875,28 @@ class DeathModeEngine:
                 result["gold_gained"] = result.get("gold_gained", 0) + int(gold_gained_agent)
 
             # HP变化（正数恢复，负数受伤）
+            # 这些变化来自LLM对行动叙事的数值化，叙事多以"用户"为主语，
+            # 因此优先作用于用户角色（焕灵的恢复由rest等机制处理）
             hp_change = agent_result.get("hp_change")
             if hp_change and isinstance(hp_change, (int, float)):
-                char["hp"] = max(0, min(char["max_hp"], char["hp"] + int(hp_change)))
-                result["hp_change"] = int(hp_change)
+                _target_char = state.get("user_character", {})
+                if _target_char and _target_char.get("class_name"):
+                    _target_char["hp"] = max(0, min(_target_char.get("max_hp", 0), _target_char.get("hp", 0) + int(hp_change)))
+                    result["user_hp_change"] = int(hp_change)
+                else:
+                    char["hp"] = max(0, min(char["max_hp"], char["hp"] + int(hp_change)))
+                    result["hp_change"] = int(hp_change)
 
             # MP变化
             mp_change = agent_result.get("mp_change")
             if mp_change and isinstance(mp_change, (int, float)):
-                char["mp"] = max(0, min(char["max_mp"], char["mp"] + int(mp_change)))
-                result["mp_change"] = int(mp_change)
+                _target_char = state.get("user_character", {})
+                if _target_char and _target_char.get("class_name"):
+                    _target_char["mp"] = max(0, min(_target_char.get("max_mp", 0), _target_char.get("mp", 0) + int(mp_change)))
+                    result["user_mp_change"] = int(mp_change)
+                else:
+                    char["mp"] = max(0, min(char["max_mp"], char["mp"] + int(mp_change)))
+                    result["mp_change"] = int(mp_change)
 
         # 3. 天数按实际时间计算（不在此处推进，get_game_state 中动态计算）
 
@@ -931,6 +958,10 @@ class DeathModeEngine:
             log_data["hp_change"] = result["hp_change"]
         if result.get("mp_change"):
             log_data["mp_change"] = result["mp_change"]
+        if result.get("user_hp_change"):
+            log_data["user_hp_change"] = result["user_hp_change"]
+        if result.get("user_mp_change"):
+            log_data["user_mp_change"] = result["user_mp_change"]
 
         self._log_action("action", log_data)
         self._save()
