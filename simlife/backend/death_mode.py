@@ -1313,8 +1313,7 @@ class DeathModeEngine:
         enemies_defeated = [e.get("name", "?") for e in enemies if e.get("hp", 0) <= 0]
         total_exp = sum(e.get("exp_reward", 10) for e in enemies if e.get("hp", 0) <= 0)
         total_gold = sum(e.get("gold_reward", 5) for e in enemies if e.get("hp", 0) <= 0)
-        total_damage_taken = (ai_hp_start - char.get("hp", 0))
-                             + (user_hp_start - (user_char.get("hp", 0) if user_in_combat else 0))
+        total_damage_taken = (ai_hp_start - char.get("hp", 0)) + (user_hp_start - (user_char.get("hp", 0) if user_in_combat else 0))
         # 总输出 = 敌人HP减少总和（扫荡期间对敌人造成的总伤害）
         total_damage_dealt = sum(enemy_hp_start.get(i, 0) - e.get("hp", 0) for i, e in enumerate(enemies))
         # 击败的敌人的HP减少量也计入（hp<=0时取负值修正）
