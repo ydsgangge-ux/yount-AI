@@ -6,7 +6,7 @@
     "class_name": "战士",
     "class_icon": "⚔️",
     "level": 3,
-    "hp": 207,
+    "hp": 205,
     "max_hp": 210,
     "mp": 50,
     "max_mp": 50,
@@ -454,7 +454,7 @@
   "world_type": "fantasy",
   "growth_mode": "fast",
   "story": {
-    "current_chapter": 4,
+    "current_chapter": 5,
     "current_scene_id": null,
     "scene_description": "",
     "choices": [],
@@ -560,6 +560,24 @@
         "summary": "你握紧新手铁剑，冲向最近的一只元素史莱姆。剑刃劈开其胶质身躯，溅起蓝色火花，但史莱姆迅速重组，向你弹射酸性黏液。你侧身翻滚，躲过大部分攻击，左臂仍被擦过，传来灼痛。",
         "action": "继续战斗",
         "outcome": "combat_success"
+      },
+      {
+        "chapter": 4,
+        "summary": "你紧握铁剑，冲向一只挡在路中央的Feral Crystal。剑刃砍在晶体表面，迸出刺眼的火花，碎屑飞溅。晶体震动了一下，表面裂纹扩散，随即释放出一道尖锐的能量脉冲，逼得你举盾格挡。它的核心在裂痕深处闪",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 4,
+        "summary": "剑锋划破空气，带着重击的力道砸在元素史莱姆的核心上，晶体碎裂的声音清脆刺耳。你顺势前踏，铁剑连续挥砍，将另一只扑来的史莱姆劈成两半，液体溅落在你的护甲上发出嘶嘶声响。余光中，第三只更大的蓝色史莱姆正在",
+        "action": "焕灵重击，yount连续击退敌人，继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 4,
+        "summary": "你们再次挥剑斩向那团扭动的元素史莱姆，铁剑切入其核心时发出刺耳的嘶鸣。你感觉到剑身传来的反震越来越弱，仿佛它的核心正在破碎，但它同时猛烈地抖动起来，迸发出更多的酸性黏液溅向四周。",
+        "action": "两人继续攻击",
+        "outcome": "combat_success"
       }
     ],
     "pending_action": null,
@@ -570,7 +588,7 @@
     {
       "name": "Umbra Lupus1",
       "level": 4,
-      "hp": 32,
+      "hp": 0,
       "max_hp": 80,
       "mp": 32,
       "max_mp": 32,
@@ -642,7 +660,7 @@
     "class_name": "战士",
     "class_icon": "⚔️",
     "level": 3,
-    "hp": 202,
+    "hp": 196,
     "max_hp": 210,
     "mp": 50,
     "max_mp": 50,
@@ -1485,6 +1503,68 @@
             "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
             "yountUmbra Lupus1闪避判断失误，攻击命中，造成13点伤害 → Umbra Lupus1",
             "Umbra Lupus1yount闪避判断失误，攻击命中，造成2点伤害 → yount",
+            "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:14:10.484762",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你紧握铁剑，冲向一只挡在路中央的Feral Crystal。剑刃砍在晶体表面，迸出刺眼的火花，碎屑飞溅。晶体震动了一下，表面裂纹扩散，随即释放出一道尖锐的能量脉冲，逼得你举盾格挡。它的核心在裂痕深处闪烁不定，似乎正在蓄积更强的反击。周围的空气中，魔法粒子的浓度骤然上升。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1格挡，减免部分伤害，造成7点伤害 → Umbra Lupus1",
+            "Umbra Lupus1yount闪避判断失误，攻击命中，造成2点伤害 → yount",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成2点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:15:29.753281",
+      "day": 1,
+      "data": {
+        "action": "焕灵重击，yount连续击退敌人，继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "剑锋划破空气，带着重击的力道砸在元素史莱姆的核心上，晶体碎裂的声音清脆刺耳。你顺势前踏，铁剑连续挥砍，将另一只扑来的史莱姆劈成两半，液体溅落在你的护甲上发出嘶嘶声响。余光中，第三只更大的蓝色史莱姆正在凝聚水刃，而它身后隐约浮现出一个人形黑影——似乎一直在观察这场战斗。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Umbra Lupus1毫无防备，直接承受攻击，造成14点伤害 → Umbra Lupus1",
+            "Umbra Lupus1焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成2点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:19:01.101371",
+      "day": 1,
+      "data": {
+        "action": "两人继续攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你们再次挥剑斩向那团扭动的元素史莱姆，铁剑切入其核心时发出刺耳的嘶鸣。你感觉到剑身传来的反震越来越弱，仿佛它的核心正在破碎，但它同时猛烈地抖动起来，迸发出更多的酸性黏液溅向四周。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1毫无防备，直接承受攻击，造成15点伤害 → Umbra Lupus1",
             "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
           ]
         }

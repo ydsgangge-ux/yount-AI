@@ -372,7 +372,157 @@ class DeathModeEngine:
         if not action:
             return {"error": "no_action"}
 
-        # 1. Agent 生成叙事（不含数值结果）
+        # ── 扫荡模式检测 ──
+        # 1) 战斗中 + 扫荡关键词 → 直接结算
+        # 2) 战斗中 + 敌人远弱 → 自动扫荡
+        # 3) 非战斗中 + 扫荡关键词（含战斗意图）→ 生成敌人并直接结算，跳过LLM叙事
+        in_combat = state.get("in_combat", False)
+        enemies = state.get("enemies", [])
+        is_sweep = False
+        is_new_sweep = False  # 非战斗状态触发新扫荡
+
+        if in_combat and enemies and self._is_sweep_action(action):
+            is_sweep = True
+        elif in_combat and enemies and self._should_auto_sweep(state, enemies):
+            is_sweep = True
+        elif not in_combat and self._is_sweep_action(action):
+            # 非战斗状态下的扫荡：含战斗意图关键词
+            combat_intent_keywords = ("扫荡", "清掉", "清理", "清空", "直接打完",
+                                      "速战速决", "自动战斗", "快速战斗", "速杀",
+                                      "碾压", "一举歼灭", "全部消灭", "一口气",
+                                      "连战", "连杀", "横扫", "直接杀",
+                                      "打到底", "战斗到底", "打完", "刷怪", "刷完",
+                                      "全灭", "一扫", "小怪", "怪物")
+            if any(kw in action for kw in combat_intent_keywords):
+                is_new_sweep = True
+
+        if is_sweep:
+            # ── 快速战斗：跳过逐回合LLM叙事，直接结算 ──
+            sweep_result = self._quick_combat(state, enemies, action_text=action, sender=sender)
+            result = {
+                "narrative": sweep_result.get("narrative", ""),
+                "combat_result": sweep_result,
+                "leveled_up": False,
+                "new_skills": [],
+                "character_died": sweep_result.get("player_died", False),
+                "death_description": None,
+                "exp_gained": sweep_result.get("exp_reward", 0),
+                "gold_gained": sweep_result.get("gold_reward", 0),
+                "is_sweep": True,  # 标记为扫荡模式
+                "sweep_rounds": sweep_result.get("rounds", 0),
+            }
+
+            if sweep_result.get("player_died"):
+                who = "user" if sweep_result.get("user_died") else "ai"
+                result["death_description"] = self._handle_death(state, sweep_result.get("death_cause", "扫荡中阵亡"), who_died=who)
+                result["death_pending"] = True
+                result["death_who"] = who
+                result["last_words"] = state.get("last_words", "")
+                self._save(state)
+                return result
+
+            # 战斗胜利 → 经验/金币/升级处理
+            if sweep_result.get("victory"):
+                total_exp = sweep_result.get("exp_reward", 0)
+                total_gold = sweep_result.get("gold_reward", 0)
+                char = state["character"]
+                char["gold"] += total_gold
+                result["gold_gained"] = total_gold
+                result["exp_gained"] = total_exp
+                state["kill_count"] += len(enemies)
+
+                char["world_type"] = state.get("world_type", "fantasy")
+                growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
+                if growth_result["leveled_up"]:
+                    result["leveled_up"] = True
+                    result["new_level"] = growth_result["new_level"]
+                    result["new_skills"] = growth_result.get("new_skills", [])
+
+                # 用户角色也获得经验
+                user_char = state.get("user_character", {})
+                if user_char and user_char.get("class_name"):
+                    user_char["world_type"] = state.get("world_type", "fantasy")
+                    u_growth = GrowthSystem.gain_exp(user_char, total_exp, state.get("growth_mode", "normal"))
+                    if u_growth["leveled_up"]:
+                        result["user_leveled_up"] = True
+                        result["user_new_skills"] = u_growth.get("new_skills", [])
+
+                state["in_combat"] = False
+                state["enemies"] = []
+                result["in_combat"] = False
+            else:
+                # 扫荡未完全胜利（可能有强敌存活）
+                result["in_combat"] = True
+                result["enemies"] = [e for e in enemies if e.get("hp", 0) > 0]
+
+            self._save(state)
+            return result
+
+        # ── 非战斗状态下的扫荡：直接生成敌人并快速结算 ──
+        if is_new_sweep:
+            # 根据角色等级推算敌人风险等级（扫荡默认低风险小怪）
+            char = state["character"]
+            risk_level = "low"  # 扫荡默认生成低风险小怪
+            enemies_list = self._generate_enemies(state, risk_level)
+            state["enemies"] = enemies_list
+            state["in_combat"] = True
+
+            sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender)
+            result = {
+                "narrative": sweep_result.get("narrative", ""),
+                "combat_result": sweep_result,
+                "leveled_up": False,
+                "new_skills": [],
+                "character_died": sweep_result.get("player_died", False),
+                "death_description": None,
+                "exp_gained": sweep_result.get("exp_reward", 0),
+                "gold_gained": sweep_result.get("gold_reward", 0),
+                "is_sweep": True,
+                "sweep_rounds": sweep_result.get("rounds", 0),
+                "new_combat": True,  # 标记为新触发的战斗
+            }
+
+            if sweep_result.get("player_died"):
+                who = "user" if sweep_result.get("user_died") else "ai"
+                result["death_description"] = self._handle_death(state, sweep_result.get("death_cause", "扫荡中阵亡"), who_died=who)
+                result["death_pending"] = True
+                result["death_who"] = who
+                result["last_words"] = state.get("last_words", "")
+                self._save(state)
+                return result
+
+            if sweep_result.get("victory"):
+                total_exp = sweep_result.get("exp_reward", 0)
+                total_gold = sweep_result.get("gold_reward", 0)
+                char["gold"] += total_gold
+                result["gold_gained"] = total_gold
+                result["exp_gained"] = total_exp
+                state["kill_count"] += len(enemies_list)
+
+                char["world_type"] = state.get("world_type", "fantasy")
+                growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
+                if growth_result["leveled_up"]:
+                    result["leveled_up"] = True
+                    result["new_level"] = growth_result["new_level"]
+                    result["new_skills"] = growth_result.get("new_skills", [])
+
+                # 用户角色也获得经验
+                user_char = state.get("user_character", {})
+                if user_char and user_char.get("class_name"):
+                    user_char["world_type"] = state.get("world_type", "fantasy")
+                    GrowthSystem.gain_exp(user_char, total_exp, state.get("growth_mode", "normal"))
+
+                state["in_combat"] = False
+                state["enemies"] = []
+                result["in_combat"] = False
+            else:
+                result["in_combat"] = True
+                result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
+
+            self._save(state)
+            return result
+
+        # 1. Agent 生成叙事（不含数值结果）— 非扫荡模式才走LLM
         agent_result = self.agent.process_action(state, action, action_type)
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
@@ -515,7 +665,59 @@ class DeathModeEngine:
                 state["enemies"] = enemies_list
                 state["in_combat"] = True
 
-                # 第一回合
+                # ── 扫荡模式：新战斗触发时，如果含扫荡关键词或敌人远弱 → 快速结算 ──
+                if self._is_sweep_action(action) or self._should_auto_sweep(state, enemies_list):
+                    sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender)
+                    result["combat_result"] = sweep_result
+                    result["is_sweep"] = True
+                    result["sweep_rounds"] = sweep_result.get("rounds", 0)
+
+                    # 覆盖叙事为扫荡总结（跳过逐回合LLM叙事）
+                    result["narrative"] = sweep_result.get("narrative", "")
+
+                    if sweep_result.get("player_died"):
+                        result["character_died"] = True
+                        result["user_died"] = sweep_result.get("user_died", False)
+                        who = "user" if sweep_result.get("user_died") else "ai"
+                        result["death_description"] = self._handle_death(state, sweep_result.get("death_cause", "扫荡中阵亡"), who_died=who)
+                        result["death_pending"] = True
+                        result["death_who"] = who
+                        result["last_words"] = state.get("last_words", "")
+                        self._save(state)
+                        return result
+
+                    if sweep_result.get("victory"):
+                        total_exp = sweep_result.get("exp_reward", 0)
+                        total_gold = sweep_result.get("gold_reward", 0)
+                        char["gold"] += total_gold
+                        result["gold_gained"] = total_gold
+                        result["exp_gained"] = total_exp
+                        state["kill_count"] += len(enemies_list)
+
+                        char["world_type"] = state.get("world_type", "fantasy")
+                        growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
+                        if growth_result["leveled_up"]:
+                            result["leveled_up"] = True
+                            result["new_level"] = growth_result["new_level"]
+                            result["new_skills"] = growth_result.get("new_skills", [])
+
+                        # 用户角色也获得经验
+                        u_char = state.get("user_character", {})
+                        if u_char and u_char.get("class_name"):
+                            u_char["world_type"] = state.get("world_type", "fantasy")
+                            GrowthSystem.gain_exp(u_char, total_exp, state.get("growth_mode", "normal"))
+
+                        state["in_combat"] = False
+                        state["enemies"] = []
+                        result["in_combat"] = False
+                    else:
+                        result["in_combat"] = True
+                        result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
+
+                    self._save(state)
+                    return result
+
+                # 第一回合（非扫荡模式）
                 combat_result = self._combat_round(state, enemies_list, action_text=action, sender=sender)
                 result["combat_result"] = combat_result
 
@@ -991,6 +1193,231 @@ class DeathModeEngine:
             "combat_log": combat_log,
             "drops": drops,
         }
+
+    def _quick_combat(self, state: Dict, enemies: list, action_text: str = "",
+                      sender: str = "user", max_rounds: int = 30) -> Dict:
+        """快速战斗（扫荡模式）：自动计算所有回合直到战斗结束，不调用LLM叙事
+        适用于：小怪碾压、用户明确说"扫荡/清掉/直接打完"等关键词
+        max_rounds: 最大回合数上限，防止无限循环
+        返回: {
+            "victory": bool,
+            "player_died": bool,
+            "rounds": int,       # 总回合数
+            "combat_log": [],    # 精简的战斗日志（只保留关键事件）
+            "drops": [],         # 掉落物品
+            "total_damage_taken": int,  # 角色总受伤
+            "total_damage_dealt": int,  # 角色总输出
+            "enemies_defeated": [],     # 击败敌人名列表
+            "exp_reward": int,
+            "gold_reward": int,
+            "key_events": [],           # 关键事件摘要（供叙事Agent使用）
+            "narrative": str,           # LLM生成的总结叙事
+        }
+        """
+        char = state["character"]
+        user_char = state.get("user_character", {})
+        ai_in_combat = char.get("hp", 0) > 0 and not state.get("ai_character_dead", False)
+        user_in_combat = (user_char and user_char.get("hp", 0) > 0
+                          and user_char.get("class_name")
+                          and not state.get("user_character_dead", False))
+
+        all_combat_logs = []
+        all_drops = []
+        key_events = []
+        rounds = 0
+
+        # 保存初始HP用于计算损失
+        ai_hp_start = char.get("hp", 0)
+        user_hp_start = user_char.get("hp", 0) if user_in_combat else 0
+
+        # 保存初始敌人HP用于计算总输出
+        enemy_hp_start = {i: e.get("hp", e.get("max_hp", 0)) for i, e in enumerate(enemies)}
+
+        # 保存初始敌人信息用于总结
+        enemy_names_start = [e.get("name", "?") for e in enemies]
+
+        for round_num in range(1, max_rounds + 1):
+            rounds = round_num
+            alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+            if not alive_enemies:
+                break
+
+            # ── 构造默认攻击口令（扫荡模式不解析用户口令，使用默认策略）──
+            # 优先攻击HP最低的敌人（效率最优）
+            target_enemy = min(alive_enemies, key=lambda e: e.get("hp", 999))
+            default_cmd = {
+                "ai_is_magic": False, "user_is_magic": False,
+                "ai_skill_mult": 1.0, "user_skill_mult": 1.0,
+                "ai_defense": DefenseAction.BLOCK, "user_defense": DefenseAction.BLOCK,
+                "ai_target": target_enemy, "user_target": target_enemy,
+                "tactic": None, "initiative_order": None, "tank_role": None,
+                "ai_skip": False, "user_skip": False,
+            }
+
+            # ── 执行一回合战斗（复用 _combat_round）──
+            # 为扫荡模式传入简化的口令
+            # 构造一个简单的行动文本用于判定出手顺序
+            sweep_action = f"扫荡攻击{target_enemy.get('name', '敌人')}"
+            combat_result = self._combat_round(
+                state, alive_enemies,
+                action_text=sweep_action, sender=sender
+            )
+
+            # 检查战斗结果
+            if combat_result.get("player_died"):
+                # 角色阵亡 - 扫荡失败
+                death_cause = combat_result.get("death_cause", "扫荡中阵亡")
+                return {
+                    "victory": False,
+                    "player_died": True,
+                    "rounds": rounds,
+                    "combat_log": combat_result.get("combat_log", []),
+                    "drops": all_drops + combat_result.get("drops", []),
+                    "total_damage_taken": (ai_hp_start - char.get("hp", 0))
+                                         + (user_hp_start - (user_char.get("hp", 0) if user_in_combat else 0)),
+                    "total_damage_dealt": total_damage_dealt,
+                    "enemies_defeated": [],
+                    "exp_reward": 0,
+                    "gold_reward": 0,
+                    "key_events": key_events,
+                    "narrative": "",
+                    "death_cause": death_cause,
+                    "user_died": combat_result.get("user_died", False),
+                }
+
+            # 收集战斗日志
+            round_log = combat_result.get("combat_log", [])
+            all_combat_logs.extend(round_log)
+
+            # 收集掉落
+            round_drops = combat_result.get("drops", [])
+            all_drops.extend(round_drops)
+
+            # 记录关键事件（每回合只提取最重要的1-2条）
+            for log_entry in round_log:
+                if any(kw in log_entry for kw in ("暴击", "掉落", "击败", "击杀", "倒下", "重伤")):
+                    key_events.append(f"第{round_num}回合：{log_entry}")
+
+            # 检查是否有敌人死亡（记为关键事件）
+            new_alive = [e for e in alive_enemies if e.get("hp", 0) > 0]
+            if len(new_alive) < len(alive_enemies):
+                killed_names = [e.get("name", "?") for e in alive_enemies if e.get("hp", 0) <= 0]
+                key_events.append(f"第{round_num}回合：击杀{'、'.join(killed_names)}")
+
+            # 如果没有玩家死亡且所有敌人被击败 → 胜利
+            if not new_alive:
+                break
+
+        # ── 计算总结数据 ──
+        alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+        enemies_defeated = [e.get("name", "?") for e in enemies if e.get("hp", 0) <= 0]
+        total_exp = sum(e.get("exp_reward", 10) for e in enemies if e.get("hp", 0) <= 0)
+        total_gold = sum(e.get("gold_reward", 5) for e in enemies if e.get("hp", 0) <= 0)
+        total_damage_taken = (ai_hp_start - char.get("hp", 0))
+                             + (user_hp_start - (user_char.get("hp", 0) if user_in_combat else 0))
+        # 总输出 = 敌人HP减少总和（扫荡期间对敌人造成的总伤害）
+        total_damage_dealt = sum(enemy_hp_start.get(i, 0) - e.get("hp", 0) for i, e in enumerate(enemies))
+        # 击败的敌人的HP减少量也计入（hp<=0时取负值修正）
+        for i, e in enumerate(enemies):
+            if e.get("hp", 0) <= 0:
+                total_damage_dealt += abs(e.get("hp", 0))  # 超额伤害也计入
+
+        victory = len(alive_enemies) == 0
+
+        # ── 构建总结 ──
+        combat_summary = {
+            "rounds": rounds,
+            "enemies_defeated": enemies_defeated,
+            "total_damage_taken": total_damage_taken,
+            "total_damage_dealt": total_damage_dealt,
+            "drops": all_drops,
+            "exp_gained": total_exp,
+            "gold_gained": total_gold,
+            "key_events": key_events[:8],  # 最多8条关键事件
+        }
+
+        # ── 调用一次LLM生成总结叙事 ──
+        narrative = ""
+        if victory and not combat_result.get("player_died"):
+            try:
+                narrative = self.agent.generate_quick_combat_narrative(state, combat_summary)
+            except Exception as e:
+                print(f"[DeathMode] 快速战斗叙事失败: {e}")
+                char_name = char.get("name", "无名")
+                narrative = f"经过{rounds}回合的扫荡，{char_name}击败了所有敌人。获得{total_exp}经验和{total_gold}金币。"
+
+        # ── 精简战斗日志（只保留关键事件+首尾回合）──
+        concise_log = []
+        if all_combat_logs:
+            # 保留首回合
+            concise_log.append(f"⚡ 扫荡开始 — {'、'.join(enemy_names_start)}")
+            # 保留关键事件
+            concise_log.extend(key_events[:6])
+            # 保留末回合（如果超过3回合）
+            if rounds > 3:
+                concise_log.append(f"⚡ 扫荡结束 — 共{rounds}回合")
+            else:
+                concise_log.append(f"⚡ 扫荡完成 — {rounds}回合")
+
+        return {
+            "victory": victory,
+            "player_died": False,
+            "rounds": rounds,
+            "combat_log": concise_log,
+            "drops": all_drops,
+            "total_damage_taken": total_damage_taken,
+            "total_damage_dealt": total_damage_dealt,
+            "enemies_defeated": enemies_defeated,
+            "exp_reward": total_exp,
+            "gold_reward": total_gold,
+            "key_events": key_events[:8],
+            "narrative": narrative,
+        }
+
+    @staticmethod
+    def _is_sweep_action(action: str) -> bool:
+        """判断用户行动是否为扫荡/速战速决关键词"""
+        sweep_keywords = (
+            "扫荡", "清掉", "清理", "清空", "直接打完", "速战速决",
+            "自动战斗", "快速战斗", "速杀", "碾压", "一举歼灭",
+            "全部消灭", "一口气", "连战", "连杀", "横扫",
+            "小怪", "直接杀", "打到底", "战斗到底", "打完",
+            "刷怪", "刷完", "全灭", "一扫",
+        )
+        action_lower = action.strip()
+        return any(kw in action_lower for kw in sweep_keywords)
+
+    @staticmethod
+    def _should_auto_sweep(state: Dict, enemies: list) -> bool:
+        """判断是否应该自动触发扫荡（敌人远弱于角色）
+        条件：所有敌人等级低于角色等级5级以上，且角色HP > 50%
+        """
+        char = state.get("character", {})
+        user_char = state.get("user_character", {})
+        char_level = char.get("level", 1)
+        ai_hp_ratio = char.get("hp", 0) / max(char.get("max_hp", 1), 1)
+
+        # 角色 HP < 50%时不自动扫荡（有风险）
+        if ai_hp_ratio < 0.5:
+            return False
+
+        # 检查所有敌人是否都远低于角色等级
+        for enemy in enemies:
+            enemy_level = enemy.get("level", 1)
+            if enemy_level >= char_level - 3:  # 等级差 < 3 就不自动扫荡
+                return False
+            # BOSS绝不自动扫荡
+            if enemy.get("type") == "boss" or enemy.get("type") == "elite":
+                return False
+
+        # 用户角色如果也参战，检查其等级
+        if user_char and user_char.get("class_name") and user_char.get("hp", 0) > 0:
+            user_level = user_char.get("level", 1)
+            user_hp_ratio = user_char.get("hp", 0) / max(user_char.get("max_hp", 1), 1)
+            if user_hp_ratio < 0.5:
+                return False
+
+        return True
 
     @staticmethod
     def _parse_combat_command(text: str, ai_char: dict, user_char: dict, enemies: list, state: dict, sender: str = "user") -> dict:

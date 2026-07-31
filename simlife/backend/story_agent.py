@@ -267,6 +267,79 @@ class StoryAgent:
             print(f"[DeathMode] 行动处理失败: {e}")
             return {"narrative": "行动执行完毕，但结果未知。", "outcome_type": "nothing", "next_tension": "medium"}
 
+    def generate_quick_combat_narrative(self, state: Dict, combat_summary: Dict) -> str:
+        """
+        快速战斗（扫荡）的总结叙事。
+        combat_summary: {
+            "rounds": 回合数,
+            "enemies_defeated": ["敌人1名", "敌人2名"],
+            "total_damage_taken": 总受伤,
+            "total_damage_dealt": 总伤害,
+            "drops": [{"name": "xxx", "rarity_name": "普通"}],
+            "exp_gained": 经验,
+            "gold_gained": 金币,
+            "key_events": ["第3回合：焕灵暴击击杀史莱姆2", ...]  # 关键事件摘要
+        }
+        只调用一次LLM，生成一段简短的扫荡总结叙事。
+        """
+        char = state.get("character", {})
+        user_char = state.get("user_character", {})
+        enemies = combat_summary.get("enemies_defeated", [])
+        rounds = combat_summary.get("rounds", 1)
+        dmg_taken = combat_summary.get("total_damage_taken", 0)
+        dmg_dealt = combat_summary.get("total_damage_dealt", 0)
+        drops = combat_summary.get("drops", [])
+        key_events = combat_summary.get("key_events", [])
+        exp = combat_summary.get("exp_gained", 0)
+        gold = combat_summary.get("gold_gained", 0)
+
+        # 构建关键事件摘要
+        events_text = "\n".join(key_events[:5]) if key_events else "（常规扫荡，无特殊事件）"
+
+        # 掉落物品摘要
+        drops_text = ""
+        if drops:
+            drops_text = "掉落：" + "、".join(f"{d.get('name','?')}({d.get('rarity_name','普通')})" for d in drops[:6])
+
+        # 参战角色名
+        char_name = char.get("name", "无名")
+        user_name = user_char.get("name", "") if user_char.get("class_name") else ""
+
+        prompt = f"""你是死亡模式人生模拟器的叙事Agent。角色刚刚完成了一次快速扫荡战斗，请生成简短的战斗总结叙事。
+
+【角色】
+{char_name}（{char.get('class_name', '战士')} Lv.{char.get('level', 1)}）{f'、{user_name}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）' if user_name else ''}
+当前HP: {char.get('hp', 0)}/{char.get('max_hp', 0)}
+
+【战斗数据】
+敌人：{'、'.join(enemies) if enemies else '无'}
+回合数：{rounds}
+总伤害输出：{dmg_dealt}
+总受伤：{dmg_taken}
+{drops_text if drops_text else ''}
+经验+{exp}  金币+{gold}
+
+【关键事件】
+{events_text}
+
+【要求】
+1. 2-4句话，简洁有力，像战斗日志的结尾叙述
+2. 描述战斗的整体过程和结果，不要逐回合描述
+3. 如果受伤较多，提一句伤势
+4. 如果有掉落好装备，提一句收获
+5. 结尾暗示接下来可能发生的事
+6. 不要过于冗长，这是扫荡总结，不是详细战斗叙事
+
+只返回叙事文本，不要JSON。"""
+
+        try:
+            response = self.llm.generate(prompt, max_tokens=300, temperature=0.7, thinking=False)
+            return response.strip()
+        except Exception as e:
+            print(f"[StoryAgent] 快速战斗叙事生成失败: {e}")
+            enemy_names = "、".join(enemies) if enemies else "敌人"
+            return f"经过{rounds}回合的战斗，{char_name}{'和' + user_name if user_name else ''}扫荡了{enemy_names}。战斗结束，损失{dmg_taken}点生命值，获得{exp}经验和{gold}金币。"
+
     def generate_death_description(self, state: Dict, death_cause: str) -> str:
         """生成死亡描述"""
         char = state.get("character", {})
