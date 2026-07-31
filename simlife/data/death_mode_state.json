@@ -5,11 +5,11 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 4,
-    "hp": 240,
-    "max_hp": 240,
-    "mp": 65,
-    "max_mp": 65,
+    "level": 5,
+    "hp": 270,
+    "max_hp": 270,
+    "mp": 80,
+    "max_mp": 80,
     "stats": {
       "strength": 15,
       "agility": 8,
@@ -20,7 +20,8 @@
     "skills": [
       "重击",
       "格挡",
-      "旋风斩"
+      "旋风斩",
+      "战吼"
     ],
     "equipment": [
       {
@@ -38,9 +39,9 @@
       }
     ],
     "inventory": [],
-    "experience": 73,
-    "exp_to_next": 150,
-    "gold": 246,
+    "experience": 8,
+    "exp_to_next": 172,
+    "gold": 338,
     "world_type": "fantasy"
   },
   "world_setting": {
@@ -626,6 +627,12 @@
         "summary": "你举起铁剑冲向一只元素史莱姆，剑刃劈开它的凝胶身体，溅出蓝色液体。它嘶嘶作响，试图裹住你的脚踝，你后退一步，又补上一记重击，将其彻底打散。远处，另一只更大的史莱姆正从雾气中蠕动而来。",
         "action": "继续战斗",
         "outcome": "combat_success"
+      },
+      {
+        "chapter": 6,
+        "summary": "你警惕地扫视四周，发现身处一片幽暗的森林边缘，空气中弥漫着潮湿的泥土气息。远处的灌木丛轻微晃动了一下，隐约可见一双发光的眼睛正注视着你，随即消失在阴影中。脚下的地面似乎有些松动，像是被什么东西翻动过，",
+        "action": "yount继续看看四周是什么情况，焕灵警戒",
+        "outcome": "discovery"
       }
     ],
     "pending_action": null,
@@ -638,7 +645,7 @@
   "death_cause": null,
   "play_time_days": 1,
   "start_time": "2026-07-31T13:40:38.674173",
-  "kill_count": 5,
+  "kill_count": 6,
   "created_at": "2026-07-31T13:40:38.674179",
   "shared_inventory": [
     {
@@ -660,11 +667,11 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 4,
-    "hp": 240,
-    "max_hp": 240,
-    "mp": 65,
-    "max_mp": 65,
+    "level": 5,
+    "hp": 270,
+    "max_hp": 270,
+    "mp": 80,
+    "max_mp": 80,
     "stats": {
       "strength": 15,
       "agility": 8,
@@ -675,7 +682,8 @@
     "skills": [
       "重击",
       "格挡",
-      "旋风斩"
+      "旋风斩",
+      "战吼"
     ],
     "equipment": [
       {
@@ -690,8 +698,8 @@
         "sell_price": 8
       }
     ],
-    "experience": 73,
-    "exp_to_next": 150,
+    "experience": 8,
+    "exp_to_next": 172,
     "gold": 0,
     "world_type": "fantasy",
     "inventory": []
@@ -1735,6 +1743,18 @@
         "gold_gained": 48,
         "leveled_up": true,
         "new_level": 4
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T19:23:55.314480",
+      "day": 1,
+      "data": {
+        "action": "yount继续看看四周是什么情况，焕灵警戒",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你警惕地扫视四周，发现身处一片幽暗的森林边缘，空气中弥漫着潮湿的泥土气息。远处的灌木丛轻微晃动了一下，隐约可见一双发光的眼睛正注视着你，随即消失在阴影中。脚下的地面似乎有些松动，像是被什么东西翻动过，露出几缕奇怪的银色纹路。你握紧铁剑，感觉某种无形的威胁正在逼近。",
+        "gold_gained": 64
       }
     }
   ]

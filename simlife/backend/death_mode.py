@@ -75,6 +75,37 @@ class DeathModeEngine:
         if len(self.state["action_log"]) > 500:
             self.state["action_log"] = self.state["action_log"][-500:]
 
+    def _log_sweep_action(self, action: str, result: Dict):
+        """记录扫荡战斗的行动日志（网页端展示用）"""
+        sweep_result = result.get("combat_result", {}) if isinstance(result.get("combat_result"), dict) else {}
+        log_data = {
+            "action": action,
+            "action_type": "free",
+            "outcome": "combat_sweep",
+            "narrative": result.get("narrative", "")[:300],
+        }
+        # 战斗信息
+        log_data["combat"] = {
+            "victory": sweep_result.get("victory", False),
+            "enemy_names": sweep_result.get("enemies_defeated", []),
+            "combat_log": sweep_result.get("combat_log", []),
+            "rounds": sweep_result.get("rounds", 0),
+            "is_sweep": True,
+        }
+        if result.get("exp_gained"):
+            log_data["exp_gained"] = result["exp_gained"]
+        if result.get("gold_gained"):
+            log_data["gold_gained"] = result["gold_gained"]
+        if result.get("leveled_up"):
+            log_data["leveled_up"] = True
+            log_data["new_level"] = result.get("new_level")
+        if result.get("character_died"):
+            log_data["character_died"] = True
+            log_data["death_description"] = result.get("death_description", "")
+        if sweep_result.get("drops"):
+            log_data["drops"] = sweep_result["drops"]
+        self._log_action("action", log_data)
+
     def _load(self):
         """加载或刷新状态"""
         if self.state is None:
@@ -418,6 +449,7 @@ class DeathModeEngine:
                 result["death_pending"] = True
                 result["death_who"] = who
                 result["last_words"] = state.get("last_words", "")
+                self._log_sweep_action(action, result)
                 self._save()
                 return result
 
@@ -455,6 +487,7 @@ class DeathModeEngine:
                 result["in_combat"] = True
                 result["enemies"] = [e for e in enemies if e.get("hp", 0) > 0]
 
+            self._log_sweep_action(action, result)
             self._save()
             return result
 
@@ -488,6 +521,7 @@ class DeathModeEngine:
                 result["death_pending"] = True
                 result["death_who"] = who
                 result["last_words"] = state.get("last_words", "")
+                self._log_sweep_action(action, result)
                 self._save()
                 return result
 
@@ -519,6 +553,7 @@ class DeathModeEngine:
                 result["in_combat"] = True
                 result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
 
+            self._log_sweep_action(action, result)
             self._save()
             return result
 
@@ -683,6 +718,7 @@ class DeathModeEngine:
                         result["death_pending"] = True
                         result["death_who"] = who
                         result["last_words"] = state.get("last_words", "")
+                        self._log_sweep_action(action, result)
                         self._save()
                         return result
 
@@ -714,6 +750,7 @@ class DeathModeEngine:
                         result["in_combat"] = True
                         result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
 
+                    self._log_sweep_action(action, result)
                     self._save()
                     return result
 

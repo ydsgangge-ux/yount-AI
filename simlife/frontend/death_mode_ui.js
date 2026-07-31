@@ -10,6 +10,7 @@ const DeathModeUI = {
   _classes: [],
   _logTimer: null,
   _lastLogCount: 0,
+  _userName: '',   // 用户角色名（用于替换日志中的"你"）
 
   // ── 初始化 ──────────────────────────────────────
 
@@ -299,10 +300,14 @@ const DeathModeUI = {
       const expPct = char.exp_to_next > 0 ? (char.experience / char.exp_to_next * 100) : 0;
       const hpColor = hpPct > 60 ? '#3fb950' : hpPct > 30 ? '#d29922' : '#f85149';
 
-      // 更新头部
+      // 缓存用户名（用于替换日志中的"你"）
+      const userChar = state.user_character || {};
+      if (userChar.name) this._userName = userChar.name;
+
+      // 更新头部（AI角色 + 用户名）
       const headerChar = document.getElementById('dm-header-char');
       if (headerChar) {
-        headerChar.textContent = `${char.name || '?'} Lv.${char.level || 1} · HP ${char.hp}/${char.max_hp}`;
+        headerChar.textContent = `${char.name || '?'} Lv.${char.level || 1} · HP ${char.hp}/${char.max_hp}${this._userName ? ' · 👤' + this._userName : ''}`;
       }
 
       // 装备（AI角色，含卸下按钮 + 属性显示）
@@ -654,6 +659,17 @@ const DeathModeUI = {
     }
   },
 
+  // 将日志文本中的"你"替换为用户名
+  _replaceYou(text) {
+    if (!text) return text;
+    const name = this._userName || '用户';
+    // "你们" → "用户名们"（先处理，避免被后续拆散）
+    // 单独"你" → 用户名
+    return text
+      .replace(/你们/g, name + '们')
+      .replace(/你/g, name);
+  },
+
   _renderLogEntry(log) {
     const type = log.type || 'action';
     const d = log.data || {};
@@ -678,7 +694,7 @@ const DeathModeUI = {
         <div style="font-size:12px;color:#8b949e;">职业：${d.class_name} · 世界：${d.world_name}</div>`;
     }
     else if (type === 'scene') {
-      content = `<div style="color:#c9d1d9;font-size:13px;line-height:1.6;">${d.description || ''}</div>
+      content = `<div style="color:#c9d1d9;font-size:13px;line-height:1.6;">${this._replaceYou(d.description || '')}</div>
         ${d.location ? `<div style="font-size:11px;color:#8b949e;margin-top:4px;">📍 ${d.location}</div>` : ''}
         ${d.choices ? `<div style="margin-top:6px;">${d.choices.map(c => {
           const riskColor = {low:'#3fb950',medium:'#d29922',high:'#f85149'}[c.risk]||'#8b949e';
@@ -699,7 +715,7 @@ const DeathModeUI = {
           </div>`;
         } else if (d.combat.combat_log?.length) {
           combatHtml = `<div style="padding:6px 8px;background:#161b22;border-radius:4px;margin-top:4px;">
-            <div style="font-size:11px;color:#8b949e;">${d.combat.combat_log.slice(0, 3).join('；')}</div>
+            <div style="font-size:11px;color:#8b949e;">${this._replaceYou(d.combat.combat_log.slice(0, 3).join('；'))}</div>
           </div>`;
         }
       }
@@ -753,13 +769,13 @@ const DeathModeUI = {
       if (d.character_died) {
         deathHtml = `<div style="padding:8px;background:#2d0d0d;border:1px solid #f85149;border-radius:6px;margin-top:6px;">
           <div style="color:#f85149;font-weight:bold;">☠️ 角色阵亡</div>
-          <div style="font-size:12px;color:#8b949e;">${d.death_description || ''}</div>
+          <div style="font-size:12px;color:#8b949e;">${this._replaceYou(d.death_description || '')}</div>
         </div>`;
       }
 
       content = `
         <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
-        ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${d.narrative}</div>` : ''}
+        ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.narrative)}</div>` : ''}
         ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
     }
     else if (type === 'move') {
@@ -768,7 +784,7 @@ const DeathModeUI = {
     }
     else if (type === 'npc_interact') {
       content = `<div style="color:#d29922;">💬 与 ${d.npc_name} 交互（${d.interaction}）</div>
-        ${d.message ? `<div style="font-size:12px;color:#8b949e;margin-top:2px;">${d.message}</div>` : ''}`;
+        ${d.message ? `<div style="font-size:12px;color:#8b949e;margin-top:2px;">${this._replaceYou(d.message)}</div>` : ''}`;
     }
 
     return `
