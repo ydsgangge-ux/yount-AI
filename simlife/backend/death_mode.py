@@ -1304,6 +1304,9 @@ class DeathModeEngine:
         # 保存初始敌人信息用于总结
         enemy_names_start = [e.get("name", "?") for e in enemies]
 
+        # 用于兜底（当循环未执行时）
+        combat_result = {"combat_log": [], "drops": [], "player_died": False, "user_died": False}
+
         for round_num in range(1, max_rounds + 1):
             rounds = round_num
             alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
