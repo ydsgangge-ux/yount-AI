@@ -407,12 +407,21 @@ class DeathModeEngine:
         # 1) 战斗中 + 扫荡关键词 → 直接结算
         # 2) 战斗中 + 敌人远弱 → 自动扫荡
         # 3) 非战斗中 + 扫荡关键词（含战斗意图）→ 生成敌人并直接结算，跳过LLM叙事
+        # 注意：含恢复/使用物品意图的行动（药水、治疗等）不触发扫荡，避免抢走玩家意图
         in_combat = state.get("in_combat", False)
         enemies = state.get("enemies", [])
         is_sweep = False
         is_new_sweep = False  # 非战斗状态触发新扫荡
 
-        if in_combat and enemies and self._is_sweep_action(action):
+        # 恢复/使用物品意图 → 不触发扫荡
+        restore_keywords = ("药水", "恢复", "治疗", "疗伤", "使用", "喝", "服用", "补给",
+                            "回血", "回蓝", "补充", "治愈", "嗑药", "吃药", "灌")
+        _has_restore_intent = any(k in action for k in restore_keywords) if action else False
+
+        if _has_restore_intent:
+            # 有恢复意图，跳过扫荡检测
+            pass
+        elif in_combat and enemies and self._is_sweep_action(action):
             is_sweep = True
         elif in_combat and enemies and self._should_auto_sweep(state, enemies):
             is_sweep = True
@@ -874,29 +883,42 @@ class DeathModeEngine:
                 char["gold"] += int(gold_gained_agent)
                 result["gold_gained"] = result.get("gold_gained", 0) + int(gold_gained_agent)
 
-            # HP变化（正数恢复，负数受伤）
-            # 这些变化来自LLM对行动叙事的数值化，叙事多以"用户"为主语，
-            # 因此优先作用于用户角色（焕灵的恢复由rest等机制处理）
-            hp_change = agent_result.get("hp_change")
-            if hp_change and isinstance(hp_change, (int, float)):
-                _target_char = state.get("user_character", {})
-                if _target_char and _target_char.get("class_name"):
-                    _target_char["hp"] = max(0, min(_target_char.get("max_hp", 0), _target_char.get("hp", 0) + int(hp_change)))
-                    result["user_hp_change"] = int(hp_change)
-                else:
-                    char["hp"] = max(0, min(char["max_hp"], char["hp"] + int(hp_change)))
-                    result["hp_change"] = int(hp_change)
 
-            # MP变化
-            mp_change = agent_result.get("mp_change")
-            if mp_change and isinstance(mp_change, (int, float)):
-                _target_char = state.get("user_character", {})
-                if _target_char and _target_char.get("class_name"):
-                    _target_char["mp"] = max(0, min(_target_char.get("max_mp", 0), _target_char.get("mp", 0) + int(mp_change)))
-                    result["user_mp_change"] = int(mp_change)
-                else:
-                    char["mp"] = max(0, min(char["max_mp"], char["mp"] + int(mp_change)))
-                    result["mp_change"] = int(mp_change)
+        # 2.6 HP/MP变化（独立于战斗/非战斗，战斗中用药水/食物也生效）
+        # 这些变化来自LLM对行动叙事的数值化。区分恢复对象：
+        # - 若行动文本明确提到"焕灵/AI角色"使用恢复 → 作用于AI角色
+        # - 若行动文本提到用户/玩家使用恢复，或叙事以用户为主语 → 作用于用户角色
+        hp_change = agent_result.get("hp_change")
+        if hp_change and isinstance(hp_change, (int, float)):
+            _hp_val = int(hp_change)
+            _user_char = state.get("user_character", {})
+            _has_user = _user_char and _user_char.get("class_name")
+            # 判断行动是否针对AI角色
+            _action_lower = action or ""
+            _ai_target_kw = ("焕灵", "AI", "角色", "系统")
+            _ai_used = any(k in _action_lower for k in _ai_target_kw) and not any(k in _action_lower for k in ("yount", "用户", "玩家"))
+            if _has_user and not _ai_used:
+                _user_char["hp"] = max(0, min(_user_char.get("max_hp", 0), _user_char.get("hp", 0) + _hp_val))
+                result["user_hp_change"] = _hp_val
+            else:
+                char["hp"] = max(0, min(char["max_hp"], char["hp"] + _hp_val))
+                result["hp_change"] = _hp_val
+
+        # MP变化
+        mp_change = agent_result.get("mp_change")
+        if mp_change and isinstance(mp_change, (int, float)):
+            _mp_val = int(mp_change)
+            _user_char = state.get("user_character", {})
+            _has_user = _user_char and _user_char.get("class_name")
+            _action_lower = action or ""
+            _ai_target_kw = ("焕灵", "AI", "角色", "系统")
+            _ai_used = any(k in _action_lower for k in _ai_target_kw) and not any(k in _action_lower for k in ("yount", "用户", "玩家"))
+            if _has_user and not _ai_used:
+                _user_char["mp"] = max(0, min(_user_char.get("max_mp", 0), _user_char.get("mp", 0) + _mp_val))
+                result["user_mp_change"] = _mp_val
+            else:
+                char["mp"] = max(0, min(char["max_mp"], char["mp"] + _mp_val))
+                result["mp_change"] = _mp_val
 
         # 3. 天数按实际时间计算（不在此处推进，get_game_state 中动态计算）
 
