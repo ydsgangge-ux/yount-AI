@@ -1338,6 +1338,11 @@ class DeathModeEngine:
             if combat_result.get("player_died"):
                 # 角色阵亡 - 扫荡失败
                 death_cause = combat_result.get("death_cause", "扫荡中阵亡")
+                # 计算当前已造成的伤害（不能引用循环后未定义的total_damage_dealt）
+                cur_dealt = sum(enemy_hp_start.get(i, 0) - e.get("hp", 0) for i, e in enumerate(enemies))
+                for i, e in enumerate(enemies):
+                    if e.get("hp", 0) <= 0:
+                        cur_dealt += abs(e.get("hp", 0))
                 return {
                     "victory": False,
                     "player_died": True,
@@ -1346,7 +1351,7 @@ class DeathModeEngine:
                     "drops": all_drops + combat_result.get("drops", []),
                     "total_damage_taken": (ai_hp_start - char.get("hp", 0))
                                          + (user_hp_start - (user_char.get("hp", 0) if user_in_combat else 0)),
-                    "total_damage_dealt": total_damage_dealt,
+                    "total_damage_dealt": cur_dealt,
                     "enemies_defeated": [],
                     "exp_reward": 0,
                     "gold_reward": 0,
