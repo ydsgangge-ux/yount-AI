@@ -198,7 +198,7 @@ class DeathModeEngine:
                     "world_name": state.get("world_setting", {}).get("name", "未知世界"),
                 }
             }]
-            self._save(state)
+            self._save()
 
         char = state.get("character", {})
 
@@ -418,7 +418,7 @@ class DeathModeEngine:
                 result["death_pending"] = True
                 result["death_who"] = who
                 result["last_words"] = state.get("last_words", "")
-                self._save(state)
+                self._save()
                 return result
 
             # 战斗胜利 → 经验/金币/升级处理
@@ -455,7 +455,7 @@ class DeathModeEngine:
                 result["in_combat"] = True
                 result["enemies"] = [e for e in enemies if e.get("hp", 0) > 0]
 
-            self._save(state)
+            self._save()
             return result
 
         # ── 非战斗状态下的扫荡：直接生成敌人并快速结算 ──
@@ -488,7 +488,7 @@ class DeathModeEngine:
                 result["death_pending"] = True
                 result["death_who"] = who
                 result["last_words"] = state.get("last_words", "")
-                self._save(state)
+                self._save()
                 return result
 
             if sweep_result.get("victory"):
@@ -519,7 +519,7 @@ class DeathModeEngine:
                 result["in_combat"] = True
                 result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
 
-            self._save(state)
+            self._save()
             return result
 
         # 1. Agent 生成叙事（不含数值结果）— 非扫荡模式才走LLM
@@ -683,7 +683,7 @@ class DeathModeEngine:
                         result["death_pending"] = True
                         result["death_who"] = who
                         result["last_words"] = state.get("last_words", "")
-                        self._save(state)
+                        self._save()
                         return result
 
                     if sweep_result.get("victory"):
@@ -714,7 +714,7 @@ class DeathModeEngine:
                         result["in_combat"] = True
                         result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
 
-                    self._save(state)
+                    self._save()
                     return result
 
                 # 第一回合（非扫荡模式）
