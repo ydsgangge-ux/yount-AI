@@ -233,7 +233,8 @@ class SimLifeClient:
         """将死亡模式状态格式化为A层prompt文本"""
         char = dm.get("character", {})
         story = dm.get("story", {})
-        lines = ["【死亡模式·冒险状态】"]
+        lines = ["【死亡模式·冒险状态】",
+                 "⚠️ 以下是当前最新、最准确的状态！请以此为准，绝对不要用你记忆中旧的数据（如旧等级、旧HP、旧金币）替代这里显示的数值。"]
 
         if char:
             lines.append(f"角色：{char.get('name', '?')}（{char.get('class_name', '')} Lv.{char.get('level', 1)}）")

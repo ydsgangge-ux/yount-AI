@@ -934,6 +934,7 @@ class ConsciousnessAgent:
         hp = char.get("hp", 0)
         max_hp = char.get("max_hp", 0)
         parts.append(f"【死亡模式】你现在是{name}（{cls} Lv.{lv}），HP:{hp}/{max_hp}。")
+        parts.append("⚠️ 请以本段为最新权威状态！你的等级/HP/金币/装备等以此处为准，若与你记忆中的数值不同，说明已更新，请以这里为准。")
 
         # 地点
         location = story.get("current_location", "")
