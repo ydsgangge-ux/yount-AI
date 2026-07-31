@@ -714,9 +714,19 @@ const DeathModeUI = {
             ${d.combat.enemy_names?.length ? `<span style="font-size:11px;color:#8b949e;">击败 ${d.combat.enemy_names.join('、')}</span>` : ''}
           </div>`;
         } else if (d.combat.combat_log?.length) {
-          combatHtml = `<div style="padding:6px 8px;background:#161b22;border-radius:4px;margin-top:4px;">
-            <div style="font-size:11px;color:#8b949e;">${this._replaceYou(d.combat.combat_log.slice(0, 3).join('；'))}</div>
-          </div>`;
+          // 按轮次分行显示多回合战斗（[第N轮] 开头）
+          const logText = this._replaceYou(d.combat.combat_log.join(''));
+          const roundsHtml = d.combat.combat_log.map((rl, idx) => {
+            const trimmed = this._replaceYou(rl).trim();
+            // 提取轮次标记
+            const m = trimmed.match(/^\[第(\d+)轮\]/);
+            if (m) {
+              const content = trimmed.replace(/^\[第\d+轮\]\s*/, '');
+              return `<div style="font-size:11px;color:#8b949e;margin-top:1px;"><span style="color:#d29922;margin-right:3px;">⚔️ 第${m[1]}轮</span>${content}</div>`;
+            }
+            return `<div style="font-size:11px;color:#8b949e;margin-top:1px;">${trimmed}</div>`;
+          }).join('');
+          combatHtml = `<div style="padding:6px 8px;background:#161b22;border-radius:4px;margin-top:4px;max-height:120px;overflow-y:auto;">${roundsHtml}</div>`;
         }
       }
 

@@ -1203,84 +1203,140 @@ class DeathModeEngine:
             names = [f"{a[2].get('name',a[1])}({a[0]})" for a in actors]
             combat_log.append(f"⚡ 出手顺序（自动）：{' → '.join(names)}")
 
-        # ── 按出手顺序攻击 ──
-        for initiative, role, attacker in actors:
-            # 检查是否跳过该角色
-            if role == "ai" and cmd.get("ai_skip"):
-                continue
-            if role == "user" and cmd.get("user_skip"):
-                continue
-            target = cmd.get(f"{role}_target") or next((e for e in enemies if e.get("hp", 0) > 0), None)
-            if not target:
-                continue
-            is_magic = cmd.get(f"{role}_is_magic", False)
-            skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
-            atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
-                                             is_magic=is_magic, skill_multiplier=skill_mult)
-            # 战术加成
-            if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
-                atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
-            combat_log.append(f"{attacker.get('name','?')}{atk_result['description']} → {target.get('name', '?')}")
-            _check_drop(target, attacker.get("stats", {}))
-
-        # ── 存活敌人反击 ──
-        # 规则：每个敌人一回合只攻击一个目标
-        # 坦克存在时，所有敌人攻击坦克（仇恨吸引）
-        # 无坦克时，敌人按仇恨随机选一个目标
+        # ── 连续子回合战斗 ──
+        # 一次行动自动进行多个子回合交锋，让战斗有"几轮你来我往"的层次感，
+        # 并充分利用硬直/架势/招架/部位伤势等战斗机制。
+        # 子回合数 = 根据双方实力差距动态决定：势均力敌打更多回合，碾压则快速结束。
         tank_role = cmd.get("tank_role")
-        for enemy in enemies:
-            if enemy.get("hp", 0) <= 0:
-                continue
 
-            # 决定攻击目标
-            if tank_role == "ai" and char.get("hp", 0) > 0:
-                target_char, target_defense, target_name = char, cmd.get("ai_defense", DefenseAction.BLOCK), char.get("name", "你")
-            elif tank_role == "user" and user_in_combat and user_char.get("hp", 0) > 0:
-                target_char, target_defense, target_name = user_char, cmd.get("user_defense", DefenseAction.BLOCK), user_char.get("name", "用户")
-            else:
-                # 无坦克：随机选一个存活目标
-                import random as _rng
-                candidates = []
-                if char.get("hp", 0) > 0:
-                    candidates.append(("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)))
-                if user_in_combat and user_char.get("hp", 0) > 0:
-                    candidates.append(("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)))
-                if not candidates:
+        # 计算双方总体战力（用于决定交锋轮数）
+        _ai_power = CombatSystem.calc_attack_power(char) + CombatSystem.calc_defense(char) + char.get("hp", 0)
+        _user_power = 0
+        if user_in_combat:
+            _user_power = CombatSystem.calc_attack_power(user_char) + CombatSystem.calc_defense(user_char) + user_char.get("hp", 0)
+        _party_power = _ai_power + _user_power
+        _enemy_power = sum(
+            CombatSystem.calc_attack_power(e) + CombatSystem.calc_defense(e) + e.get("hp", 0)
+            for e in enemies if e.get("hp", 0) > 0
+        )
+        # 实力悬殊（我方碾压）→ 少打几轮快速结束；势均力敌/劣势 → 多打几轮有来有回
+        if _party_power >= _enemy_power * 2.0:
+            max_sub_rounds = 1
+        elif _party_power >= _enemy_power * 1.3:
+            max_sub_rounds = 2
+        else:
+            max_sub_rounds = 3
+
+        total_combat_log = []
+        victory = False
+        death_return = None
+        for sub_round in range(1, max_sub_rounds + 1):
+            # 检查存活敌人
+            alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+            if not alive_enemies:
+                victory = True
+                break
+            # 角色死亡则终止
+            if char.get("hp", 0) <= 0 or (user_in_combat and user_char.get("hp", 0) <= 0):
+                break
+
+            round_log = []
+
+            # ── 按出手顺序攻击 ──
+            for initiative, role, attacker in actors:
+                if role == "ai" and cmd.get("ai_skip"):
                     continue
-                pick = _rng.choice(candidates)
-                target_char, target_defense, target_name = pick[1], pick[2], pick[1].get("name", "?")
+                if role == "user" and cmd.get("user_skip"):
+                    continue
+                if attacker.get("hp", 0) <= 0:
+                    continue
+                target = cmd.get(f"{role}_target") or next((e for e in enemies if e.get("hp", 0) > 0), None)
+                if not target:
+                    continue
+                is_magic = cmd.get(f"{role}_is_magic", False)
+                skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
+                atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
+                                                 is_magic=is_magic, skill_multiplier=skill_mult)
+                # 战术加成
+                if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
+                    atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
+                round_log.append(f"{attacker.get('name','?')}{atk_result['description']} → {target.get('name', '?')}")
+                _check_drop(target, attacker.get("stats", {}))
 
-            if target_char.get("stagger_turns", 0) > 0:
-                target_defense = DefenseAction.NONE
-
-            def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
-
-            if ai_alone and target_char is char and def_result.get("damage", 0) > 0:
-                def_result["damage"] = int(def_result["damage"] * 1.4)
-                if def_result.get("defense_result"):
-                    def_result["defense_result"]["damage_taken"] = int(
-                        def_result["defense_result"].get("damage_taken", 0) * 1.4
-                    )
-
-            combat_log.append(f"{enemy.get('name', '?')}{def_result['description']} → {target_name}")
-
-            if target_char["hp"] <= 0:
-                if target_char is char:
-                    return {"victory": False, "player_died": True,
-                            "death_cause": f"被{enemy.get('name', '敌人')}击败" + ("（独自战斗时阵亡）" if ai_alone else ""),
-                            "combat_log": combat_log, "drops": drops}
+            # ── 存活敌人反击 ──
+            for enemy in enemies:
+                if enemy.get("hp", 0) <= 0:
+                    continue
+                # 决定攻击目标
+                if tank_role == "ai" and char.get("hp", 0) > 0:
+                    target_char, target_defense, target_name = char, cmd.get("ai_defense", DefenseAction.BLOCK), char.get("name", "你")
+                elif tank_role == "user" and user_in_combat and user_char.get("hp", 0) > 0:
+                    target_char, target_defense, target_name = user_char, cmd.get("user_defense", DefenseAction.BLOCK), user_char.get("name", "用户")
                 else:
-                    # 用户角色死亡 → 游戏结束
-                    combat_log.append(f"{target_name}已倒下！")
-                    return {"victory": False, "player_died": True,
-                            "death_cause": f"用户角色{target_name}被{enemy.get('name', '敌人')}击败",
-                            "user_died": True,
-                            "combat_log": combat_log, "drops": drops}
+                    import random as _rng
+                    candidates = []
+                    if char.get("hp", 0) > 0:
+                        candidates.append(("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)))
+                    if user_in_combat and user_char.get("hp", 0) > 0:
+                        candidates.append(("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)))
+                    if not candidates:
+                        continue
+                    pick = _rng.choice(candidates)
+                    target_char, target_defense, target_name = pick[1], pick[2], pick[1].get("name", "?")
+
+                if target_char.get("stagger_turns", 0) > 0:
+                    target_defense = DefenseAction.NONE
+
+                def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
+
+                if ai_alone and target_char is char and def_result.get("damage", 0) > 0:
+                    def_result["damage"] = int(def_result["damage"] * 1.4)
+                    if def_result.get("defense_result"):
+                        def_result["defense_result"]["damage_taken"] = int(
+                            def_result["defense_result"].get("damage_taken", 0) * 1.4
+                        )
+
+                round_log.append(f"{enemy.get('name', '?')}{def_result['description']} → {target_name}")
+
+                # 死亡判定
+                if target_char["hp"] <= 0:
+                    if target_char is char:
+                        death_return = {"victory": False, "player_died": True,
+                                        "death_cause": f"被{enemy.get('name', '敌人')}击败" + ("（独自战斗时阵亡）" if ai_alone else ""),
+                                        "combat_log": round_log, "drops": drops}
+                        break
+                    else:
+                        round_log.append(f"{target_name}已倒下！")
+                        death_return = {"victory": False, "player_died": True,
+                                        "death_cause": f"用户角色{target_name}被{enemy.get('name', '敌人')}击败",
+                                        "user_died": True,
+                                        "combat_log": round_log, "drops": drops}
+                        break
+            if death_return:
+                break
+
+            # ── 记录本子回合（带回合标记） ──
+            if round_log:
+                total_combat_log.append(f"[第{sub_round}轮] " + "；".join(round_log))
+
+            # 回合间恢复：硬直递减、架势回弹
+            if char.get("stagger_turns", 0) > 0:
+                char["stagger_turns"] -= 1
+            if user_in_combat and user_char.get("stagger_turns", 0) > 0:
+                user_char["stagger_turns"] -= 1
+            for e in enemies:
+                if e.get("stagger_turns", 0) > 0:
+                    e["stagger_turns"] -= 1
+
+        # 死亡返回优先
+        if death_return:
+            death_return["combat_log"] = total_combat_log + death_return.get("combat_log", [])
+            return death_return
 
         return {
-            "victory": False,
+            "victory": victory,
             "player_died": False,
-            "combat_log": combat_log,
+            "combat_log": total_combat_log,
             "drops": drops,
         }
 
@@ -1622,8 +1678,9 @@ class DeathModeEngine:
                 # 两人都提了→都行动
                 pass
             else:
-                # 默认：只用户角色行动
-                result["ai_skip"] = True
+                # 默认：两人都行动（并肩作战）
+                # 仅当明确"只要我行动"时才排除AI
+                pass
         elif sender == "ai":
             # AI发的指令
             if mentions_user and not mentions_self:
@@ -1635,8 +1692,8 @@ class DeathModeEngine:
             elif mentions_user and mentions_self:
                 pass
             else:
-                # 默认：只AI角色行动
-                result["user_skip"] = True
+                # 默认：两人都行动（并肩作战）
+                pass
 
         # ── 攻击类型 ──
         magic_keywords = ("魔法", "法术", "术", "魔攻", "火球", "冰", "雷", "闪电", "风刃",
