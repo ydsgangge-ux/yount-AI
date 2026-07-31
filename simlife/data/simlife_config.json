@@ -2,7 +2,7 @@
   "agidpa_data_path": "../",
   "backend_port": 8769,
   "tick_interval_seconds": 300,
-  "world_id": "modern",
+  "world_id": "aincrad-magus",
   "llm_provider": "",
   "llm_api_key": "",
   "llm_model": null,

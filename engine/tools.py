@@ -2275,6 +2275,83 @@ def list_timed_tasks(status: str = "pending") -> Dict:
 
 
 # ═══════════════════════════════════════════════════
+# SimLife 死亡模式行动工具（A层自主行动）
+# ═══════════════════════════════════════════════════
+
+@register_tool(
+    "simlife_action",
+    "在SimLife死亡模式中执行你自己的行动指令。你可以说'我攻击史莱姆''我防御''我使用火球术''我逃跑'等。注意：你只能描述你自己的行动，不能替用户角色做决定或描述用户的行动。",
+    {
+        "action": {"type": "string", "description": "你想执行的自己的行动，用第一人称描述。如：我攻击哥布林 / 我防御 / 我使用治疗术 / 我逃跑", "required": True},
+    },
+    risk="low"
+)
+def simlife_action(action: str) -> Dict:
+    import urllib.request
+    try:
+        # 读取 simlife 端口
+        from pathlib import Path
+        config_path = Path(__file__).resolve().parent.parent / "simlife" / "data" / "simlife_config.json"
+        port = 8769
+        if config_path.exists():
+            import json as _json
+            try:
+                cfg = _json.loads(config_path.read_text(encoding="utf-8"))
+                port = cfg.get("port", 8769)
+            except Exception:
+                pass
+
+        url = f"http://127.0.0.1:{port}/api/death-mode/action"
+        payload = {"free_action": action, "sender": "ai"}
+        req = urllib.request.Request(
+            url, method="POST",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.loads(r.read().decode("utf-8"))
+
+        # 格式化结果给A层
+        result_parts = []
+        if data.get("narrative"):
+            result_parts.append(data["narrative"])
+
+        if data.get("combat_result"):
+            cr = data["combat_result"]
+            if cr.get("victory"):
+                enemies_defeated = cr.get("enemies_defeated", [])
+                if enemies_defeated:
+                    result_parts.append(f"⚔️ 击败：{'、'.join(enemies_defeated)}")
+                result_parts.append(f"经验+{data.get('exp_gained',0)} 金币+{data.get('gold_gained',0)}")
+            elif cr.get("player_died"):
+                result_parts.append(f"☠️ 角色被击败！{cr.get('death_cause','')}")
+            elif cr.get("fled"):
+                result_parts.append("🏃 成功逃跑！")
+            elif cr.get("flee_failed"):
+                result_parts.append(f"🏃 逃跑失败！受到{cr.get('pursuit_damage',0)}点追击伤害")
+
+        if data.get("in_combat") and data.get("enemies"):
+            alive_enemies = [f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in data["enemies"] if e.get("hp",0) > 0]
+            if alive_enemies:
+                result_parts.append(f"当前敌人：{'、'.join(alive_enemies)}")
+
+        if data.get("leveled_up"):
+            result_parts.append(f"🎉 升级到 Lv.{data.get('new_level',2)}！")
+
+        if data.get("character_died"):
+            result_parts.append(f"☠️ {data.get('death_description','')}")
+            last_words = data.get("last_words", "")
+            if last_words:
+                result_parts.append(f"临终遗言：「{last_words}」")
+
+        result_text = "\n".join(result_parts) if result_parts else "行动已执行"
+        return {"ok": True, "result": result_text}
+
+    except Exception as e:
+        return {"ok": False, "error": f"执行行动失败: {e}"}
+
+
+# ═══════════════════════════════════════════════════
 # 工具执行入口
 # ═══════════════════════════════════════════════════
 

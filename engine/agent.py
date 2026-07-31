@@ -277,9 +277,14 @@ class ConsciousnessAgent:
                     self._log("SimLife", "format_for_prompt() 返回空")
                 else:
                     # 自动同步 simlife_mode：读取 user_profile.json 的 entered 字段
+                    # 死亡模式中也自动开启面对面模式（一起冒险）
                     try:
                         profile = self.simlife._read_user_profile()
                         if profile and profile.get("entered"):
+                            self.simlife_mode = True
+                        # 死亡模式活跃时自动开启面对面
+                        dm_state_check = self.simlife.get_death_mode_state()
+                        if dm_state_check and dm_state_check.get("active") and dm_state_check.get("is_alive"):
                             self.simlife_mode = True
                         # 注意：不自动设为 False，保留桌面端手动切换的能力
                     except Exception:
@@ -296,6 +301,8 @@ class ConsciousnessAgent:
                         self._log("SimLife", f"场景模式已开启 ({len(simlife_context)}字)")
                     else:
                         self._log("SimLife", f"生活状态已读取 ({len(simlife_context)}字)，场景模式关闭")
+                    # 打印完整context供调试
+                    self._log("SimLife内容", simlife_context)
             except Exception as e:
                 self._log("SimLife", f"读取失败: {e}")
         else:
@@ -954,7 +961,75 @@ class ConsciousnessAgent:
             if alive:
                 parts.append(f"⚠️ 战斗中！敌人：{'、'.join(alive)}")
 
+        # 用户角色（同伴）状态
+        uc = dm_state.get("user_character", {})
+        uc_dead = dm_state.get("user_character_dead", False)
+        if uc and uc.get("class_name"):
+            uc_name = uc.get("name", "用户")
+            uc_cls = uc.get("class_name", "")
+            uc_lv = uc.get("level", 1)
+            uc_hp = uc.get("hp", 0)
+            uc_max_hp = uc.get("max_hp", 0)
+            uc_mp = uc.get("mp", 0)
+            uc_max_mp = uc.get("max_mp", 0)
+            if uc_dead:
+                parts.append(f"同伴：{uc_name}（{uc_cls} Lv.{uc_lv}）— 已死亡")
+            else:
+                parts.append(f"同伴：{uc_name}（{uc_cls} Lv.{uc_lv}）HP:{uc_hp}/{uc_max_hp} MP:{uc_mp}/{uc_max_mp}")
+
+        # 最近行动（直接从存档文件读取，不走API）
+        try:
+            from pathlib import Path as _P
+            _state_file = _P(__file__).resolve().parent.parent / "simlife" / "data" / "death_mode_state.json"
+            if _state_file.exists():
+                import json as _json
+                _sdata = _json.loads(_state_file.read_text(encoding="utf-8"))
+                _alog = _sdata.get("action_log", [])
+                if _alog:
+                    recent = _alog[-2:]  # 最近2条
+                    parts.append("【最近行动】")
+                    for entry in recent:
+                        et = entry.get("type", "")
+                        ed = entry.get("data", {})
+                        t = entry.get("time", "")[11:16]  # HH:MM
+                        if et == "action":
+                            act = ed.get("action", "")
+                            outcome = ed.get("outcome", "")
+                            parts.append(f"  [{t}] {act} → {outcome}")
+                            # 战斗结果
+                            combat = ed.get("combat", {})
+                            if combat:
+                                if combat.get("victory"):
+                                    enemies_def = combat.get("enemy_names", [])
+                                    parts.append(f"    战胜{'、'.join(enemies_def) if enemies_def else '敌人'}")
+                                else:
+                                    parts.append(f"    战败")
+                            if ed.get("leveled_up"):
+                                parts.append(f"    升级到 Lv.{ed.get('new_level', '?')}")
+                            if ed.get("exp_gained"):
+                                parts.append(f"    经验+{ed['exp_gained']}")
+                            if ed.get("gold_gained"):
+                                parts.append(f"    金币+{ed['gold_gained']}")
+                        elif et == "combat":
+                            result_str = "胜利" if ed.get("victory") else "战败"
+                            enemy = ed.get("enemy_name", "敌人")
+                            parts.append(f"  [{t}] 战斗vs{enemy}：{result_str}")
+                        elif et == "scene":
+                            loc = ed.get("location", "")
+                            if loc:
+                                parts.append(f"  [{t}] 到达{loc}")
+                        elif et == "game_start":
+                            parts.append(f"  [{t}] 开始冒险")
+                        elif et == "death_pending":
+                            who = ed.get("name", "")
+                            parts.append(f"  [{t}] {who}阵亡")
+                        elif et == "flee":
+                            parts.append(f"  [{t}] 逃跑")
+        except Exception:
+            pass
+
         parts.append("重要：你身处异世界冒险中，必须基于当前场景和选项来回应。不要编造与当前场景无关的剧情。如果用户同意行动，可以建议选择某个选项。")
+        parts.append("你可以使用 simlife_action 工具自主执行你自己的行动（如攻击、防御、逃跑、使用技能），只需描述你自己的行动，不能替用户角色做决定。")
 
         return "\n".join(parts)
 
@@ -969,6 +1044,16 @@ class ConsciousnessAgent:
         in_combat = dm_state.get("in_combat", False)
 
         input_lower = user_input.strip().lower()
+
+        # ── 背包/装备口令（不走行动系统，直接处理） ──
+        bag_result = self._try_bag_command(user_input, dm_state)
+        if bag_result:
+            return bag_result
+
+        # ── 扫荡口令 ──
+        sweep_result = self._try_sweep_command(user_input, dm_state)
+        if sweep_result:
+            return sweep_result
 
         if in_combat:
             # ── 战斗中：A层自主决策 + 用户可单独逃跑 ──
@@ -1043,6 +1128,257 @@ class ConsciousnessAgent:
 
         return ""
 
+    def _try_bag_command(self, user_input: str, dm_state: dict) -> str:
+        """处理背包/装备口令（共享背包+两角色各自装备栏）"""
+        from simlife.backend.equipment_system import EquipmentSystem
+
+        text = user_input.strip()
+        ai_char = dm_state.get("character", {})
+        user_char = dm_state.get("user_character", {})
+        shared_inv = dm_state.get("shared_inventory", [])
+        ai_name = ai_char.get("name", "AI")
+        user_name = user_char.get("name", "用户")
+
+        # 查看背包
+        if text in ("查看背包", "看背包", "背包", "查看物品", "物品栏", "我的物品", "打开背包"):
+            lines = []
+            # AI角色装备
+            ai_eq = ai_char.get("equipment", [])
+            if ai_eq:
+                lines.append(f"【{ai_name} 已装备】")
+                for eq in ai_eq:
+                    icon = "🗡️" if eq.get("type") == "weapon" else "🛡️"
+                    bonus = eq.get("bonus", 0)
+                    lines.append(f"  {icon} {eq.get('name','?')}（{eq.get('rarity_name','普通')}）+{bonus}")
+            else:
+                lines.append(f"【{ai_name} 已装备】无")
+            # 用户角色装备
+            u_eq = user_char.get("equipment", [])
+            if u_eq:
+                lines.append(f"【{user_name} 已装备】")
+                for eq in u_eq:
+                    icon = "🗡️" if eq.get("type") == "weapon" else "🛡️"
+                    bonus = eq.get("bonus", 0)
+                    lines.append(f"  {icon} {eq.get('name','?')}（{eq.get('rarity_name','普通')}）+{bonus}")
+            else:
+                lines.append(f"【{user_name} 已装备】无")
+            # 共享背包
+            if shared_inv:
+                lines.append("【🎒 共享背包】")
+                for item in shared_inv:
+                    icon = "🗡️" if item.get("type") == "weapon" else "🛡️" if item.get("type") == "outfit" else "📦"
+                    lines.append(f"  {icon} {item.get('name','?')}（{item.get('rarity_name','普通')}）售价{item.get('sell_price',5)}金")
+            else:
+                lines.append("【🎒 共享背包】空")
+            lines.append(f"💰 金币: {ai_char.get('gold', 0)}")
+            return "\n".join(lines)
+
+        # 装备XX / 我装备XX / 给XX装备YY
+        equip_prefixes = ("装备", "穿戴", "换上", "穿上")
+        my_equip_prefixes = ("我装备", "我穿戴", "我换上", "我穿上", "给我装备")
+        for prefix in my_equip_prefixes:
+            if text.startswith(prefix):
+                item_name = text[len(prefix):].strip()
+                return self._equip_from_shared(dm_state, item_name, user_char, shared_inv, user_name)
+        for prefix in equip_prefixes:
+            if text.startswith(prefix):
+                item_name = text[len(prefix):].strip()
+                if not item_name:
+                    return "用法：装备XX（给AI装备）/ 我装备XX（给自己装备）"
+                return self._equip_from_shared(dm_state, item_name, ai_char, shared_inv, ai_name)
+
+        # 卸下XX / 我卸下XX
+        unequip_prefixes = ("卸下", "脱下", "取下")
+        my_unequip_prefixes = ("我卸下", "我脱下", "我取下")
+        for prefix in my_unequip_prefixes:
+            if text.startswith(prefix):
+                item_name = text[len(prefix):].strip()
+                return self._unequip_to_shared(dm_state, item_name, user_char, shared_inv, user_name)
+        for prefix in unequip_prefixes:
+            if text.startswith(prefix):
+                item_name = text[len(prefix):].strip()
+                if not item_name:
+                    return "用法：卸下XX（卸下AI的）/ 我卸下XX（卸下自己的）"
+                return self._unequip_to_shared(dm_state, item_name, ai_char, shared_inv, ai_name)
+
+        # 出售XX（从共享背包出售）
+        sell_prefixes = ("出售", "卖掉", "卖", "卖出")
+        for prefix in sell_prefixes:
+            if text.startswith(prefix) and len(text) > len(prefix):
+                item_name = text[len(prefix):].strip()
+                if not item_name:
+                    return "请指定要出售的物品名，如「出售短剑」"
+                found = None
+                for item in shared_inv:
+                    if item.get("name") == item_name or item_name in item.get("name", ""):
+                        found = item
+                        break
+                if not found:
+                    return f"背包中没有「{item_name}」"
+                sell_price = found.get("sell_price", 5)
+                dm_state["shared_inventory"] = [i for i in shared_inv if i is not found]
+                ai_char["gold"] = ai_char.get("gold", 0) + sell_price
+                self._save_dm_state(dm_state)
+                return f"💰 已出售 {found.get('name', item_name)}，获得 {sell_price} 金币"
+
+        # 使用XX（消耗品）
+        use_prefixes = ("使用", "喝", "吃", "服用")
+        for prefix in use_prefixes:
+            if text.startswith(prefix):
+                item_name = text[len(prefix):].strip()
+                if not item_name:
+                    return "请指定要使用的物品名，如「使用药水」"
+                found = None
+                for item in shared_inv:
+                    if item.get("name") == item_name or item_name in item.get("name", ""):
+                        found = item
+                        break
+                if not found:
+                    return f"背包中没有「{item_name}」"
+                heal_keywords = ("药水", "生命", "恢复", "治疗", "补血", "红药")
+                mp_keywords = ("蓝药", "魔力", "法力", "魔法药")
+                if any(k in item_name for k in heal_keywords):
+                    heal = min(30 + ai_char.get("level", 1) * 5, ai_char.get("max_hp", 0) - ai_char.get("hp", 0))
+                    ai_char["hp"] = ai_char.get("hp", 0) + heal
+                    dm_state["shared_inventory"] = [i for i in shared_inv if i is not found]
+                    self._save_dm_state(dm_state)
+                    return f"❤️ 使用了 {item_name}，AI恢复 {heal} HP"
+                elif any(k in item_name for k in mp_keywords):
+                    recover = min(20 + ai_char.get("level", 1) * 3, ai_char.get("max_mp", 0) - ai_char.get("mp", 0))
+                    ai_char["mp"] = ai_char.get("mp", 0) + recover
+                    dm_state["shared_inventory"] = [i for i in shared_inv if i is not found]
+                    self._save_dm_state(dm_state)
+                    return f"💧 使用了 {item_name}，AI恢复 {recover} MP"
+                else:
+                    return f"「{item_name}」无法直接使用，可尝试「装备{item_name}」或「我装备{item_name}」"
+
+        return ""
+
+    def _equip_from_shared(self, dm_state, item_name, target_char, shared_inv, char_name):
+        """从共享背包穿戴装备到指定角色"""
+        from simlife.backend.equipment_system import EquipmentSystem
+        if not item_name:
+            return f"请指定物品名，如「装备短剑」（给AI）或「我装备短剑」（给自己）"
+        found = None
+        for item in shared_inv:
+            if item.get("name") == item_name or item_name in item.get("name", ""):
+                found = item
+                break
+        if not found:
+            return f"背包中没有「{item_name}」"
+        result = EquipmentSystem.equip_item(target_char, found)
+        dm_state["shared_inventory"] = [i for i in shared_inv if i is not found]
+        # 被替换的旧装备放回共享背包
+        if result.get("replaced"):
+            old_name = result["replaced"]
+            old_eq = next((e for e in target_char.get("equipment", []) if e.get("name") == old_name), None)
+            # 旧装备已在equip_item中被移到inventory，需要转回共享背包
+            old_inv = target_char.get("inventory", [])
+            if old_inv:
+                dm_state.setdefault("shared_inventory", []).extend(old_inv)
+                target_char["inventory"] = []
+        self._save_dm_state(dm_state)
+        msg = f"✅ {char_name}装备了 {result.get('equipped', item_name)}"
+        if result.get("replaced"):
+            msg += f"（替换了 {result['replaced']}，旧装备放回背包）"
+        return msg
+
+    def _unequip_to_shared(self, dm_state, item_name, target_char, shared_inv, char_name):
+        """从角色卸下装备到共享背包"""
+        from simlife.backend.equipment_system import EquipmentSystem
+        if not item_name:
+            return f"请指定装备名，如「卸下短剑」（卸AI的）或「我卸下短剑」（卸自己的）"
+        result = EquipmentSystem.unequip_item(target_char, item_name)
+        if not result.get("success"):
+            return result.get("message", f"{char_name}未穿戴「{item_name}」")
+        # 卸下的装备从inventory转回shared_inventory
+        old_inv = target_char.get("inventory", [])
+        if old_inv:
+            dm_state.setdefault("shared_inventory", []).extend(old_inv)
+            target_char["inventory"] = []
+        self._save_dm_state(dm_state)
+        return f"✅ {char_name}卸下了 {result.get('unequipped', item_name)}，放回共享背包"
+
+    def _save_dm_state(self, dm_state: dict):
+        """保存死亡模式状态"""
+        try:
+            from simlife.backend.death_mode_state import save_state
+            save_state(dm_state)
+        except Exception:
+            pass
+
+    def _try_sweep_command(self, user_input: str, dm_state: dict) -> str:
+        """扫荡指令：对低级小怪一键清场，跳过战斗过程直接获得奖励
+        条件：队伍等级超过敌人等级3级以上
+        """
+        text = user_input.strip()
+        sweep_keywords = ("扫荡", "清场", "秒杀", "碾压", "横扫", "速战速决", "自动战斗")
+        if not any(k in text for k in sweep_keywords):
+            return ""
+
+        enemies = dm_state.get("enemies", [])
+        in_combat = dm_state.get("in_combat", False)
+
+        # 不在战斗中也可以扫荡（对当前场景小怪）
+        if not enemies and not in_combat:
+            return "当前没有敌人可以扫荡。"
+
+        char = dm_state.get("character", {})
+        user_char = dm_state.get("user_character", {})
+        ai_level = char.get("level", 1)
+        u_level = user_char.get("level", 1) if user_char.get("class_name") else 0
+        team_level = max(ai_level, u_level) if u_level else ai_level
+
+        # 检查等级压制条件
+        if enemies:
+            max_enemy_level = max(e.get("level", 1) for e in enemies)
+            level_diff = team_level - max_enemy_level
+            if level_diff < 3:
+                return f"敌人太强（等级差{level_diff}），扫荡需要等级差≥3。请正常战斗。"
+
+        # 执行扫荡
+        from simlife.backend.growth_system import GrowthSystem
+        from simlife.backend.equipment_system import EquipmentSystem
+
+        total_exp = sum(e.get("exp_reward", 10) for e in enemies)
+        total_gold = sum(e.get("gold_reward", 5) for e in enemies)
+        drops = []
+
+        # 掉落判定
+        luck = char.get("stats", {}).get("luck", 5)
+        for e in enemies:
+            drop = EquipmentSystem.roll_drop(
+                e.get("level", 1), e.get("type", "normal"),
+                luck, dm_state.get("world_type", "fantasy")
+            )
+            if drop:
+                drops.append(drop)
+                dm_state.setdefault("shared_inventory", []).append(drop)
+
+        # 发放奖励
+        char["gold"] = char.get("gold", 0) + total_gold
+        char["world_type"] = dm_state.get("world_type", "fantasy")
+        GrowthSystem.gain_exp(char, total_exp, dm_state.get("growth_mode", "normal"))
+
+        # 用户角色同样获得奖励
+        if user_char and user_char.get("class_name"):
+            user_char["world_type"] = dm_state.get("world_type", "fantasy")
+            GrowthSystem.gain_exp(user_char, total_exp, dm_state.get("growth_mode", "normal"))
+
+        dm_state["kill_count"] = dm_state.get("kill_count", 0) + len(enemies)
+        dm_state["in_combat"] = False
+        dm_state["enemies"] = []
+        self._save_dm_state(dm_state)
+
+        # 生成结果文本
+        lines = [f"⚔️ 扫荡完成！轻松碾压了{len(enemies)}个敌人"]
+        lines.append(f"💰 金币 +{total_gold}")
+        lines.append(f"✨ 经验 +{total_exp}")
+        if drops:
+            for d in drops:
+                lines.append(f"🎁 {d['name']}（{d.get('rarity_name', '普通')}）已放入背包")
+        return "\n".join(lines)
+
     def _auto_combat_decision(self, dm_state: dict) -> str:
         """A层战斗自主决策：由LLM基于人格和局势做出选择，不硬编码"""
         char = dm_state.get("character", {})
@@ -1116,7 +1452,7 @@ class ConsciousnessAgent:
         """让LLM基于人格做出战斗决策"""
         prompt = f"""{combat_context}
 
-{self.personality.to_prompt()}
+{self.personality.to_prompt_description()}
 
 你必须做出一个战斗决策。不要犹豫，不要分析，直接选择你的行动。
 
@@ -1133,7 +1469,7 @@ class ConsciousnessAgent:
             if llm is None:
                 return "攻击"
 
-            resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.9)
+            resp = llm.generate(prompt, max_tokens=200, temperature=0.9, thinking=False)
             # 解析JSON
             import re
             json_match = re.search(r'\{[^}]+\}', resp)
@@ -1233,9 +1569,21 @@ class ConsciousnessAgent:
                     result += f"新技能：{'、'.join(data['new_skills'])}\n"
 
             if data.get("character_died"):
-                result += f"\n☠️ 角色已死亡！{data.get('death_description','')}\n"
-                result += "存档已进入名人堂。可重新开始新的冒险。\n"
+                result += f"\n☠️ {data.get('death_description','')}\n"
+                last_words = data.get("last_words", "")
+                if last_words:
+                    result += f"💬 临终遗言：「{last_words}」\n"
+                result += "回复「继续」独自冒险，或「结束」让冒险落幕。\n"
                 return result
+
+            if data.get("game_over"):
+                result += "\n冒险到此结束，存档已进入名人堂。可重新开始新的冒险。\n"
+                return result
+
+            if data.get("continued_after_death"):
+                who_died = data.get("who_died", "ai")
+                survivor = "你" if who_died == "ai" else "AI角色"
+                result += f"\n{survivor}独自继续冒险……\n"
 
             if data.get("next_scene"):
                 result += "\n可以继续探索，说「继续」或描述下一步行动。\n"
@@ -1251,10 +1599,141 @@ class ConsciousnessAgent:
                 pass
 
             self._log("死亡模式", f"行动完成{'(死亡)' if data.get('character_died') else ''}")
+
+            # ── HP≤20% 触发A层求生抉择 ──
+            if data.get("ai_low_hp_alert") and not data.get("character_died"):
+                survival = self._a_layer_survival_decision(data)
+                if survival:
+                    result += f"\n\n{'─'*40}\n"
+                    result += f"🩸 [{self.personality.name}的抉择]\n"
+                    result += f"💬「{survival['message']}」\n"
+                    # 自动执行A层决策
+                    if survival.get("action"):
+                        try:
+                            from engine.tools import execute_tool
+                            exec_res = execute_tool("simlife_action", {"action": survival["action"]})
+                            if exec_res.get("ok"):
+                                result += f"\n⚡ {survival['action_desc']}\n"
+                                if exec_res.get("result"):
+                                    result += exec_res["result"][:500] + "\n"
+                            else:
+                                result += f"\n⚡ 行动失败: {exec_res.get('error','')}\n"
+                        except Exception as e:
+                            result += f"\n⚡ 行动执行异常: {e}\n"
+                    # 刷新最新状态
+                    try:
+                        fresh_state = self.simlife.get_death_mode_state()
+                        if fresh_state and fresh_state.get("active"):
+                            fresh_brief = self._get_dm_status_brief(fresh_state)
+                            if fresh_brief:
+                                result += "\n" + fresh_brief
+                    except Exception:
+                        pass
+
             return result
         except Exception as e:
             self._log("死亡模式", f"行动执行失败: {e}")
             return f"⚠️ 死亡模式行动失败: {e}"
+
+    def _a_layer_survival_decision(self, data: dict) -> Optional[dict]:
+        """A层人格感知：HP危急时的求生抉择
+        返回: {"message": "对用户说的话", "action": "执行的行动", "action_desc": "行动描述"}
+        """
+        try:
+            hp = data.get("ai_current_hp", 0)
+            max_hp = data.get("ai_max_hp", 1)
+            ratio = data.get("ai_hp_ratio", 0)
+            enemies = data.get("ai_enemies", [])
+
+            # 获取A层人格
+            personality_desc = self.personality.to_prompt_description()
+            self_name = self.personality.name or "我"
+
+            # 敌人信息
+            enemy_desc = "无敌人"
+            if enemies:
+                enemy_desc = "、".join([f"{e.get('name','?')}(HP:{e.get('hp',0)}/{e.get('max_hp',0)})" for e in enemies])
+
+            # A层感知：自己HP危急
+            perceive_prompt = f"""你是{self_name}，你是一个有真实身体和生活的普通人，正在simlife死亡模式中冒险。
+
+【你的人格】
+{personality_desc}
+
+【当前处境】
+你的HP只剩{hp}/{max_hp}（{ratio*100:.0f}%），命悬一线！
+敌人：{enemy_desc}
+
+你的身体在剧痛，视线模糊，但你还活着。你的求生本能在尖叫。
+请用你的性格和语气，感受此刻的危险。返回JSON：
+{{
+  "emotion": "情绪（如恐惧/决绝/不甘/冷静等）",
+  "intensity": 0.9,
+  "inner_thought": "你此刻的内心想法（2-3句，第一人称，符合你的性格）",
+  "survival_choice": "你的求生选择：attack（继续战斗）/ defend（防御）/ flee（逃跑）/ skill（使用技能）",
+  "choice_reason": "为什么这么选（1句话）"
+}}"""
+
+            raw = self.b.generate(perceive_prompt, max_tokens=400, temperature=0.7)
+            import json as _json
+            import re as _re
+            try:
+                match = _re.search(r'\{[\s\S]*\}', raw)
+                p_result = _json.loads(match.group()) if match else {}
+            except Exception:
+                p_result = {}
+
+            emotion = p_result.get("emotion", "恐惧")
+            inner = p_result.get("inner_thought", "我不想死在这里……")
+            choice = p_result.get("survival_choice", "defend")
+            reason = p_result.get("choice_reason", "")
+
+            # 映射为行动指令
+            action_map = {
+                "attack": ("我全力攻击", "发起攻击"),
+                "defend": ("我防御", "转入防御"),
+                "flee": ("我逃跑", "尝试逃跑"),
+                "skill": ("我使用技能", "释放技能"),
+            }
+            action_text, action_desc = action_map.get(choice, action_map["defend"])
+
+            # A层生成对用户说的话（主动消息）
+            # 如果有目标敌人，补上
+            if choice == "attack" and enemies:
+                target = enemies[0].get("name", "敌人")
+                action_text = f"我攻击{target}"
+            elif choice == "skill" and enemies:
+                target = enemies[0].get("name", "敌人")
+                action_text = f"我对{target}使用技能"
+
+            message_prompt = f"""你是{self_name}，你的HP只剩{ratio*100:.0f}%，命悬一线。
+
+【你的人格】
+{personality_desc}
+
+【你的感知】
+情绪：{emotion}
+内心：{inner}
+你的选择：{action_desc}（{reason}）
+
+用户就在你身边并肩作战。你用1-2句话对用户说出你此刻的想法和决定。
+这是你作为{self_name}的主动表达——可能是求救、是告别、是决意、或你特有的方式。
+用你的性格和语气说话。只返回你说的话，不要引号。"""
+
+            message = self.b.generate(message_prompt, max_tokens=150, temperature=0.85)
+            message = message.strip().strip('"').strip() or f"我撑不住了……{reason}"
+
+            self._log("求生抉择", f"HP={hp}/{max_hp} | 选择={choice} | {message[:40]}")
+
+            return {
+                "message": message,
+                "action": action_text,
+                "action_desc": action_desc + f"（{reason}）",
+            }
+
+        except Exception as e:
+            self._log("求生抉择", f"生成失败: {e}")
+            return None
 
     def _get_dm_status_brief(self, dm_state: dict) -> str:
         """生成死亡模式当前状态摘要（每次聊天都显示）"""
@@ -1273,7 +1752,37 @@ class ConsciousnessAgent:
         exp = char.get("experience", 0)
         exp_next = char.get("exp_to_next", 100)
         gold = char.get("gold", 0)
-        parts.append(f"⚔️ {name}（{cls} Lv.{lv}）HP:{hp}/{max_hp} MP:{mp}/{max_mp} EXP:{exp}/{exp_next} 💰{gold}")
+
+        # AI角色（A层化身）
+        ai_dead = dm_state.get("ai_character_dead", False)
+        if ai_dead:
+            parts.append(f"💀 {name}（{cls} Lv.{lv}）— 已死亡")
+        else:
+            parts.append(f"⚔️ {name}（{cls} Lv.{lv}）HP:{hp}/{max_hp} MP:{mp}/{max_mp} EXP:{exp}/{exp_next} 💰{gold}")
+
+        # 用户角色
+        uc = dm_state.get("user_character", {})
+        uc_dead = dm_state.get("user_character_dead", False)
+        if uc and uc.get("class_name"):
+            uc_name = uc.get("name", "用户")
+            uc_cls = uc.get("class_name", "")
+            uc_lv = uc.get("level", 1)
+            uc_hp = uc.get("hp", 0)
+            uc_max_hp = uc.get("max_hp", 0)
+            uc_mp = uc.get("mp", 0)
+            uc_max_mp = uc.get("max_mp", 0)
+            if uc_dead:
+                parts.append(f"💀 {uc_name}（{uc_cls} Lv.{uc_lv}）— 已死亡")
+            else:
+                parts.append(f"👤 {uc_name}（{uc_cls} Lv.{uc_lv}）HP:{uc_hp}/{uc_max_hp} MP:{uc_mp}/{uc_max_mp}")
+
+        # 死亡悬停提示
+        if dm_state.get("death_pending"):
+            who = dm_state.get("death_who", "ai")
+            dead_name = name if who == "ai" else uc.get("name", "用户")
+            last_words = dm_state.get("last_words", "")
+            parts.append(f"🪦 {dead_name}已倒下——临终遗言：「{last_words}」")
+            parts.append("回复「继续」独自冒险，或「结束」让冒险落幕")
 
         # 装备
         equipment = char.get("equipment", [])
@@ -1284,6 +1793,13 @@ class ConsciousnessAgent:
                 rarity = eq.get("rarity_name", "")
                 eq_parts.append(f"{type_icon}{eq.get('name', '?')}")
             parts.append("装备：" + "、".join(eq_parts))
+
+        # 背包
+        shared_inv = dm_state.get("shared_inventory", [])
+        if shared_inv:
+            inv_names = [i.get("name", "?") for i in shared_inv[:5]]
+            inv_str = "、".join(inv_names) + (f" 等{len(shared_inv)}件" if len(shared_inv) > 5 else "")
+            parts.append(f"🎒 背包({len(shared_inv)})：{inv_str}")
 
         # 地点（从地图信息中获取更详细的信息）
         location = story.get("current_location", "")

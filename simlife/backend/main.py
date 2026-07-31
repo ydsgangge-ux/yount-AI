@@ -1406,6 +1406,8 @@ def api_death_mode_start(data: dict):
         world_setting=world_setting,
         growth_mode=growth_mode,
         custom_stat_points=custom_stat_points,
+        user_class_id=user_class_id,
+        user_name=user_name,
     )
 
     # 同步用户角色能力设定（用户角色使用用户选择的职业）
@@ -1416,16 +1418,43 @@ def api_death_mode_start(data: dict):
     if user_cls:
         user_profile["class_id"] = user_class_id
         user_profile["class_name"] = user_cls["name"]
-        user_profile["stats"] = {k: max(1, v // 2) for k, v in user_cls["base_stats"].items()}
-        user_profile["hp"] = user_cls["base_hp"] // 2
-        user_profile["max_hp"] = user_cls["base_hp"] // 2
-        user_profile["mp"] = user_cls["base_mp"] // 2
-        user_profile["max_mp"] = user_cls["base_mp"] // 2
+        user_profile["stats"] = dict(user_cls["base_stats"])
+        user_profile["hp"] = user_cls["base_hp"]
+        user_profile["max_hp"] = user_cls["base_hp"]
+        user_profile["mp"] = user_cls["base_mp"]
+        user_profile["max_mp"] = user_cls["base_mp"]
         user_profile["level"] = 1
-        user_profile["skills"] = []
+        user_profile["skills"] = list(user_cls["starting_skills"])
         if user_name:
             user_profile["name"] = user_name
         _save_user_profile(user_profile)
+
+        # 同步到 death_mode_state 的 user_character
+        state = engine._load()
+        if state:
+            state["user_character"] = {
+                "name": user_name or user_profile.get("name", "用户"),
+                "class_id": user_class_id,
+                "class_name": user_cls["name"],
+                "class_icon": user_cls.get("icon", "👤"),
+                "level": 1,
+                "hp": user_cls["base_hp"],
+                "max_hp": user_cls["base_hp"],
+                "mp": user_cls["base_mp"],
+                "max_mp": user_cls["base_mp"],
+                "stats": dict(user_cls["base_stats"]),
+                "skills": list(user_cls["starting_skills"]),
+                "equipment": [],
+                "experience": 0,
+                "exp_to_next": 100,
+                "gold": 0,
+            }
+            # 迁移旧 inventory → shared_inventory
+            if not state.get("shared_inventory"):
+                old_inv = state.get("character", {}).get("inventory", [])
+                state["shared_inventory"] = old_inv
+                state["character"]["inventory"] = []  # 清空旧背包，统一用 shared_inventory
+            engine._save()
 
     return result
 
@@ -1437,24 +1466,30 @@ def api_death_mode_state():
     engine = DeathModeEngine()
     result = engine.get_game_state()
 
-    # 附加用户角色状态
-    user_profile = _load_user_profile()
-    result["user_character"] = {
-        "name": user_profile.get("name", "用户"),
-        "class_id": user_profile.get("class_id", ""),
-        "class_name": user_profile.get("class_name", ""),
-        "level": user_profile.get("level", 1),
-        "hp": user_profile.get("hp", 0),
-        "max_hp": user_profile.get("max_hp", 0),
-        "mp": user_profile.get("mp", 0),
-        "max_mp": user_profile.get("max_mp", 0),
-        "stats": user_profile.get("stats", {}),
-        "skills": user_profile.get("skills", []),
-        "equipment": user_profile.get("equipment", []),
-        "gold": user_profile.get("gold", 0),
-        "experience": user_profile.get("experience", 0),
-        "exp_to_next": user_profile.get("exp_to_next", 100),
-    }
+    # 附加用户角色状态（优先从 death_mode_state 读取）
+    uc = result.get("user_character", {})
+    if not uc or not uc.get("class_name"):
+        # 兼容旧存档：从 user_profile 兜底
+        user_profile = _load_user_profile()
+        uc = {
+            "name": user_profile.get("name", "用户"),
+            "class_id": user_profile.get("class_id", ""),
+            "class_name": user_profile.get("class_name", ""),
+            "level": user_profile.get("level", 1),
+            "hp": user_profile.get("hp", 0),
+            "max_hp": user_profile.get("max_hp", 0),
+            "mp": user_profile.get("mp", 0),
+            "max_mp": user_profile.get("max_mp", 0),
+            "stats": user_profile.get("stats", {}),
+            "skills": user_profile.get("skills", []),
+            "equipment": user_profile.get("equipment", []),
+            "gold": user_profile.get("gold", 0),
+            "experience": user_profile.get("experience", 0),
+            "exp_to_next": user_profile.get("exp_to_next", 100),
+        }
+    result["user_character"] = uc
+    # 共享背包
+    result["shared_inventory"] = result.get("shared_inventory", [])
 
     return result
 
@@ -1477,7 +1512,8 @@ def api_death_mode_action(data: dict):
     engine = DeathModeEngine()
     choice_id = data.get("choice_id")
     free_action = data.get("free_action")
-    result = engine.process_choice(choice_id=choice_id, free_action=free_action)
+    sender = data.get("sender", "user")
+    result = engine.process_choice(choice_id=choice_id, free_action=free_action, sender=sender)
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
@@ -1545,9 +1581,9 @@ def api_death_mode_equipment():
     }
 
 
-@app.post("/api/death-mode/equip")
-def api_death_mode_equip(data: dict):
-    """穿戴背包中的装备"""
+@app.post("/api/death-mode/equip-shared")
+def api_death_mode_equip_shared(data: dict):
+    """从共享背包穿戴装备到指定角色（target: 'ai' / 'user'）"""
     from simlife.backend.death_mode import DeathModeEngine
     from simlife.backend.equipment_system import EquipmentSystem
     engine = DeathModeEngine()
@@ -1555,22 +1591,60 @@ def api_death_mode_equip(data: dict):
     if not state:
         return {"error": "no_game"}
     item_name = data.get("item_name", "")
-    # 从背包中找到装备
-    inventory = state["character"].get("inventory", [])
-    item = next((i for i in inventory if i.get("name") == item_name), None)
-    if not item:
+    target = data.get("target", "ai")
+    shared_inv = state.get("shared_inventory", [])
+    # 查找物品
+    found = None
+    for item in shared_inv:
+        if item.get("name") == item_name or item_name in item.get("name", ""):
+            found = item
+            break
+    if not found:
         return {"error": "item_not_found", "message": f"背包中没有{item_name}"}
-    # 从背包移除
-    state["character"]["inventory"] = [i for i in inventory if i.get("name") != item_name]
+    # 确定目标角色
+    char = state["character"] if target == "ai" else state.get("user_character")
+    if not char or not char.get("class_name"):
+        return {"error": "no_target", "message": "用户角色数据不存在，请重新创建游戏"}
     # 穿戴
-    result = EquipmentSystem.equip_item(state["character"], item)
+    result = EquipmentSystem.equip_item(char, found)
+    # 从共享背包移除
+    state["shared_inventory"] = [i for i in shared_inv if i is not found]
+    # 被替换的旧装备放回共享背包
+    old_inv = char.get("inventory", [])
+    if old_inv:
+        state["shared_inventory"].extend(old_inv)
+        char["inventory"] = []
     engine._save()
     return result
 
 
-@app.post("/api/death-mode/sell")
-def api_death_mode_sell(data: dict):
-    """出售背包中的装备"""
+@app.post("/api/death-mode/sell-shared")
+def api_death_mode_sell_shared(data: dict):
+    """从共享背包出售装备"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        return {"error": "no_game"}
+    item_name = data.get("item_name", "")
+    shared_inv = state.get("shared_inventory", [])
+    found = None
+    for item in shared_inv:
+        if item.get("name") == item_name or item_name in item.get("name", ""):
+            found = item
+            break
+    if not found:
+        return {"error": "item_not_found", "message": f"背包中没有{item_name}"}
+    sell_price = found.get("sell_price", 5)
+    state["shared_inventory"] = [i for i in shared_inv if i is not found]
+    state["character"]["gold"] = state["character"].get("gold", 0) + sell_price
+    engine._save()
+    return {"success": True, "sold": found.get("name", item_name), "gold": sell_price}
+
+
+@app.post("/api/death-mode/unequip-shared")
+def api_death_mode_unequip_shared(data: dict):
+    """卸下已穿戴的装备到共享背包（target: 'ai' / 'user'）"""
     from simlife.backend.death_mode import DeathModeEngine
     from simlife.backend.equipment_system import EquipmentSystem
     engine = DeathModeEngine()
@@ -1578,8 +1652,18 @@ def api_death_mode_sell(data: dict):
     if not state:
         return {"error": "no_game"}
     item_name = data.get("item_name", "")
-    result = EquipmentSystem.sell_item(state["character"], item_name)
-    engine._save()
+    target = data.get("target", "ai")
+    char = state["character"] if target == "ai" else state.get("user_character")
+    if not char or not char.get("class_name"):
+        return {"error": "no_target", "message": "用户角色数据不存在，请重新创建游戏"}
+    result = EquipmentSystem.unequip_item(char, item_name)
+    if result.get("success"):
+        # 卸下的装备放回共享背包
+        old_inv = char.get("inventory", [])
+        if old_inv:
+            state.setdefault("shared_inventory", []).extend(old_inv)
+            char["inventory"] = []
+        engine._save()
     return result
 
 

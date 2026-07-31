@@ -317,7 +317,7 @@ class MapGenerator:
 
 只返回JSON，不要其他文字。"""
 
-        response = llm_client.generate(prompt, max_tokens=1500, temperature=0.8)
+        response = llm_client.generate(prompt, max_tokens=1500, temperature=0.8, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")

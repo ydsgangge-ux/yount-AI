@@ -1,0 +1,22 @@
+{
+  "entered": false,
+  "class_id": "warrior",
+  "class_name": "战士",
+  "stats": {
+    "strength": 15,
+    "agility": 8,
+    "intelligence": 5,
+    "vitality": 15,
+    "luck": 5
+  },
+  "hp": 150,
+  "max_hp": 150,
+  "mp": 20,
+  "max_mp": 20,
+  "level": 1,
+  "skills": [
+    "重击",
+    "格挡"
+  ],
+  "name": "yount"
+}

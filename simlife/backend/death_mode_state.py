@@ -117,6 +117,8 @@ def create_initial_state(
     world_setting: Dict,
     growth_mode: str = "normal",
     custom_stat_points: Optional[Dict] = None,
+    user_class_id: str = "",
+    user_name: str = "",
 ) -> Dict:
     """创建死亡模式初始状态"""
     world_type = _get_world_type_from_setting(world_setting)
@@ -133,6 +135,37 @@ def create_initial_state(
             if k in stats and v > 0 and remaining_points >= v:
                 stats[k] += v
                 remaining_points -= v
+
+    # 初始化用户角色
+    user_cls = get_class_template(world_type, user_class_id) if user_class_id else None
+    if user_cls:
+        user_character = {
+            "name": user_name or "用户",
+            "class_id": user_class_id,
+            "class_name": user_cls["name"],
+            "class_icon": user_cls.get("icon", "👤"),
+            "level": 1,
+            "hp": user_cls["base_hp"],
+            "max_hp": user_cls["base_hp"],
+            "mp": user_cls["base_mp"],
+            "max_mp": user_cls["base_mp"],
+            "stats": dict(user_cls["base_stats"]),
+            "skills": list(user_cls["starting_skills"]),
+            "equipment": [],
+            "experience": 0,
+            "exp_to_next": 100,
+            "gold": 0,
+        }
+    else:
+        user_character = {
+            "name": user_name or "用户",
+            "class_id": "",
+            "class_name": "",
+            "class_icon": "👤",
+            "level": 1, "hp": 0, "max_hp": 0, "mp": 0, "max_mp": 0,
+            "stats": {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5},
+            "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0,
+        }
 
     return {
         "mode": "death_mode",
@@ -174,6 +207,10 @@ def create_initial_state(
         "start_time": datetime.now().isoformat(),  # 游戏开始时间（天数按实际时间计算）
         "kill_count": 0,
         "created_at": datetime.now().isoformat(),
+        # ── 共享背包 ──
+        "shared_inventory": [],  # 两角色共享的背包（装备穿戴后从此取出）
+        # ── 用户角色（与AI角色并列） ──
+        "user_character": user_character,
         # ── 地图与NPC系统 ──
         "world_map": {},      # WorldMap.to_dict() 序列化
         "npc_system": {},     # NPCSystem.to_dict() 序列化

@@ -1,0 +1,1494 @@
+{
+  "mode": "death_mode",
+  "character": {
+    "name": "焕灵",
+    "class_id": "warrior",
+    "class_name": "战士",
+    "class_icon": "⚔️",
+    "level": 3,
+    "hp": 207,
+    "max_hp": 210,
+    "mp": 50,
+    "max_mp": 50,
+    "stats": {
+      "strength": 15,
+      "agility": 8,
+      "intelligence": 5,
+      "vitality": 15,
+      "luck": 5
+    },
+    "skills": [
+      "重击",
+      "格挡",
+      "旋风斩"
+    ],
+    "equipment": [
+      {
+        "name": "新手铁剑",
+        "type": "weapon",
+        "rarity": "uncommon",
+        "rarity_name": "优秀",
+        "color": "#3fb950",
+        "bonus": 4,
+        "stat_bonus": {
+          "strength": 1
+        },
+        "level_req": 1,
+        "sell_price": 14
+      }
+    ],
+    "inventory": [],
+    "experience": 60,
+    "exp_to_next": 131,
+    "gold": 198,
+    "world_type": "fantasy"
+  },
+  "world_setting": {
+    "world_id": "aincrad-magus",
+    "world_name": "Aincrad: Magus Online",
+    "world_type": "Virtual Reality MMORPG (Death Game)",
+    "era": "The Castle Age - Year 1 of the Death Game",
+    "communication": {
+      "device": "NerveGear",
+      "device_description": "A full-dive VR headset that interfaces directly with the player's brain, providing complete sensory immersion. In-game communication is achieved via a mental interface (thought-based messaging), voice chat, or text messages displayed in the player's peripheral vision. External communication is impossible; the NerveGear blocks all outside signals.",
+      "narrative_style": "First-person perspective with occasional third-person cutscenes for major story events. The narrative is driven by player choices, faction interactions, and the overarching mystery of Aincrad's upper floors."
+    },
+    "geography": {
+      "overview": "Aincrad is a colossal floating castle made of stone, crystal, and magical alloys, originally comprising 100 floors. In this iteration, the castle has been reshaped by the magic system; only the first 10 floors are currently known, with the rest locked behind magical seals. Each floor is a distinct biome, connected by teleport gates and staircases guarded by powerful monsters. The geography is static but can be altered by magic or cataclysmic events.",
+      "regions": [
+        {
+          "name": "Primus Arcus",
+          "description": "The first floor, a sprawling plains area with rolling hills, small villages, and the Town of Beginnings at its center. The sky is an eternal twilight, lit by a massive crystal chandelier hanging from the ceiling of the castle. Ley lines are faint here, making novice magic easier to cast.",
+          "climate": "Mild, temperate, with gentle breezes.",
+          "key_locations": [
+            "Town of Beginnings",
+            "Leyline Meadow",
+            "Staircase Plaza",
+            "First Floor Boss Chamber (The Luminous Sanctum)"
+          ],
+          "dangers": [
+            "Low-level elemental slimes",
+            "Wild boar-like monsters (Feral Crystals)",
+            "Occasional player-killer (PK) ambushes near the outskirts"
+          ]
+        },
+        {
+          "name": "Silvamagica",
+          "description": "The second floor is a dense, enchanted forest where trees glow with phosphorescent sap. The canopy blocks most light, creating a perpetual twilight. Rivers of liquid mana flow through the undergrowth. The floor is home to the Sylvan tribe and numerous herb-gathering spots.",
+          "climate": "Humid, cool, frequent magical mists.",
+          "key_locations": [
+            "Glimmerwood Village",
+            "Mana River Delta",
+            "The Whistling Grove",
+            "Second Floor Boss Chamber (The Crystal Depths)"
+          ],
+          "dangers": [
+            "Lurking shadow wolves (Umbra Lupus)",
+            "Poisonous spore clouds",
+            "Magical quicksand pools"
+          ]
+        },
+        {
+          "name": "Aquaferrum",
+          "description": "The third floor is a network of lakes, rivers, and iron-rich caves. The main settlement, Ironport, is built on a floating island above the largest lake. The floor is rich in rare metals and water-attuned mana crystals. The sound of dripping water is constant.",
+          "climate": "Cool and damp, with frequent drizzle.",
+          "key_locations": [
+            "Ironport Town",
+            "Lake of Whispers",
+            "Deepforge Caverns",
+            "Third Floor Boss Chamber (The Ashen Labyrinth)"
+          ],
+          "dangers": [
+            "Water elementals (Tidal Wraiths)",
+            "Iron golems",
+            "Underwater currents that drain mana"
+          ]
+        },
+        {
+          "name": "Ventorium",
+          "description": "The fourth floor is a high-altitude region of floating islands, connected by wind bridges and updrafts. The air is thin, making prolonged physical activity difficult. The Skywatch Tower, a neutral hub, sits on the largest island. This floor is the domain of air magic.",
+          "climate": "Cold, windy, with low pressure.",
+          "key_locations": [
+            "Skywatch Tower",
+            "Zephyr Fields",
+            "Stormcrest Peak",
+            "Fourth Floor Boss Chamber (The Stormspire)"
+          ],
+          "dangers": [
+            "Sky serpents (Aerodrakes)",
+            "Sudden tornadoes",
+            "Mana-sucking leech clouds"
+          ]
+        },
+        {
+          "name": "Tenebralis",
+          "description": "The fifth floor is a dark, twisted forest where shadows move of their own accord. The ground is covered in black moss that muffles sound. A single, dim moon casts pale light. This floor is the stronghold of the Dark Guild and home to the Shade race.",
+          "climate": "Chilly, oppressive, with constant low fog.",
+          "key_locations": [
+            "Shadowspire Outpost",
+            "Veilwood",
+            "Obsidian Pond",
+            "Fifth Floor Boss Chamber (The Void Crucible)"
+          ],
+          "dangers": [
+            "Shadow stalkers (Umbrae)",
+            "Corrupted mana pools that cause confusion",
+            "Player-trap dungeons set by PKs"
+          ]
+        }
+      ]
+    },
+    "races": [
+      {
+        "name": "Human",
+        "description": "The most adaptable and numerous race. They have no innate magical affinity but can master any element with equal effort. Humans are known for their ingenuity and social organization.",
+        "traits": [
+          "Balanced stats",
+          "+1 to any one stat of choice at character creation",
+          "No inherent elemental bonus"
+        ],
+        "homeland": "Primus Arcus (Town of Beginnings), but spread across floors",
+        "typical_classes": [
+          "Battle Mage",
+          "Enchanter",
+          "Scholar",
+          "Merchant"
+        ]
+      },
+      {
+        "name": "Sylvan",
+        "description": "Elf-like beings with pointed ears and elongated lifespans (in-game). They are naturally attuned to the elements of Light and Wind. Sylvans are graceful and excel at precision magic.",
+        "traits": [
+          "+2 INT, +1 DEX",
+          "Natural affinity: Light and Wind elements (spells cost 10% less mana)",
+          "Enhanced hearing and night vision"
+        ],
+        "homeland": "Silvamagica (Glimmerwood Village)",
+        "typical_classes": [
+          "Elemental Mage",
+          "Healer",
+          "Ranger",
+          "Illusionist"
+        ]
+      },
+      {
+        "name": "Dwarf",
+        "description": "Stocky, bearded folk with immense stamina and resistance to physical damage. They have an innate connection to Earth and Fire elements. Dwarves are master craftsmen and miners.",
+        "traits": [
+          "+2 VIT, +1 STR",
+          "Natural affinity: Earth and Fire (spells deal 5% more damage)",
+          "Bonus to crafting and mining skills"
+        ],
+        "homeland": "Aquaferrum (Ironport Town)",
+        "typical_classes": [
+          "Earth Mage",
+          "Blacksmith",
+          "Tank Mage",
+          "Geomancer"
+        ]
+      },
+      {
+        "name": "Beastman",
+        "description": "Humanoid beings with animalistic features (cat ears, tails, scales). They are agile and possess keen senses. Beastmen have a natural affinity for Water and Shadow elements, making them excellent scouts and ambushers.",
+        "traits": [
+          "+2 DEX, +1 LUK",
+          "Natural affinity: Water and Shadow (movement spells cost 15% less mana)",
+          "Passive: Enhanced perception (detects hidden enemies within 10 meters)"
+        ],
+        "homeland": "Ventorium (Skywatch Tower) and Tenebralis (nomadic)",
+        "typical_classes": [
+          "Shadow Mage",
+          "Assassin",
+          "Summoner",
+          "Aqualist"
+        ]
+      },
+      {
+        "name": "Shade",
+        "description": "Mysterious beings with translucent, dark-hued skin and glowing eyes. Legends say they are the remnants of players who died in beta testing. Shades have an innate affinity for Shadow and an unusual resistance to mind-altering magic.",
+        "traits": [
+          "+2 WIS, +1 INT",
+          "Natural affinity: Shadow (can absorb 10% of Shadow-element damage as mana)",
+          "Resistance: 30% chance to negate fear/confusion effects"
+        ],
+        "homeland": "Tenebralis (Shadowspire Outpost)",
+        "typical_classes": [
+          "Dark Mage",
+          "Necromancer",
+          "Cursemancer",
+          "Rogue"
+        ]
+      }
+    ],
+    "power_system": {
+      "name": "Ascendant Magic",
+      "description": "Magic is the sole power system. Players cast spells by channeling mana through incantations, gestures, or runic inscriptions. The system is divided into six core elements (Fire, Water, Earth, Wind, Light, Shadow) and two rare elements (Time, Space). Each element has 10 levels of mastery. Players begin as Novices and must study grimoires, complete quests, and practice to advance. Typical training times assume regular practice (4-6 hours per day). The game time flows 1:1 with real world, but some special quests or mana-rich areas can accelerate progression by up to 50%.",
+      "levels": [
+        {
+          "name": "Novice",
+          "description": "Can cast basic cantrips and one-element light spells. Mana pool is shallow.",
+          "typical_time": "1 week"
+        },
+        {
+          "name": "Apprentice",
+          "description": "Able to cast simple combat spells (e.g., Fire Bolt, Water Jet). Understands mana control.",
+          "typical_time": "2 weeks"
+        },
+        {
+          "name": "Initiate",
+          "description": "Can cast multi-element spells and maintain simple buffs. Begins to sense ley lines.",
+          "typical_time": "1 month"
+        },
+        {
+          "name": "Adept",
+          "description": "Spells become more powerful and have area effects. Can create small magical constructs.",
+          "typical_time": "2 months"
+        },
+        {
+          "name": "Expert",
+          "description": "Mastery of one element; can cast advanced spells (e.g., Fire Storm, Healing Wave).",
+          "typical_time": "3 months"
+        },
+        {
+          "name": "Master",
+          "description": "Can combine two elements in a single spell. Unlocks element-specific ultimate spells.",
+          "typical_time": "6 months"
+        },
+        {
+          "name": "Archmage I",
+          "description": "Achieves partial control over ley lines. Can temporarily boost a region's mana flow.",
+          "typical_time": "1 year"
+        },
+        {
+          "name": "Archmage II",
+          "description": "Can cast spells from the rare Time element (slow motion, minor time rewind).",
+          "typical_time": "2 years"
+        },
+        {
+          "name": "Archmage III",
+          "description": "Can cast Space element spells (short-distance teleportation, pocket dimensions).",
+          "typical_time": "3 years"
+        },
+        {
+          "name": "Sage",
+          "description": "Theoretical cap. Can manipulate multiple ley lines simultaneously and cast reality-altering spells. No player has reached this level yet.",
+          "typical_time": "5 years"
+        }
+      ]
+    },
+    "factions": [
+      {
+        "name": "The Liberation Army",
+        "id": "liberation_army",
+        "description": "A large, militant faction aiming to clear the floors as quickly as possible to free all players. They follow a strict command structure and prioritize efficiency over exploration.",
+        "ideology": "Unity through discipline. The needs of the many outweigh the few.",
+        "leader": "Lt. Commander Kirito (a battle-hardened human mage)",
+        "goals": [
+          "Clear floor bosses quickly",
+          "Maintain order in towns",
+          "Suppress player-killer activity"
+        ],
+        "territory": "Primus Arcus (headquarters), outposts on floors 2-4",
+        "members": "Approx. 2,500 players (mostly human and dwarf)"
+      },
+      {
+        "name": "The Mage Council",
+        "id": "mage_council",
+        "description": "A scholarly faction focused on researching magic, discovering hidden lore, and understanding the true nature of Aincrad. They are the keepers of all known grimoires.",
+        "ideology": "Knowledge is the ultimate weapon. The death game is a puzzle to be solved.",
+        "leader": "Archsage Lyra (a Sylvan Archmage II)",
+        "goals": [
+          "Unlock the upper floors' seals through research",
+          "Discover the identity of the game master",
+          "Protect rare magical artifacts"
+        ],
+        "territory": "Silvamagica (Glimmerwood Library), Aquaferrum (research outpost)",
+        "members": "Approx. 800 players (mostly Sylvan and human scholars)"
+      },
+      {
+        "name": "The Dark Guild",
+        "id": "dark_guild",
+        "description": "A shadowy faction that believes the only way to escape is to embrace death and rebirth as true 'players' of the game. They are infamous for player-killing, theft, and experimenting with forbidden magic (necromancy, shadow curses).",
+        "ideology": "Survival of the fittest. The weak are a burden. The game is a chance for transcendence.",
+        "leader": "The Shade King (a high-level Shade mage, identity unknown)",
+        "goals": [
+          "Control the black market for mana crystals",
+          "Assassinate key faction leaders",
+          "Unlock the rumored 'Death Magic' element"
+        ],
+        "territory": "Tenebralis (Shadowspire Outpost), hidden safe houses on all floors",
+        "members": "Approx. 600 players (mostly shade, beastman, and desperate humans)"
+      },
+      {
+        "name": "The Keepers of the Seal",
+        "id": "keepers_of_the_seal",
+        "description": "A secretive, elite order formed by players who have reached Archmage levels. They claim to have received visions from the game's creator. Their true motives are unknown, but they oppose both the Liberation Army's rush and the Dark Guild's chaos.",
+        "ideology": "The castle must be cleared in a specific order, according to an ancient prophecy. The seal on each floor must not be broken too early.",
+        "leader": "The Oracle (a mysterious figure who never shows their face)",
+        "goals": [
+          "Preserve the balance of ley lines",
+          "Prevent premature floor clearing",
+          "Recruit promising Archmage candidates"
+        ],
+        "territory": "A hidden floating island above Ventorium (Sky Sanctuary), accessible only via teleport",
+        "members": "Approx. 50 players (all Archmage I or above)"
+      }
+    ],
+    "history": {
+      "overview": "On November 6, 2022, the VRMMORPG 'Aincrad: Magus Online' launched. 10,000 players logged in, only to be trapped by the game's creator, Kayaba Akihiko. He announced that death in-game means death in reality, and the only way to escape is to clear all 100 floors. Unlike the original Sword Art Online, this version replaced swords with magic as the primary combat system. The first year was chaotic: players struggled to organize, the first floor was cleared after two months, and factions formed rapidly. As of now (8 months in), players are stuck on the fifth floor.",
+      "major_events": [
+        "Day 1: The Death Game begins. Kayaba's announcement shocks the 10,000 players.",
+        "Month 1: The Town of Beginnings becomes overcrowded. First player death due to PK.",
+        "Month 2: First Floor Boss (Luminous Sanctum) cleared by a raid of 20 mages led by a human named Kirito.",
+        "Month 4: Formation of the Mage Council after a powerful grimoire is discovered on Floor 2.",
+        "Month 5: The Dark Guild splinters from the Liberation Army after a dispute over PK handling.",
+        "Month 6: Second and third floors cleared. Archmage-level players emerge.",
+        "Month 7: Fourth floor Stormspire cleared with the help of the Keepers of the Seal (first public appearance).",
+        "Month 8 (Current): The 5th floor boss remains undefeated. Internal tensions rise between factions. Rumors of a hidden 'Archmage' class and whispers of a traitor among the Keepers."
+      ],
+      "current_situation": "Players are entrenched on Floor 5 (Tenebralis). The Liberation Army has set up a forward base but struggles against the Dark Guild's ambushes. The Mage Council has discovered an ancient seal that appears to lock the 6th floor, requiring a ritual involving all six core elements. The Keepers of the Seal refuse to cooperate, claiming the time is not right. Meanwhile, player morale is at an all-time low, and the number of PK incidents is rising. Some players have begun to lose hope, while others chase rumors of a safe zone on Floor 10."
+    },
+    "daily_life": "Players must simulate basic needs: hunger, thirst, sleep, and hygiene (all managed by the NerveGear). They usually gather in safe towns on each floor. A typical day involves waking up in an inn or rented room, eating breakfast at a tavern (in-game food provides temporary buffs), then heading to a quest board or guild hall. Many spend hours grinding monsters for mana crystals (currency and spell fuel), studying spells in libraries, or trading loot at market squares. Specialized players like crafters or alchemists set up shops. Social activities include organizing raid parties, attending auctions, or participating in arena duels (non-lethal). At night, players often socialize in pubs, share rumors, or plan the next day's expedition. The constant threat of death (real death) creates a pervasive tension; most players avoid unnecessary risks, but the Dark Guild's provocations force frequent skirmishes.",
+    "dangers": {
+      "monster_types": [
+        {
+          "name": "Elemental Slimes",
+          "description": "Low-level amorphous monsters that embody a single element. Easy to defeat but spawn in swarms."
+        },
+        {
+          "name": "Feral Crystals",
+          "description": "Animal-like constructs made of mana crystal. Common on floors 1-2. Drop mana shards."
+        },
+        {
+          "name": "Umbra Lupus",
+          "description": "Shadow wolves that stalk prey in groups. Can turn partially intangible. Found on floors 2 and 5."
+        },
+        {
+          "name": "Tidal Wraiths",
+          "description": "Water elementals that rise from lakes. Their touch drains mana. Found on floor 3."
+        },
+        {
+          "name": "Aerodrakes",
+          "description": "Sky serpents with lightning breath. Fast and agile; require coordinated attacks. Found on floor 4."
+        },
+        {
+          "name": "Shadow Stalkers",
+          "description": "Humanoid shadows that mimic player movements. They can copy spells but with reduced power. Found on floor 5."
+        },
+        {
+          "name": "Corrupted Mana Pools",
+          "description": "Stationary hazards that inflict confusion and mana drain. Not monsters but dangerous environmental features."
+        },
+        {
+          "name": "Player Killers (PKs)",
+          "description": "Player characters who attack others for loot or sport. The biggest threat in any floor."
+        }
+      ],
+      "dungeons": [
+        {
+          "name": "The Luminous Sanctum",
+          "location": "Floor 1, beneath the Central Plaza",
+          "recommended_level": "Novice-Apprentice (levels 1-2)",
+          "description": "A glowing cathedral made of white crystal. Light elementals roam the halls. The sanctum contains the first floor boss room.",
+          "boss": "Luminous Guardian - a giant humanoid crystal that shoots beams of light. Weak to shadow magic.",
+          "rewards": [
+            "First tier grimoire (random element)",
+            "100 mana crystals",
+            "Portal key to floor 2"
+          ]
+        },
+        {
+          "name": "The Crystal Depths",
+          "location": "Floor 2, beneath the Mana River Delta",
+          "recommended_level": "Apprentice-Initiate (levels 2-3)",
+          "description": "An underwater cavern system filled with glowing crystals and water elementals. Requires water-breathing spell or potion.",
+          "boss": "Abyssal Kraken - a giant squid-like creature that controls water currents. Vulnerable to lightning spells.",
+          "rewards": [
+            "Water-element grimoire (rare)",
+            "Pearl of Mana Regeneration",
+            "Leyline map fragment"
+          ]
+        },
+        {
+          "name": "The Ashen Labyrinth",
+          "location": "Floor 3, Deepforge Caverns",
+          "recommended_level": "Initiate-Adept (levels 3-4)",
+          "description": "A maze of tunnels filled with lava pools and iron golems. Magical traps are common. The walls are enchanted to shift periodically.",
+          "boss": "Magma Colossus - a 15-foot-tall golem of molten rock. Immune to fire, weak to water and earth magic.",
+          "rewards": [
+            "Earth-element grimoire (epic)",
+            "Forgehammer of the Deep",
+            "Rune of Teleportation (single-use)"
+          ]
+        },
+        {
+          "name": "The Stormspire",
+          "location": "Floor 4, Stormcrest Peak",
+          "recommended_level": "Adept-Expert (levels 4-5)",
+          "description": "A tower that pierces through a permanent storm cloud. Each floor has wind puzzles and lightning traps. The top is the boss arena.",
+          "boss": "Tempest Wyrm - a winged serpent that commands lightning and tornadoes. Must be fought using wind negation spells and grounded tactics.",
+          "rewards": [
+            "Wind-element grimoire (epic)",
+            "Stormchaser Boots (increased movement speed)",
+            "Key to Floor 5"
+          ]
+        },
+        {
+          "name": "The Void Crucible",
+          "location": "Floor 5, Obsidian Pond",
+          "recommended_level": "Expert-Master (levels 5-6)",
+          "description": "A circular arena surrounded by a black lake. The boss fight is a gauntlet of shadow elementals, culminating in a confrontation with a Shade-like entity.",
+          "boss": "Void Revenant - a ghostly figure that can teleport and summon shadow clones. Weak to light magic and area-of-effect spells.",
+          "rewards": [
+            "Shadow-element grimoire (epic)",
+            "Cloak of Shadows (grants invisibility for 30 seconds)",
+            "Seal Fragment (rumored to open Floor 6)"
+          ]
+        }
+      ]
+    },
+    "character_generation_guide": "1. Choose a race from the five available: Human, Sylvan, Dwarf, Beastman, Shade. Each offers different stat bonuses and elemental affinities.\n2. Roll for base stats: INT (magic power), WIS (mana pool and recovery), VIT (health), DEX (casting speed), STR (physical carrying capacity, rarely used), LUK (item drop/critical chance). You have 30 points to distribute, with a minimum of 3 per stat.\n3. Select one primary element (Fire, Water, Earth, Wind, Light, Shadow) and one secondary element. Your racial affinity may influence this choice but is not mandatory.\n4. Receive a starter grimoire for your primary element (Novice level spells).\n5. Customize your appearance (height, face, hair, voice) within racial limits.\n6. Your character spawns in the Town of Beginnings on Floor 1. A tutorial NPC (Kayaba's hologram) will guide you through basic casting and the user interface.\n7. Your journey begins at Level 1 (Novice). There are no level caps, but advancement requires time, study, and practice as per the Ascendant Magic system.\n8. You may choose to join a faction immediately or remain independent. Faction membership provides quests and support but also obligations.",
+    "activity_generation_guide": "Activities are generated based on the current floor, player level, faction alignment, and in-game events. Use the following categories:\n- **Grinding**: Hunt monsters on the current floor for mana crystals, XP, and spell components. Higher-level monsters grant better rewards but require groups.\n- **Questing**: Accept quests from NPCs or faction leaders. typical quests: escort, fetch, elimination, research.\n- **Dungeoneering**: Form a party to tackle available dungeons (see dangers). Dungeons are repeatable but become less rewarding.\n- **Crafting & Study**: Spend time in towns to craft potions, enchanted items, or study new spells from grimoires. Requires materials and library access.\n- **Socializing**: Interact with other players at taverns, markets, or faction meetings. Can lead to group formations or information exchange.\n- **Exploration**: Venture off the beaten path to find hidden locations (rare resources, secret quests, lore fragments).\n- **PvP & PK Defense**: Respond to Dark Guild attacks or engage in arena duels (non-lethal).\n- **Faction Warfare**: Participate in large-scale conflicts between factions (e.g., Liberation Army raids on Dark Guild hideouts).\n- **Special Events**: Respond to emergent events such as boss raids, environmental phenomena, or player-organized tournaments.",
+    "event_generation_guide": "Events are triggered by player actions, time progression, or global milestones. Generate events considering the current state of the game:\n1. **Floor Boss Raid**: Organize a raid of 20+ players to attempt clearing the current floor boss. Success unlocks the next floor.\n2. **Faction Conflict**: A sudden skirmish or full-scale battle between two factions (e.g., Liberation Army vs. Dark Guild in Tenebralis).\n3. **Magical Anomaly**: A rift opens or ley lines fluctuate, creating a temporary mini-dungeon, new resources, or hazards.\n4. **NPC Storyline**: A multi-part quest chain initiated by an NPC (e.g., a mage who claims to know the location of a rare grimoire).\n5. **Player-Driven Economy**: Discovery of a new recipe or rare drop that shifts the market (e.g., a potion that temporarily increases mana regeneration).\n6. **Survival Challenge**: A severe weather event (e.g., a mana storm on Floor 4) or monster migration that forces players to bunker down or evacuate.\n7. **PvP Tournament**: An arena event organized by a neutral player, offering prize money (mana crystals) and prestige.\n8. **The Great Mystery**: Clues about the game's creator appear (e.g., a hidden diary fragment) that may lead to a new understanding of the death game.\n9. **Traitor Revealed**: A major NPC or faction leader is exposed as a collaborator with the game master or a high-level PK.\n10. **The Sealed Floor**: An attempt to open the seal to Floor 6 using the ritual discovered by the Mage Council. Requires cooperation of all factions, which is nearly impossible due to current tensions."
+  },
+  "world_type": "fantasy",
+  "growth_mode": "fast",
+  "story": {
+    "current_chapter": 4,
+    "current_scene_id": null,
+    "scene_description": "",
+    "choices": [],
+    "history": [
+      {
+        "chapter": 1,
+        "summary": "你环顾四周，小村庄的茅草屋错落有致，炊烟从烟囱中袅袅升起。远处森林的边缘闪烁着微弱的魔法光芒，似乎有什么东西在召唤着你。村口的公告栏上贴着一张泛黄的告示，提到附近的矿洞最近出现了异常的魔力波动。一位老",
+        "action": "在原地看看环境",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 1,
+        "summary": "你推开铁匠铺的木门，灼热的气浪扑面而来。柜台后的矮壮铁匠正敲打着一块发红的铁胚，他抬头瞥了你一眼，用下巴指了指墙边挂着的一排武器：“新手货在那，便宜但能用。”你看到几把磨损的铁剑、木盾，还有一把标价不",
+        "action": "铁匠铺去看看，有没有便宜的新手武器",
+        "outcome": "trade"
+      },
+      {
+        "chapter": 1,
+        "summary": "铁匠铺的矮人老板用沾着炉灰的手抹了把脸，从柜台底下拖出一把铁锈斑斑的短剑——'这算是铁，但从没开过刃，能挡住史莱姆就算你运气好。'他报了个你负担得起的价码，但眼神分明在说：靠这个去裂缝讨生活，不如直接",
+        "action": "问老板有没有便宜的武器",
+        "outcome": "trade"
+      },
+      {
+        "chapter": 1,
+        "summary": "焕灵伸手探向虚空中悬浮的武器光点，一柄新手铁剑在微光中显形。他的手掌触到冰冷的剑柄，能量流转的嗡鸣声沿手臂而上，这是成为死亡游戏战士的第一步。周围的新手广场上，几名玩家正投来审视的目光，空气中弥漫着不",
+        "action": "焕灵装配武器",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 1,
+        "summary": "你从腰间取下那把铁质单手剑，剑刃在微光下泛起冷冽的金属光泽。另一只手则举起那面覆盖着陈旧皮革的圆盾，盾面边缘的铆钉已然磨损，却仍能提供坚实的防护。你紧握剑柄，感受着武器与盾牌的重量，心中涌起一丝安稳—",
+        "action": "我装配单手剑和盾牌",
+        "outcome": "nothing"
+      },
+      {
+        "chapter": 2,
+        "summary": "你紧握铁剑，沿着村庄外围的小径谨慎前行。不远处的林地边缘，几只翠绿色的史莱姆正懒洋洋地蠕动着，它们似乎没有注意到你的存在。你压低身形，缓缓靠近，盘算着是否要发动一次突袭。",
+        "action": "走出村庄外，远处看看有没有什么低等级的怪，小心谨慎",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 2,
+        "summary": "你与yount呈扇形包夹那只凝胶状的史莱姆。它先发制人，弹射出一团酸液，擦过你的左臂，灼热的痛感传来。yount趁机挥剑劈砍，剑刃陷进粘稠的果冻身躯，却被顺势黏住。你立刻发动重击，铁剑带着风声劈下，斩",
+        "action": "焕灵和yount一起进攻一个史莱姆",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 2,
+        "summary": "你举起新手铁剑，朝最近的一只元素史莱姆劈去。剑刃擦过它的胶质表面，激起一串蓝色火花，但未造成明显伤害。史莱姆受到刺激后猛地弹起，朝你脸上砸来，你侧身一闪，勉强躲过。它落地后迅速膨胀，发出‘嘶嘶’声，似",
+        "action": "攻击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 2,
+        "summary": "你举起铁剑，对准最近的史莱姆核心猛力劈下。剑刃切入果冻般的身体，溅出蓝色黏液，但史莱姆迅速收缩，反身弹射，试图撞向你的面门。你侧身闪避，铁剑在地面划出一道火花，双方再次拉开距离，对峙在碎裂的晶体之间。",
+        "action": "继续攻击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 2,
+        "summary": "你沿着Primus Arcus边缘的草地前进，很快发现一只绿色史莱姆正在缓慢蠕动。你举起铁剑重击而下，史莱姆灵巧地侧移，剑刃只擦过它的胶质表面。它弹跳着向你扑来，你下意识举剑格挡，却感到一股黏稠的冲击",
+        "action": "继续找史莱姆，刷等级",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 3,
+        "summary": "你蜷身藏在灰石堆后，屏住呼吸等待。一只元素史莱姆蹦跳着靠近，你觉得时机已到，猛然挥剑斩下。剑刃划过黏液表面，却只擦出一道浅痕——它比你预想的更快，弹射开来，溅出的酸液灼烧你的护甲。你立刻举剑挡在身前，",
+        "action": "伏击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 3,
+        "summary": "你握紧新手铁剑，怒吼着向面前的元素史莱姆劈去。剑刃切开它的胶质身体，溅起蓝色的液体，但史莱姆迅速收缩，试图从侧面弹射撞击你的盾牌。你侧身格挡，铁剑再次横扫，斩断了它的一半身躯。空气中弥漫着灼热的魔力波",
+        "action": "继续攻击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 3,
+        "summary": "你蹲伏在一片蕨类植物丛中，观察着前方的林间空地。空地中央矗立着一块被藤蔓缠绕的古老石碑，碑面上刻着微弱的符文，偶尔闪烁起幽蓝色的光芒。你注意到石碑周围的泥土有被反复翻动过的痕迹，似乎有其他玩家或生物曾",
+        "action": "附近观察一下，不轻举妄动",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 3,
+        "summary": "你沿着林间小径深入，发现前方一片空地上有两只Elemental Slime正在缓慢蠕动。它们浑身泛着微光，似乎没有注意到你的存在。你握紧铁剑，压低身形，准备靠近——但脚下枯枝突然发出清脆的断裂声。其中",
+        "action": "再看看附近有没有低等级小怪",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 3,
+        "summary": "你紧握铁剑，盯住眼前那只布满晶簇的元素史莱姆，深吸一口气后猛然冲上前去。铁剑带着破风声劈下，正中史莱姆的核心，它表面的水晶迸裂开来，发出刺耳的碎裂声。怪物愤怒地膨胀，身体快速蠕动，向你喷射出炽热的液态",
+        "action": "集中攻击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 4,
+        "summary": "你与同伴背靠背结成防御阵型，铁剑迅速劈向扑来的元素史莱姆。剑锋切入凝胶核心，发出滋滋的腐蚀声，溅起的酸液擦过你的手臂留下一道灼痕。你们且战且退，将剩余的泥怪引到岩石缝隙处逐个斩杀。当最后一只史莱姆炸裂",
+        "action": "两人继续战斗，清掉这些小怪",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 4,
+        "summary": "你握紧新手铁剑，冲向最近的一只元素史莱姆。剑刃劈开其胶质身躯，溅起蓝色火花，但史莱姆迅速重组，向你弹射酸性黏液。你侧身翻滚，躲过大部分攻击，左臂仍被擦过，传来灼痛。",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      }
+    ],
+    "pending_action": null,
+    "current_location": "village"
+  },
+  "enemy": null,
+  "enemies": [
+    {
+      "name": "Umbra Lupus1",
+      "level": 4,
+      "hp": 32,
+      "max_hp": 80,
+      "mp": 32,
+      "max_mp": 32,
+      "stats": {
+        "strength": 12,
+        "agility": 11,
+        "intelligence": 9,
+        "vitality": 12,
+        "luck": 8
+      },
+      "equipment": [],
+      "skills": [],
+      "exp_reward": 48,
+      "gold_reward": 24,
+      "type": "normal",
+      "stagger_turns": 0,
+      "stance_points": 100,
+      "injuries": {}
+    },
+    {
+      "name": "Feral Crystals2",
+      "level": 2,
+      "hp": 80,
+      "max_hp": 80,
+      "mp": 32,
+      "max_mp": 32,
+      "stats": {
+        "strength": 12,
+        "agility": 11,
+        "intelligence": 9,
+        "vitality": 12,
+        "luck": 8
+      },
+      "equipment": [],
+      "skills": [],
+      "exp_reward": 48,
+      "gold_reward": 24,
+      "type": "normal",
+      "stagger_turns": 0,
+      "stance_points": 100,
+      "injuries": {}
+    }
+  ],
+  "in_combat": true,
+  "is_alive": true,
+  "death_cause": null,
+  "play_time_days": 1,
+  "start_time": "2026-07-31T13:40:38.674173",
+  "kill_count": 3,
+  "created_at": "2026-07-31T13:40:38.674179",
+  "shared_inventory": [
+    {
+      "name": "精制弓",
+      "type": "weapon",
+      "rarity": "uncommon",
+      "rarity_name": "优秀",
+      "color": "#3fb950",
+      "bonus": 5,
+      "stat_bonus": {
+        "strength": 1
+      },
+      "level_req": 1,
+      "sell_price": 21
+    }
+  ],
+  "user_character": {
+    "name": "yount",
+    "class_id": "warrior",
+    "class_name": "战士",
+    "class_icon": "⚔️",
+    "level": 3,
+    "hp": 202,
+    "max_hp": 210,
+    "mp": 50,
+    "max_mp": 50,
+    "stats": {
+      "strength": 15,
+      "agility": 8,
+      "intelligence": 5,
+      "vitality": 15,
+      "luck": 5
+    },
+    "skills": [
+      "重击",
+      "格挡",
+      "旋风斩"
+    ],
+    "equipment": [
+      {
+        "name": "锈蚀的短剑",
+        "type": "weapon",
+        "rarity": "common",
+        "rarity_name": "普通",
+        "color": "#9ca3af",
+        "bonus": 2,
+        "stat_bonus": {},
+        "level_req": 1,
+        "sell_price": 8
+      }
+    ],
+    "experience": 60,
+    "exp_to_next": 131,
+    "gold": 0,
+    "world_type": "fantasy",
+    "inventory": []
+  },
+  "world_map": {
+    "regions": {
+      "village": {
+        "region_id": "village",
+        "name": "起始村庄",
+        "description": "宁静的小村庄，冒险者的起点",
+        "danger_level": 0,
+        "region_type": "town",
+        "connections": [
+          "plains",
+          "swamp"
+        ],
+        "monsters": [],
+        "boss": null,
+        "npcs": [
+          "索菲",
+          "奥德"
+        ],
+        "explored": true,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "plains": {
+        "region_id": "plains",
+        "name": "广阔平原",
+        "description": "一望无际的草原，偶有低级魔物出没",
+        "danger_level": 1,
+        "region_type": "wild",
+        "connections": [
+          "village",
+          "guild",
+          "forest"
+        ],
+        "monsters": [
+          {
+            "name": "Player Killers (PKs)",
+            "type": "normal"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [
+          "加尔"
+        ],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "forest": {
+        "region_id": "forest",
+        "name": "暗影森林",
+        "description": "茂密的古树遮天蔽日，充满未知的危险",
+        "danger_level": 2,
+        "region_type": "wild",
+        "connections": [
+          "guild",
+          "plains",
+          "swamp"
+        ],
+        "monsters": [
+          {
+            "name": "Player Killers (PKs)",
+            "type": "normal"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "normal"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Shadow Stalkers",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [
+          "艾琳"
+        ],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "mines": {
+        "region_id": "mines",
+        "name": "废弃矿洞",
+        "description": "曾经繁华的矿场，如今被怪物占据",
+        "danger_level": 3,
+        "region_type": "dungeon",
+        "connections": [
+          "mountain"
+        ],
+        "monsters": [
+          {
+            "name": "Umbra Lupus",
+            "type": "normal"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Aerodrakes",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "normal"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "swamp": {
+        "region_id": "swamp",
+        "name": "毒沼泽地",
+        "description": "瘴气弥漫的沼泽，暗藏杀机",
+        "danger_level": 3,
+        "region_type": "wild",
+        "connections": [
+          "village",
+          "forest",
+          "mountain"
+        ],
+        "monsters": [
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Aerodrakes",
+            "type": "normal"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "normal"
+          },
+          {
+            "name": "Umbra Lupus",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "ruins": {
+        "region_id": "ruins",
+        "name": "古代遗迹",
+        "description": "远古文明的遗迹，守护着强大的力量",
+        "danger_level": 4,
+        "region_type": "dungeon",
+        "connections": [
+          "mountain",
+          "dark_castle",
+          "sacred_grove"
+        ],
+        "monsters": [
+          {
+            "name": "Aerodrakes",
+            "type": "elite"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "normal"
+          },
+          {
+            "name": "Umbra Lupus",
+            "type": "elite"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "elite"
+          }
+        ],
+        "boss": null,
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "mountain": {
+        "region_id": "mountain",
+        "name": "龙脊山脉",
+        "description": "险峻的山脉，传说巨龙栖息于此",
+        "danger_level": 4,
+        "region_type": "wild",
+        "connections": [
+          "swamp",
+          "mines",
+          "ruins"
+        ],
+        "monsters": [
+          {
+            "name": "Umbra Lupus",
+            "type": "normal"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "elite"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "normal"
+          },
+          {
+            "name": "Aerodrakes",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "dark_castle": {
+        "region_id": "dark_castle",
+        "name": "暗黑城堡",
+        "description": "魔王盘踞的城堡，黑暗力量的中心",
+        "danger_level": 5,
+        "region_type": "boss_lair",
+        "connections": [
+          "ruins"
+        ],
+        "monsters": [
+          {
+            "name": "Aerodrakes",
+            "type": "normal"
+          },
+          {
+            "name": "Elemental Slimes",
+            "type": "elite"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Feral Crystals",
+            "type": "elite"
+          },
+          {
+            "name": "Umbra Lupus",
+            "type": "normal"
+          }
+        ],
+        "boss": {
+          "name": "死亡领主",
+          "description": "镇守此地的终极强敌，危险等级5",
+          "level": 30,
+          "type": "boss"
+        },
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "guild": {
+        "region_id": "guild",
+        "name": "冒险者公会",
+        "description": "冒险者聚集之地，可以接取任务",
+        "danger_level": 0,
+        "region_type": "town",
+        "connections": [
+          "forest",
+          "plains"
+        ],
+        "monsters": [],
+        "boss": null,
+        "npcs": [
+          "卡尔",
+          "赫克托",
+          "薇拉"
+        ],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      },
+      "sacred_grove": {
+        "region_id": "sacred_grove",
+        "name": "圣灵秘境",
+        "description": "隐藏在森林深处的神圣之地",
+        "danger_level": 2,
+        "region_type": "secret",
+        "connections": [
+          "ruins"
+        ],
+        "monsters": [
+          {
+            "name": "Feral Crystals",
+            "type": "normal"
+          },
+          {
+            "name": "Shadow Stalkers",
+            "type": "normal"
+          },
+          {
+            "name": "Tidal Wraiths",
+            "type": "normal"
+          },
+          {
+            "name": "Aerodrakes",
+            "type": "normal"
+          }
+        ],
+        "boss": null,
+        "npcs": [],
+        "explored": false,
+        "boss_defeated": false,
+        "discoveries": []
+      }
+    },
+    "current_region_id": "village",
+    "start_region_id": "village"
+  },
+  "npc_system": {
+    "npcs": {
+      "npc_village_0": {
+        "npc_id": "npc_village_0",
+        "name": "索菲",
+        "role": "商人",
+        "personality": "精明",
+        "location": "village",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 1,
+        "hp": 40,
+        "max_hp": 40,
+        "can_trade": true,
+        "can_quest": false,
+        "quest_given": false,
+        "dialogue_hint": "欢迎光临！看看有什么需要的？",
+        "death_record": null
+      },
+      "npc_village_1": {
+        "npc_id": "npc_village_1",
+        "name": "奥德",
+        "role": "猎人",
+        "personality": "沉默寡言",
+        "location": "village",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 1,
+        "hp": 40,
+        "max_hp": 40,
+        "can_trade": false,
+        "can_quest": true,
+        "quest_given": false,
+        "dialogue_hint": "森林里有些不对劲…",
+        "death_record": null
+      },
+      "npc_plains_2": {
+        "npc_id": "npc_plains_2",
+        "name": "加尔",
+        "role": "盗贼",
+        "personality": "狡猾",
+        "location": "plains",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 4,
+        "hp": 70,
+        "max_hp": 70,
+        "can_trade": true,
+        "can_quest": false,
+        "quest_given": false,
+        "dialogue_hint": "嘿嘿，有些好东西你要不要看看？",
+        "death_record": null
+      },
+      "npc_forest_3": {
+        "npc_id": "npc_forest_3",
+        "name": "艾琳",
+        "role": "老者",
+        "personality": "睿智",
+        "location": "forest",
+        "faction": "The Dark Guild",
+        "alive": true,
+        "relationship": 0,
+        "level": 4,
+        "hp": 70,
+        "max_hp": 70,
+        "can_trade": false,
+        "can_quest": true,
+        "quest_given": false,
+        "dialogue_hint": "年轻人，这个世界比你想象的要危险。",
+        "death_record": null
+      },
+      "npc_guild_4": {
+        "npc_id": "npc_guild_4",
+        "name": "卡尔",
+        "role": "猎人",
+        "personality": "沉默寡言",
+        "location": "guild",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 1,
+        "hp": 40,
+        "max_hp": 40,
+        "can_trade": false,
+        "can_quest": true,
+        "quest_given": false,
+        "dialogue_hint": "森林里有些不对劲…",
+        "death_record": null
+      },
+      "npc_guild_5": {
+        "npc_id": "npc_guild_5",
+        "name": "赫克托",
+        "role": "药师",
+        "personality": "温和",
+        "location": "guild",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 1,
+        "hp": 40,
+        "max_hp": 40,
+        "can_trade": true,
+        "can_quest": false,
+        "quest_given": false,
+        "dialogue_hint": "受伤了？我这里有药。",
+        "death_record": null
+      },
+      "npc_guild_6": {
+        "npc_id": "npc_guild_6",
+        "name": "薇拉",
+        "role": "盗贼",
+        "personality": "狡猾",
+        "location": "guild",
+        "faction": "",
+        "alive": true,
+        "relationship": 0,
+        "level": 2,
+        "hp": 50,
+        "max_hp": 50,
+        "can_trade": true,
+        "can_quest": false,
+        "quest_given": false,
+        "dialogue_hint": "嘿嘿，有些好东西你要不要看看？",
+        "death_record": null
+      }
+    },
+    "death_records": []
+  },
+  "npc_death_records": [],
+  "action_log": [
+    {
+      "type": "game_start",
+      "time": "2026-07-31T13:41:06.695281",
+      "day": 1,
+      "data": {
+        "character_name": "焕灵",
+        "class_name": "战士",
+        "world_name": "Aincrad: Magus Online"
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T13:43:26.873902",
+      "day": 1,
+      "data": {
+        "action": "在原地看看环境",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你环顾四周，小村庄的茅草屋错落有致，炊烟从烟囱中袅袅升起。远处森林的边缘闪烁着微弱的魔法光芒，似乎有什么东西在召唤着你。村口的公告栏上贴着一张泛黄的告示，提到附近的矿洞最近出现了异常的魔力波动。一位老村民注意到了你的目光，缓缓向你走来。",
+        "gold_gained": 47
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T13:45:06.715995",
+      "day": 1,
+      "data": {
+        "action": "铁匠铺去看看，有没有便宜的新手武器",
+        "action_type": "free",
+        "outcome": "trade",
+        "narrative": "你推开铁匠铺的木门，灼热的气浪扑面而来。柜台后的矮壮铁匠正敲打着一块发红的铁胚，他抬头瞥了你一眼，用下巴指了指墙边挂着的一排武器：“新手货在那，便宜但能用。”你看到几把磨损的铁剑、木盾，还有一把标价不高的短斧，显然都是为初入门的冒险者准备的。铁匠擦擦手走过来，等你做出选择。"
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:08:50.399489",
+      "day": 1,
+      "data": {
+        "action": "问老板有没有便宜的武器",
+        "action_type": "free",
+        "outcome": "trade",
+        "narrative": "铁匠铺的矮人老板用沾着炉灰的手抹了把脸，从柜台底下拖出一把铁锈斑斑的短剑——'这算是铁，但从没开过刃，能挡住史莱姆就算你运气好。'他报了个你负担得起的价码，但眼神分明在说：靠这个去裂缝讨生活，不如直接给自己买个够便宜的葬礼。",
+        "gold_spent": 50
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:18:59.476016",
+      "day": 1,
+      "data": {
+        "action": "焕灵装配武器",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "焕灵伸手探向虚空中悬浮的武器光点，一柄新手铁剑在微光中显形。他的手掌触到冰冷的剑柄，能量流转的嗡鸣声沿手臂而上，这是成为死亡游戏战士的第一步。周围的新手广场上，几名玩家正投来审视的目光，空气中弥漫着不安与警觉。剑刃反射出Primus Arcus的湛蓝天光，仿佛在提醒他，每一次装备都需要用生命来保护。",
+        "exp_gained": 25,
+        "gold_gained": 22
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:20:17.300769",
+      "day": 1,
+      "data": {
+        "action": "我装配单手剑和盾牌",
+        "action_type": "free",
+        "outcome": "nothing",
+        "narrative": "你从腰间取下那把铁质单手剑，剑刃在微光下泛起冷冽的金属光泽。另一只手则举起那面覆盖着陈旧皮革的圆盾，盾面边缘的铆钉已然磨损，却仍能提供坚实的防护。你紧握剑柄，感受着武器与盾牌的重量，心中涌起一丝安稳——至少现在，你不至于空手面对那些游荡的怪物了。但盾牌上隐约的划痕和剑刃的缺口提醒你，它们都经历过不止一场恶战。身后的森林传来枝叶被踩碎的声响，似乎有什么东西正缓缓靠近。"
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:23:37.186918",
+      "day": 1,
+      "data": {
+        "action": "走出村庄外，远处看看有没有什么低等级的怪，小心谨慎",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你紧握铁剑，沿着村庄外围的小径谨慎前行。不远处的林地边缘，几只翠绿色的史莱姆正懒洋洋地蠕动着，它们似乎没有注意到你的存在。你压低身形，缓缓靠近，盘算着是否要发动一次突袭。",
+        "exp_gained": 25,
+        "gold_gained": 41
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:44:44.091867",
+      "day": 1,
+      "data": {
+        "action": "焕灵和yount一起进攻一个史莱姆",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你与yount呈扇形包夹那只凝胶状的史莱姆。它先发制人，弹射出一团酸液，擦过你的左臂，灼热的痛感传来。yount趁机挥剑劈砍，剑刃陷进粘稠的果冻身躯，却被顺势黏住。你立刻发动重击，铁剑带着风声劈下，斩开半透明的胶质，溅起一片淡蓝色的液体，史莱姆扭曲着分裂成两团更小的个体，分别扑向你和你的同伴。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Elemental Slimes1毫无防备，直接承受攻击，造成21点伤害 → Elemental Slimes1",
+            "yountElemental Slimes1格挡，减免部分伤害，造成12点伤害 → Elemental Slimes1",
+            "Elemental Slimes1yount闪避判断失误，攻击命中，造成1点伤害 → yount",
+            "Tidal Wraiths2焕灵格挡，减免部分伤害，未造成伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T14:52:17.026440",
+      "day": 1,
+      "data": {
+        "action": "攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你举起新手铁剑，朝最近的一只元素史莱姆劈去。剑刃擦过它的胶质表面，激起一串蓝色火花，但未造成明显伤害。史莱姆受到刺激后猛地弹起，朝你脸上砸来，你侧身一闪，勉强躲过。它落地后迅速膨胀，发出‘嘶嘶’声，似乎准备释放一个低级法术。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Elemental Slimes1闪避判断失误，攻击命中，造成19点伤害 → Elemental Slimes1",
+            "yountTidal Wraiths2毫无防备，直接承受攻击，造成18点伤害 → Tidal Wraiths2",
+            "Tidal Wraiths2暴击！yount闪避判断失误，攻击命中，造成1点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T15:04:28.152860",
+      "day": 1,
+      "data": {
+        "action": "继续攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你举起铁剑，对准最近的史莱姆核心猛力劈下。剑刃切入果冻般的身体，溅出蓝色黏液，但史莱姆迅速收缩，反身弹射，试图撞向你的面门。你侧身闪避，铁剑在地面划出一道火花，双方再次拉开距离，对峙在碎裂的晶体之间。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Elemental Slimes1",
+            "Tidal Wraiths2"
+          ],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Tidal Wraiths2闪避判断失误，攻击命中，造成24点伤害 → Tidal Wraiths2",
+            "yountTidal Wraiths2格挡，减免部分伤害，造成10点伤害 → Tidal Wraiths2"
+          ]
+        },
+        "exp_gained": 60,
+        "gold_gained": 30,
+        "leveled_up": true,
+        "new_level": 2
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T15:20:46.709946",
+      "day": 1,
+      "data": {
+        "action": "继续找史莱姆，刷等级",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你沿着Primus Arcus边缘的草地前进，很快发现一只绿色史莱姆正在缓慢蠕动。你举起铁剑重击而下，史莱姆灵巧地侧移，剑刃只擦过它的胶质表面。它弹跳着向你扑来，你下意识举剑格挡，却感到一股黏稠的冲击力透过剑身传来。周围又传来几声熟悉的弹跳声——更多史莱姆正在靠近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Umbra Lupus格挡，减免部分伤害，造成9点伤害 → Umbra Lupus",
+            "yountUmbra Lupus闪避判断失误，攻击命中，造成15点伤害 → Umbra Lupus",
+            "Umbra Lupus焕灵格挡，减免部分伤害，未造成伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T15:22:15.272965",
+      "day": 1,
+      "data": {
+        "action": "伏击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你蜷身藏在灰石堆后，屏住呼吸等待。一只元素史莱姆蹦跳着靠近，你觉得时机已到，猛然挥剑斩下。剑刃划过黏液表面，却只擦出一道浅痕——它比你预想的更快，弹射开来，溅出的酸液灼烧你的护甲。你立刻举剑挡在身前，但那团黏稠的怪物已蓄势待发，准备反击。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚔️ 伏击成功！敌人毫无防备，攻击伤害大幅提升！",
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Umbra Lupus闪避判断失误，攻击命中，造成16点伤害 → Umbra Lupus",
+            "yountUmbra Lupus格挡，减免部分伤害，造成10点伤害 → Umbra Lupus",
+            "Umbra Lupus焕灵格挡，减免部分伤害，未造成伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T15:24:02.298164",
+      "day": 1,
+      "data": {
+        "action": "继续攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧新手铁剑，怒吼着向面前的元素史莱姆劈去。剑刃切开它的胶质身体，溅起蓝色的液体，但史莱姆迅速收缩，试图从侧面弹射撞击你的盾牌。你侧身格挡，铁剑再次横扫，斩断了它的一半身躯。空气中弥漫着灼热的魔力波动，史莱姆发出高亢的嘶鸣，似乎在呼唤同伴。远处传来窸窣的声响，更多的元素生物正在靠近。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Umbra Lupus"
+          ],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "焕灵Umbra Lupus毫无防备，直接承受攻击，造成17点伤害 → Umbra Lupus",
+            "掉落：精制弓（优秀）已放入背包"
+          ]
+        },
+        "exp_gained": 39,
+        "gold_gained": 19,
+        "leveled_up": true,
+        "new_level": 3,
+        "drops": [
+          {
+            "name": "精制弓",
+            "type": "weapon",
+            "rarity": "uncommon",
+            "rarity_name": "优秀",
+            "color": "#3fb950",
+            "bonus": 5,
+            "stat_bonus": {
+              "strength": 1
+            },
+            "level_req": 1,
+            "sell_price": 21
+          }
+        ]
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T17:34:43.333129",
+      "day": 1,
+      "data": {
+        "action": "附近观察一下，不轻举妄动",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你蹲伏在一片蕨类植物丛中，观察着前方的林间空地。空地中央矗立着一块被藤蔓缠绕的古老石碑，碑面上刻着微弱的符文，偶尔闪烁起幽蓝色的光芒。你注意到石碑周围的泥土有被反复翻动过的痕迹，似乎有其他玩家或生物曾在此驻足。就在你准备靠近时，树丛深处传来一阵低沉的呜咽声，听起来像是受伤的野兽。",
+        "exp_gained": 35,
+        "gold_gained": 39
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T17:44:39.661862",
+      "day": 1,
+      "data": {
+        "action": "再看看附近有没有低等级小怪",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你沿着林间小径深入，发现前方一片空地上有两只Elemental Slime正在缓慢蠕动。它们浑身泛着微光，似乎没有注意到你的存在。你握紧铁剑，压低身形，准备靠近——但脚下枯枝突然发出清脆的断裂声。其中一只Slime猛地转向你，身体表面泛起危险的红光。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1格挡，减免部分伤害，造成7点伤害 → Umbra Lupus1",
+            "Umbra Lupus1yount闪避判断失误，攻击命中，造成2点伤害 → yount",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成2点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T17:45:28.301560",
+      "day": 1,
+      "data": {
+        "action": "集中攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你紧握铁剑，盯住眼前那只布满晶簇的元素史莱姆，深吸一口气后猛然冲上前去。铁剑带着破风声劈下，正中史莱姆的核心，它表面的水晶迸裂开来，发出刺耳的碎裂声。怪物愤怒地膨胀，身体快速蠕动，向你喷射出炽热的液态碎片。你侧身闪避，但还是被几块碎片擦过肩膀，火辣辣的疼痛传来。你稳住身形，准备再一次挥剑。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚔️ 集中火力！攻击伤害提升！",
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1毫无防备，直接承受攻击，造成14点伤害 → Umbra Lupus1",
+            "Umbra Lupus1yount闪避判断失误，攻击命中，造成2点伤害 → yount",
+            "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T17:49:19.835190",
+      "day": 1,
+      "data": {
+        "action": "两人继续战斗，清掉这些小怪",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你与同伴背靠背结成防御阵型，铁剑迅速劈向扑来的元素史莱姆。剑锋切入凝胶核心，发出滋滋的腐蚀声，溅起的酸液擦过你的手臂留下一道灼痕。你们且战且退，将剩余的泥怪引到岩石缝隙处逐个斩杀。当最后一只史莱姆炸裂成蓝色碎屑时，你听到暗处传来沉重的脚步声，像是有什么更大的东西被战斗声吸引。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1毫无防备，直接承受攻击，造成14点伤害 → Umbra Lupus1",
+            "Umbra Lupus1焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵",
+            "Feral Crystals2Feral Crystals2的攻击落空 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T17:53:40.863538",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧新手铁剑，冲向最近的一只元素史莱姆。剑刃劈开其胶质身躯，溅起蓝色火花，但史莱姆迅速重组，向你弹射酸性黏液。你侧身翻滚，躲过大部分攻击，左臂仍被擦过，传来灼痛。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountUmbra Lupus1闪避判断失误，攻击命中，造成13点伤害 → Umbra Lupus1",
+            "Umbra Lupus1yount闪避判断失误，攻击命中，造成2点伤害 → yount",
+            "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
+          ]
+        }
+      }
+    }
+  ]
+}

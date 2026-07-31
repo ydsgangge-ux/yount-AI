@@ -141,12 +141,9 @@ const DeathModeUI = {
           return;
         }
         renderClassCards(classesContainer, classes, null, (id) => { selectedClass = id; });
-        const firstCard = classesContainer.querySelector('.dm-class-card');
-        if (firstCard) { firstCard.style.borderColor = '#58a6ff'; selectedClass = firstCard.dataset.id; }
+        selectedClass = null;
         renderClassCards(userClassesContainer, classes, null, (id) => { selectedUserClass = id; });
-        const userCards = userClassesContainer.querySelectorAll('.dm-class-card');
-        if (userCards.length > 1) { userCards[1].style.borderColor = '#3fb950'; selectedUserClass = userCards[1].dataset.id; }
-        else if (userCards.length > 0) { userCards[0].style.borderColor = '#3fb950'; selectedUserClass = userCards[0].dataset.id; }
+        selectedUserClass = null;
       } catch (e) {
         const errHtml = `<div style="grid-column:1/-1;text-align:center;padding:12px;color:#f85149;font-size:12px;">加载失败: ${e.message}</div>`;
         classesContainer.innerHTML = errHtml;
@@ -303,30 +300,95 @@ const DeathModeUI = {
         headerChar.textContent = `${char.name || '?'} Lv.${char.level || 1} · HP ${char.hp}/${char.max_hp}`;
       }
 
-      // 装备
+      // 装备（AI角色，含卸下按钮）
       const equipment = char.equipment || [];
+      const aiName = char.name || 'AI';
       const eqHtml = equipment.length > 0 ? equipment.map(eq => {
         const icon = eq.type === 'weapon' ? '🗡️' : '🛡️';
-        return `<div style="font-size:11px;color:${eq.color || '#c9d1d9'};">${icon} ${eq.name}（${eq.rarity_name || '普通'}）</div>`;
+        return `<div style="font-size:11px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;">
+          <span>${icon} ${eq.name}（${eq.rarity_name || '普通'}）</span>
+          <button onclick="DeathModeUI._unequip('${eq.name}','ai')" style="font-size:9px;padding:1px 4px;background:#21262d;border:1px solid #30363d;border-radius:3px;color:#8b949e;cursor:pointer;">卸下</button>
+        </div>`;
       }).join('') : '<div style="font-size:11px;color:#484f58;">无装备</div>';
+
+      // 共享背包（从 state 读取）
+      const sharedInv = state.shared_inventory || [];
+      let invHtml = '';
+      if (sharedInv.length > 0) {
+        invHtml = sharedInv.map(item => {
+          const icon = item.type === 'weapon' ? '🗡️' : item.type === 'outfit' ? '🛡️' : '📦';
+          return `<div style="font-size:11px;color:${item.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+            <span>${icon} ${item.name}（${item.rarity_name || '普通'}）</span>
+            <div style="display:flex;gap:3px;">
+              <button onclick="DeathModeUI._equipFromInv('${item.name}','ai')" style="font-size:9px;padding:1px 4px;background:#1a3a1a;border:1px solid #3fb950;border-radius:3px;color:#3fb950;cursor:pointer;">AI</button>
+              <button onclick="DeathModeUI._equipFromInv('${item.name}','user')" style="font-size:9px;padding:1px 4px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:3px;color:#58a6ff;cursor:pointer;">我</button>
+              <button onclick="DeathModeUI._sellFromInv('${item.name}',${item.sell_price||5})" style="font-size:9px;padding:1px 4px;background:#3d2a1a;border:1px solid #f0883e;border-radius:3px;color:#f0883e;cursor:pointer;">售${item.sell_price||5}</button>
+            </div>
+          </div>`;
+        }).join('');
+      } else {
+        invHtml = '<div style="font-size:11px;color:#484f58;">空</div>';
+      }
 
       // 用户角色
       const uc = state.user_character;
       let ucHtml = '';
       if (uc && uc.class_name) {
         const uHpPct = uc.max_hp > 0 ? (uc.hp / uc.max_hp * 100) : 0;
+        const uMpPct = uc.max_mp > 0 ? (uc.mp / uc.max_mp * 100) : 0;
+        const uExpPct = uc.exp_to_next > 0 ? ((uc.experience || 0) / uc.exp_to_next * 100) : 0;
         const uHpColor = uHpPct > 60 ? '#3fb950' : uHpPct > 30 ? '#d29922' : '#f85149';
         const uStats = uc.stats || {};
+        const uEquipment = uc.equipment || [];
+        const uEqHtml = uEquipment.length > 0 ? uEquipment.map(eq => {
+          const icon = eq.type === 'weapon' ? '🗡️' : '🛡️';
+          return `<div style="font-size:11px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;">
+            <span>${icon} ${eq.name}（${eq.rarity_name || '普通'}）</span>
+            <button onclick="DeathModeUI._unequip('${eq.name}','user')" style="font-size:9px;padding:1px 4px;background:#21262d;border:1px solid #30363d;border-radius:3px;color:#8b949e;cursor:pointer;">卸下</button>
+          </div>`;
+        }).join('') : '';
         ucHtml = `
           <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #30363d;">
-            <div style="font-size:11px;color:#3fb950;margin-bottom:4px;">👤 用户角色</div>
-            <div style="font-size:13px;font-weight:bold;color:#c9d1d9;">${uc.name || '用户'}</div>
-            <div style="font-size:11px;color:#8b949e;">${uc.class_name || ''} Lv.${uc.level || 1}</div>
-            <div style="height:8px;background:#21262d;border-radius:4px;overflow:hidden;margin-top:4px;">
-              <div style="height:100%;width:${uHpPct}%;background:${uHpColor};transition:width 0.3s;"></div>
+            <div style="text-align:center;margin-bottom:8px;">
+              <div style="font-size:20px;">👤</div>
+              <div style="font-size:14px;font-weight:bold;color:#c9d1d9;">${uc.name || '用户'}</div>
+              <div style="font-size:11px;color:#8b949e;">${uc.class_name || ''} Lv.${uc.level || 1}</div>
             </div>
-            <div style="font-size:10px;color:#8b949e;margin-top:4px;">
-              <div>💪${uStats.strength||5} 🏃${uStats.agility||5} 🧠${uStats.intelligence||5} ❤️${uStats.vitality||5} 🍀${uStats.luck||5}</div>
+            <div style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px;">
+                <span style="color:#f85149;">HP</span><span style="color:#8b949e;">${uc.hp||0}/${uc.max_hp||0}</span>
+              </div>
+              <div style="height:8px;background:#21262d;border-radius:4px;overflow:hidden;">
+                <div style="height:100%;width:${uHpPct}%;background:${uHpColor};transition:width 0.3s;"></div>
+              </div>
+            </div>
+            <div style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px;">
+                <span style="color:#58a6ff;">MP</span><span style="color:#8b949e;">${uc.mp||0}/${uc.max_mp||0}</span>
+              </div>
+              <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden;">
+                <div style="height:100%;width:${uMpPct}%;background:#58a6ff;transition:width 0.3s;"></div>
+              </div>
+            </div>
+            <div style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px;">
+                <span style="color:#d29922;">EXP</span><span style="color:#8b949e;">${uc.experience||0}/${uc.exp_to_next||100}</span>
+              </div>
+              <div style="height:5px;background:#21262d;border-radius:3px;overflow:hidden;">
+                <div style="height:100%;width:${uExpPct}%;background:#d29922;transition:width 0.3s;"></div>
+              </div>
+            </div>
+            <div style="font-size:10px;color:#8b949e;margin-bottom:6px;">
+              <div>💪力量${uStats.strength||5} 🏃敏捷${uStats.agility||5}</div>
+              <div>🧠智力${uStats.intelligence||5} ❤️体质${uStats.vitality||5}</div>
+              <div>🍀运气${uStats.luck||5}</div>
+            </div>
+            <div style="margin-bottom:6px;">
+              <div style="font-size:10px;color:#3fb950;margin-bottom:2px;">装备</div>
+              ${uEqHtml || '<div style="font-size:11px;color:#484f58;">无</div>'}
+            </div>
+            <div style="font-size:10px;color:#8b949e;">
+              <div>💰 金币: ${uc.gold||0}</div>
             </div>
           </div>`;
       }
@@ -374,6 +436,11 @@ const DeathModeUI = {
         <div style="margin-bottom:8px;">
           <div style="font-size:10px;color:#58a6ff;margin-bottom:3px;">装备</div>
           ${eqHtml}
+        </div>
+
+        <div style="margin-bottom:8px;">
+          <div style="font-size:10px;color:#d29922;margin-bottom:3px;">🎒 背包</div>
+          ${invHtml}
         </div>
 
         <div style="font-size:10px;color:#8b949e;">
@@ -501,6 +568,27 @@ const DeathModeUI = {
         ).join(' ')}</div>`;
       }
 
+      // 购买/交易获得的装备
+      let tradeHtml = '';
+      if (d.items_equipped?.length) {
+        tradeHtml = `<div style="font-size:11px;margin-top:2px;">${d.items_equipped.map(ie =>
+          `<span style="color:#3fb950;">🗡️ 获得 ${ie.equipped}${ie.replaced ? '（替换 ' + ie.replaced + '）' : ''}</span>`
+        ).join(' ')}</div>`;
+      }
+      if (d.gold_spent) {
+        tradeHtml += `<div style="font-size:11px;color:#f0883e;margin-top:2px;">💰 花费 ${d.gold_spent} 金币</div>`;
+      }
+      if (d.hp_change) {
+        const hpColor = d.hp_change > 0 ? '#3fb950' : '#f85149';
+        const hpSign = d.hp_change > 0 ? '+' : '';
+        tradeHtml += `<div style="font-size:11px;color:${hpColor};margin-top:2px;">❤️ HP${hpSign}${d.hp_change}</div>`;
+      }
+      if (d.mp_change) {
+        const mpColor = d.mp_change > 0 ? '#58a6ff' : '#f85149';
+        const mpSign = d.mp_change > 0 ? '+' : '';
+        tradeHtml += `<div style="font-size:11px;color:${mpColor};margin-top:2px;">💧 MP${mpSign}${d.mp_change}</div>`;
+      }
+
       // 死亡
       let deathHtml = '';
       if (d.character_died) {
@@ -513,7 +601,7 @@ const DeathModeUI = {
       content = `
         <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
         ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${d.narrative}</div>` : ''}
-        ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${deathHtml}`;
+        ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
     }
     else if (type === 'move') {
       content = `<div style="color:#3fb950;">🗺️ 从 ${d.from} 前往 ${d.to}</div>
@@ -578,6 +666,45 @@ const DeathModeUI = {
       overlay.querySelector('#dh-close').addEventListener('click', () => overlay.remove());
       overlay.querySelector('#dh-restart').addEventListener('click', () => { overlay.remove(); this.showCreatePanel(); });
     } catch (e) { alert('加载名人堂失败: ' + e.message); }
+  },
+
+  // ── 背包交互 ──────────────────────────────────────
+
+  async _equipFromInv(itemName, target) {
+    try {
+      const resp = await fetch('/api/death-mode/equip-shared', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_name: itemName, target: target }),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.message || '穿戴失败'); return; }
+      this._renderStatusPanel();
+    } catch (e) { alert('穿戴失败: ' + e.message); }
+  },
+
+  async _sellFromInv(itemName, price) {
+    if (!confirm(`出售 ${itemName} 获得 ${price} 金币？`)) return;
+    try {
+      const resp = await fetch('/api/death-mode/sell-shared', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_name: itemName }),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.message || '出售失败'); return; }
+      this._renderStatusPanel();
+    } catch (e) { alert('出售失败: ' + e.message); }
+  },
+
+  async _unequip(itemName, target) {
+    try {
+      const resp = await fetch('/api/death-mode/unequip-shared', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_name: itemName, target: target }),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.message || '卸下失败'); return; }
+      this._renderStatusPanel();
+    } catch (e) { alert('卸下失败: ' + e.message); }
   },
 };
 

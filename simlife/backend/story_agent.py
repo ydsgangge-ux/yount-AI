@@ -145,16 +145,10 @@ class StoryAgent:
 只返回JSON，不要其他文字。"""
 
         try:
-            response = self.llm.generate(prompt, max_tokens=800, temperature=0.85)
+            response = self.llm.generate(prompt, max_tokens=800, temperature=0.85, thinking=False)
             response = response.strip()
-            if response.startswith("```"):
-                lines = response.split("\n")
-                response = "\n".join(lines[1:])
-                if response.endswith("```"):
-                    response = response[:-3]
-                response = response.strip()
-
-            result = json.loads(response)
+            # 清理 LLM 输出：提取 JSON
+            result = self._extract_json(response)
 
             # 如果返回数组，取第一个
             if isinstance(result, list):
@@ -229,23 +223,29 @@ class StoryAgent:
 返回JSON格式：
 {{
   "narrative": "结果叙事（3-5句）",
-  "outcome_type": "combat_success/combat_fail/discovery/social_response/trap/escape/rest/nothing",
-  "next_tension": "low/medium/high"  // 下一段的紧张度暗示
+  "outcome_type": "combat_success/combat_fail/discovery/social_response/trap/escape/rest/trade/nothing",
+  "next_tension": "low/medium/high",
+  "items_gained": ["物品名1", "物品名2"] 或 null,  // 角色获得的物品（装备名、药水等）
+  "gold_spent": 0 或 null,   // 花费的金币（购买、贿赂等）
+  "gold_gained": 0 或 null,  // 获得的金币（出售、奖励等）
+  "hp_change": 0 或 null,    // HP变化（正数恢复，负数受伤，不含战斗伤害）
+  "mp_change": 0 或 null     // MP变化（正数恢复，负数消耗）
 }}
+
+物品/金币规则：
+- 如果角色购买了物品，必须在items_gained中列出物品名，在gold_spent中填写花费金额
+- 如果角色出售了物品，在gold_gained中填写获得金额
+- 如果角色使用了药水/食物恢复，在hp_change/mp_change中填写恢复量
+- 战斗伤害不要填在hp_change里，战斗系统会自动处理
+- 如果没有任何物品/金币变动，对应字段填null
 
 只返回JSON，不要其他文字。"""
 
         try:
-            response = self.llm.generate(prompt, max_tokens=500, temperature=0.8)
+            response = self.llm.generate(prompt, max_tokens=500, temperature=0.8, thinking=False)
             response = response.strip()
-            if response.startswith("```"):
-                lines = response.split("\n")
-                response = "\n".join(lines[1:])
-                if response.endswith("```"):
-                    response = response[:-3]
-                response = response.strip()
-
-            result = json.loads(response)
+            # 清理 LLM 输出：提取 JSON
+            result = self._extract_json(response)
 
             if isinstance(result, list):
                 result = result[0] if result and isinstance(result[0], dict) else {}
@@ -257,6 +257,11 @@ class StoryAgent:
                 "narrative": str(result.get("narrative", "行动执行完毕。")),
                 "outcome_type": str(result.get("outcome_type", "nothing")),
                 "next_tension": str(result.get("next_tension", "medium")),
+                "items_gained": result.get("items_gained"),
+                "gold_spent": result.get("gold_spent"),
+                "gold_gained": result.get("gold_gained"),
+                "hp_change": result.get("hp_change"),
+                "mp_change": result.get("mp_change"),
             }
         except Exception as e:
             print(f"[DeathMode] 行动处理失败: {e}")
@@ -281,7 +286,7 @@ class StoryAgent:
 只返回描述文本，不要JSON。"""
 
         try:
-            response = self.llm.generate(prompt, max_tokens=200, temperature=0.7)
+            response = self.llm.generate(prompt, max_tokens=200, temperature=0.7, thinking=False)
             return response.strip()
         except Exception:
             return f"{char.get('name', '无名')}在冒险中倒下了，再也无法站起来。"
@@ -297,3 +302,72 @@ class StoryAgent:
                 {"id": "C", "text": "直接前进", "risk": "high", "type": "explore"},
             ],
         }
+
+    @staticmethod
+    def _extract_json(text: str):
+        """从 LLM 输出中提取 JSON，处理常见格式问题"""
+        # 去除 markdown 代码块包裹
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # 去掉第一行（```json 或 ```）和最后一行（```）
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 去除 JSON 中的注释（// 和 /* */）
+        text = re.sub(r'//.*?$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+        # 去除尾随逗号（, } 或 , ] 中的逗号）
+        text = re.sub(r',\s*([}\]])', r'\1', text)
+
+        # 尝试提取 { } 包裹的部分
+        brace_start = text.find('{')
+        bracket_start = text.find('[')
+        if brace_start >= 0 or bracket_start >= 0:
+            # 优先从第一个 { 或 [ 开始
+            if brace_start >= 0 and (bracket_start < 0 or brace_start <= bracket_start):
+                start = brace_start
+                # 找到匹配的 }
+                depth = 0
+                for i in range(start, len(text)):
+                    if text[i] == '{':
+                        depth += 1
+                    elif text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(text[start:i+1])
+                            except json.JSONDecodeError:
+                                break
+            elif bracket_start >= 0:
+                start = bracket_start
+                depth = 0
+                for i in range(start, len(text)):
+                    if text[i] == '[':
+                        depth += 1
+                    elif text[i] == ']':
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(text[start:i+1])
+                            except json.JSONDecodeError:
+                                break
+
+        # 最后再试一次整段
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 全部失败，返回空
+        print(f"[StoryAgent] JSON提取失败，原始文本: {text[:200]}")
+        return None

@@ -237,10 +237,23 @@ class SimLifeClient:
 
         if char:
             lines.append(f"角色：{char.get('name', '?')}（{char.get('class_name', '')} Lv.{char.get('level', 1)}）")
-            lines.append(f"HP: {char.get('hp', 0)}/{char.get('max_hp', 0)}")
+            lines.append(f"HP: {char.get('hp', 0)}/{char.get('max_hp', 0)} MP: {char.get('mp', 0)}/{char.get('max_mp', 0)}")
             stats = char.get("stats", {})
             if stats:
-                lines.append(f"属性：力量{stats.get('strength',5)} 敏捷{stats.get('agility',5)} 智力{stats.get('intelligence',5)}")
+                lines.append(f"属性：力量{stats.get('strength',5)} 敏捷{stats.get('agility',5)} 智力{stats.get('intelligence',5)} 体质{stats.get('vitality',5)} 运气{stats.get('luck',5)}")
+            # 装备
+            equipment = char.get("equipment", [])
+            if equipment:
+                eq_names = [e.get("name", "?") for e in equipment]
+                lines.append(f"装备：{'、'.join(eq_names)}")
+            # 技能
+            skills = char.get("skills", [])
+            if skills:
+                lines.append(f"技能：{'、'.join(skills)}")
+            # 金币
+            gold = char.get("gold", 0)
+            if gold:
+                lines.append(f"金币：{gold}")
 
         if dm.get("is_alive"):
             lines.append(f"状态：存活中（第{dm.get('play_time_days', 1)}天，击杀{dm.get('kill_count', 0)}）")
@@ -270,10 +283,79 @@ class SimLifeClient:
 
         # 用户角色
         user_char = dm.get("user_character", {})
+        uc_dead = dm.get("user_character_dead", False)
         if user_char and user_char.get("class_name"):
-            lines.append(f"用户角色：{user_char.get('name', '用户')}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）")
+            uc_name = user_char.get('name', '用户')
+            uc_cls = user_char.get('class_name', '')
+            uc_lv = user_char.get('level', 1)
+            uc_hp = user_char.get('hp', 0)
+            uc_max_hp = user_char.get('max_hp', 0)
+            uc_mp = user_char.get('mp', 0)
+            uc_max_mp = user_char.get('max_mp', 0)
+            if uc_dead:
+                lines.append(f"同伴：{uc_name}（{uc_cls} Lv.{uc_lv}）— 已死亡")
+            else:
+                lines.append(f"同伴：{uc_name}（{uc_cls} Lv.{uc_lv}）HP:{uc_hp}/{uc_max_hp} MP:{uc_mp}/{uc_max_mp}")
+                uc_stats = user_char.get("stats", {})
+                if uc_stats:
+                    lines.append(f"同伴属性：力量{uc_stats.get('strength',5)} 敏捷{uc_stats.get('agility',5)} 智力{uc_stats.get('intelligence',5)} 体质{uc_stats.get('vitality',5)} 运气{uc_stats.get('luck',5)}")
+                # 同伴装备
+                uc_eq = user_char.get("equipment", [])
+                if uc_eq:
+                    eq_names = [e.get("name", "?") for e in uc_eq]
+                    lines.append(f"同伴装备：{'、'.join(eq_names)}")
+                # 同伴技能
+                uc_skills = user_char.get("skills", [])
+                if uc_skills:
+                    lines.append(f"同伴技能：{'、'.join(uc_skills)}")
 
-        lines.append("（你正在死亡模式中冒险，角色可能会死亡。以上是你的冒险状态。）")
+        # 最近行动（直接从存档文件读取，不走API）
+        try:
+            from pathlib import Path as _P
+            _state_file = _P(__file__).resolve().parent.parent / "simlife" / "data" / "death_mode_state.json"
+            if _state_file.exists():
+                import json as _json
+                _sdata = _json.loads(_state_file.read_text(encoding="utf-8"))
+                _alog = _sdata.get("action_log", [])
+                if _alog:
+                    recent = _alog[-2:]
+                    lines.append("【最近行动】")
+                    for entry in recent:
+                        et = entry.get("type", "")
+                        ed = entry.get("data", {})
+                        t = entry.get("time", "")[11:16]  # HH:MM
+                        if et == "action":
+                            act = ed.get("action", "")
+                            outcome = ed.get("outcome", "")
+                            lines.append(f"  [{t}] {act} → {outcome}")
+                            combat = ed.get("combat", {})
+                            if combat:
+                                if combat.get("victory"):
+                                    enemies_def = combat.get("enemy_names", [])
+                                    lines.append(f"    战胜{'、'.join(enemies_def) if enemies_def else '敌人'}")
+                                else:
+                                    lines.append(f"    战败")
+                            if ed.get("exp_gained"):
+                                lines.append(f"    经验+{ed['exp_gained']}")
+                            if ed.get("gold_gained"):
+                                lines.append(f"    金币+{ed['gold_gained']}")
+                        elif et == "combat":
+                            result_str = "胜利" if ed.get("victory") else "战败"
+                            enemy = ed.get("enemy_name", "敌人")
+                            lines.append(f"  [{t}] 战斗vs{enemy}：{result_str}")
+                        elif et == "scene":
+                            loc = ed.get("location", "")
+                            if loc:
+                                lines.append(f"  [{t}] 到达{loc}")
+                        elif et == "game_start":
+                            lines.append(f"  [{t}] 开始冒险")
+                        elif et == "death_pending":
+                            who = ed.get("name", "")
+                            lines.append(f"  [{t}] {who}阵亡")
+        except Exception:
+            pass
+
+        lines.append("（你正在死亡模式中冒险，角色可能会死亡。以上是你的冒险状态和近期经历。）")
         lines.append("（用户可以通过对话和你讨论策略，不一定每次都要选择行动。只有当用户明确说选A/选B/攻击/探索/继续等行动指令时，才执行行动。普通聊天不要触发行动。）")
         return "\n".join(lines)
 
@@ -455,6 +537,14 @@ class SimLifeClient:
                     lines.append(f"{world_role}。")
                 lines.append(f"用户此刻正在和你说话/互动，你要以{relation}的身份自然地回应对方。")
                 lines.append("（不要提到SimLife、系统、AI等概念，就当是真实生活中和对方的互动。）")
+
+        # ── 死亡模式状态追加 ──
+        dm = self.get_death_mode_state()
+        if dm and dm.get("active") and dm.get("is_alive"):
+            dm_text = self._format_death_mode_prompt(dm)
+            if dm_text:
+                lines.append("")
+                lines.append(dm_text)
 
         return "\n".join(lines)
 

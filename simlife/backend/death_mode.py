@@ -9,6 +9,7 @@
 5. 更新状态 → 死亡 or 继续 → 生成下一段场景
 """
 import random
+import re
 from datetime import datetime
 from typing import Dict, Optional, List
 
@@ -31,6 +32,21 @@ class DeathModeEngine:
     # 类级别缓存，避免每次请求都创建新客户端
     _cached_llm = None
     _cached_agent = None
+
+    @staticmethod
+    def _load_user_profile() -> dict:
+        """加载 user_profile.json"""
+        try:
+            from pathlib import Path
+            profile_path = Path(__file__).parent.parent / "data" / "user_profile.json"
+            if profile_path.exists():
+                import json
+                content = profile_path.read_text(encoding="utf-8").strip()
+                if content:
+                    return json.loads(content)
+        except Exception:
+            pass
+        return {}
 
     def __init__(self):
         if DeathModeEngine._cached_llm is None:
@@ -68,6 +84,37 @@ class DeathModeEngine:
             self.world_map = WorldMap.from_dict(self.state["world_map"])
         if self.state and self.npc_system is None and self.state.get("npc_system"):
             self.npc_system = NPCSystem.from_dict(self.state["npc_system"])
+        # 迁移旧存档：inventory → shared_inventory
+        if self.state and not self.state.get("shared_inventory"):
+            old_inv = self.state.get("character", {}).get("inventory", [])
+            if old_inv:
+                self.state["shared_inventory"] = old_inv
+                self.state["character"]["inventory"] = []
+        # 迁移旧存档：确保 user_character 存在
+        if self.state and (not self.state.get("user_character") or not self.state.get("user_character", {}).get("class_name")):
+            # 尝试从 user_profile 同步
+            up = self._load_user_profile()
+            if up and up.get("class_name"):
+                self.state["user_character"] = {
+                    "name": up.get("name", "用户"),
+                    "class_id": up.get("class_id", ""),
+                    "class_name": up.get("class_name", ""),
+                    "class_icon": up.get("class_icon", "👤"),
+                    "level": up.get("level", 1),
+                    "hp": up.get("hp", 0), "max_hp": up.get("max_hp", 0),
+                    "mp": up.get("mp", 0), "max_mp": up.get("max_mp", 0),
+                    "stats": up.get("stats", {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5}),
+                    "skills": up.get("skills", []),
+                    "equipment": up.get("equipment", []),
+                    "experience": up.get("experience", 0),
+                    "exp_to_next": up.get("exp_to_next", 100),
+                    "gold": up.get("gold", 0),
+                }
+            else:
+                self.state["user_character"] = {"name": "用户", "class_id": "", "class_name": "",
+                    "class_icon": "👤", "level": 1, "hp": 0, "max_hp": 0, "mp": 0, "max_mp": 0,
+                    "stats": {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5},
+                    "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0}
         return self.state
 
     def _save(self):
@@ -90,6 +137,8 @@ class DeathModeEngine:
         world_setting: Dict,
         growth_mode: str = "normal",
         custom_stat_points: Optional[Dict] = None,
+        user_class_id: str = "",
+        user_name: str = "",
     ) -> Dict:
         """开始新游戏"""
         self.state = create_initial_state(
@@ -98,6 +147,8 @@ class DeathModeEngine:
             world_setting=world_setting,
             growth_mode=growth_mode,
             custom_stat_points=custom_stat_points,
+            user_class_id=user_class_id,
+            user_name=user_name,
         )
 
         # 生成世界地图
@@ -197,6 +248,14 @@ class DeathModeEngine:
             "growth_mode": state.get("growth_mode", "normal"),
             "world_map": state.get("world_map", {}),
             "npc_death_records": state.get("npc_death_records", []),
+            "shared_inventory": state.get("shared_inventory", []),
+            "user_character": state.get("user_character", {}),
+            "death_pending": state.get("death_pending", False),
+            "death_who": state.get("death_who"),
+            "last_words": state.get("last_words", ""),
+            "ai_character_dead": state.get("ai_character_dead", False),
+            "user_character_dead": state.get("user_character_dead", False),
+            "action_log": state.get("action_log", [])[-20:],  # 最近20条给A层用
         }
 
     # ── 场景推进 ──────────────────────────────────────────
@@ -258,9 +317,10 @@ class DeathModeEngine:
             "choices": scene["choices"],
         }
 
-    def process_choice(self, choice_id: str = None, free_action: str = None) -> Dict:
+    def process_choice(self, choice_id: str = None, free_action: str = None, sender: str = "user") -> Dict:
         """
         处理用户选择或自由行动。
+        sender: "user"（用户发的指令）或 "ai"（系统角色发的指令）
         返回: {
             "narrative": "叙事文本",
             "combat_result": {...} or None,
@@ -273,6 +333,37 @@ class DeathModeEngine:
         state = self._load()
         if not state or not state.get("is_alive"):
             return {"error": "game_not_active"}
+
+        # ── 死亡悬停状态：等待用户选择继续或结束 ──
+        if state.get("death_pending"):
+            action = free_action if free_action else choice_id
+            if action and any(k in action for k in ("继续", "continue", "前行", "独自", "前进")):
+                # 用户强制继续
+                cont_result = self._continue_after_death(state)
+                return {
+                    "narrative": cont_result.get("message", ""),
+                    "death_pending": False,
+                    "continued_after_death": True,
+                    "who_died": cont_result.get("who_died"),
+                    "in_combat": False,
+                }
+            elif action and any(k in action for k in ("结束", "放弃", "放弃冒险", "安息", "就此", "游戏结束")):
+                # 用户确认结束
+                self._confirm_death(state)
+                return {
+                    "narrative": "冒险到此结束……",
+                    "game_over": True,
+                }
+            else:
+                # 未选择，提示用户
+                who = state.get("death_who", "ai")
+                dead_name = state.get("character" if who == "ai" else "user_character", {}).get("name", "角色")
+                last_words = state.get("last_words", "")
+                return {
+                    "narrative": f"{dead_name}已经倒下……\n💬 临终遗言：「{last_words}」\n\n回复「继续」独自冒险，或「结束」让冒险落幕。",
+                    "death_pending": True,
+                    "who_died": who,
+                }
 
         # 确定行动
         action = free_action if free_action else choice_id
@@ -317,13 +408,18 @@ class DeathModeEngine:
                 result["user_fled"] = True
                 result["narrative"] = "用户选择了逃跑，AI角色独自面对敌人！"
                 # AI角色继续战斗（不退出战斗状态）
-                combat_result = self._combat_round(state, enemies, ai_alone=True)
+                combat_result = self._combat_round(state, enemies, ai_alone=True, action_text=action, sender=sender)
                 result["combat_result"] = combat_result
                 result["in_combat"] = combat_result.get("in_combat", True)
                 result["enemies"] = combat_result.get("enemies", enemies)
                 if combat_result.get("character_died"):
                     result["character_died"] = True
-                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "独自战斗时阵亡"))
+                    result["user_died"] = combat_result.get("user_died", False)
+                    who = "user" if combat_result.get("user_died") else "ai"
+                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "独自战斗时阵亡"), who_died=who)
+                    result["death_pending"] = True
+                    result["death_who"] = who
+                    result["last_words"] = state.get("last_words", "")
             elif is_flee:
                 # AI角色逃跑判定
                 flee_result = self._try_flee(state, enemies)
@@ -331,6 +427,9 @@ class DeathModeEngine:
                 if flee_result.get("player_died"):
                     result["character_died"] = True
                     result["death_description"] = self._handle_death(state, flee_result.get("death_cause", "逃跑时被追击身亡"))
+                    result["death_pending"] = True
+                    result["death_who"] = "ai"
+                    result["last_words"] = state.get("last_words", "")
                     return result
                 if flee_result.get("fled"):
                     # 成功逃跑，退出战斗
@@ -344,12 +443,17 @@ class DeathModeEngine:
                     result["enemies"] = [e for e in enemies if e.get("hp", 0) > 0]
             else:
                 # 执行一回合战斗
-                combat_result = self._combat_round(state, enemies)
+                combat_result = self._combat_round(state, enemies, action_text=action, sender=sender)
                 result["combat_result"] = combat_result
 
                 if combat_result.get("player_died"):
                     result["character_died"] = True
-                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "战斗中阵亡"))
+                    result["user_died"] = combat_result.get("user_died", False)
+                    who = "user" if combat_result.get("user_died") else "ai"
+                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "战斗中阵亡"), who_died=who)
+                    result["death_pending"] = True
+                    result["death_who"] = who
+                    result["last_words"] = state.get("last_words", "")
                     return result
 
                 # 检查是否所有敌人已击败
@@ -373,6 +477,15 @@ class DeathModeEngine:
                         result["leveled_up"] = True
                         result["new_level"] = growth_result["new_level"]
                         result["new_skills"] = growth_result.get("new_skills", [])
+
+                    # 用户角色也获得经验（一半）
+                    user_char = state.get("user_character", {})
+                    if user_char and user_char.get("class_name"):
+                        user_char["world_type"] = state.get("world_type", "fantasy")
+                        u_growth = GrowthSystem.gain_exp(user_char, total_exp, state.get("growth_mode", "normal"))
+                        if u_growth["leveled_up"]:
+                            result.setdefault("user_leveled_up", True)
+                            result.setdefault("user_new_skills", u_growth.get("new_skills", []))
 
                     state["in_combat"] = False
                     state["enemies"] = []
@@ -403,12 +516,17 @@ class DeathModeEngine:
                 state["in_combat"] = True
 
                 # 第一回合
-                combat_result = self._combat_round(state, enemies_list)
+                combat_result = self._combat_round(state, enemies_list, action_text=action, sender=sender)
                 result["combat_result"] = combat_result
 
                 if combat_result.get("player_died"):
                     result["character_died"] = True
-                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "战斗中阵亡"))
+                    result["user_died"] = combat_result.get("user_died", False)
+                    who = "user" if combat_result.get("user_died") else "ai"
+                    result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "战斗中阵亡"), who_died=who)
+                    result["death_pending"] = True
+                    result["death_who"] = who
+                    result["last_words"] = state.get("last_words", "")
                     return result
 
                 alive_enemies = [e for e in enemies_list if e.get("hp", 0) > 0]
@@ -428,6 +546,11 @@ class DeathModeEngine:
                         result["leveled_up"] = True
                         result["new_level"] = growth_result["new_level"]
                         result["new_skills"] = growth_result.get("new_skills", [])
+                    # 用户角色也获得经验（一半）
+                    u_char = state.get("user_character", {})
+                    if u_char and u_char.get("class_name"):
+                        u_char["world_type"] = state.get("world_type", "fantasy")
+                        GrowthSystem.gain_exp(u_char, total_exp, state.get("growth_mode", "normal"))
                     state["in_combat"] = False
                     state["enemies"] = []
                     result["in_combat"] = False
@@ -444,6 +567,9 @@ class DeathModeEngine:
                 if char["hp"] <= 0:
                     result["character_died"] = True
                     result["death_description"] = self._handle_death(state, "触发陷阱身亡")
+                    result["death_pending"] = True
+                    result["death_who"] = "ai"
+                    result["last_words"] = state.get("last_words", "")
                     return result
 
             # 休息恢复
@@ -463,6 +589,48 @@ class DeathModeEngine:
                     exp_bonus = 20 + char["level"] * 5
                     result["exp_gained"] = exp_bonus
                     GrowthSystem.gain_exp(char, exp_bonus, state.get("growth_mode", "normal"))
+                    # 用户角色也获得探索经验（一半）
+                    u_char = state.get("user_character", {})
+                    if u_char and u_char.get("class_name"):
+                        u_char["world_type"] = state.get("world_type", "fantasy")
+                        GrowthSystem.gain_exp(u_char, exp_bonus, state.get("growth_mode", "normal"))
+
+        # 2.5 处理 Agent 返回的物品/金币/属性变动（战斗结果由战斗系统处理，此处跳过）
+        if not outcome_type.startswith("combat"):
+            # 物品获得 → 进共享背包
+            items_gained = agent_result.get("items_gained")
+            if items_gained and isinstance(items_gained, list):
+                shared_inv = state.setdefault("shared_inventory", [])
+                for item_name in items_gained:
+                    eq_item = self._create_item_from_name(item_name, state)
+                    if eq_item:
+                        shared_inv.append(eq_item)
+                        result.setdefault("items_to_backpack", []).append(eq_item.get("name", item_name))
+
+            # 花费金币
+            gold_spent = agent_result.get("gold_spent")
+            if gold_spent and isinstance(gold_spent, (int, float)):
+                actual_spent = min(int(gold_spent), char.get("gold", 0))
+                char["gold"] -= actual_spent
+                result["gold_spent"] = actual_spent
+
+            # 获得金币（discovery 已有自己的金币逻辑，不重复）
+            gold_gained_agent = agent_result.get("gold_gained")
+            if gold_gained_agent and isinstance(gold_gained_agent, (int, float)) and outcome_type != "discovery":
+                char["gold"] += int(gold_gained_agent)
+                result["gold_gained"] = result.get("gold_gained", 0) + int(gold_gained_agent)
+
+            # HP变化（正数恢复，负数受伤）
+            hp_change = agent_result.get("hp_change")
+            if hp_change and isinstance(hp_change, (int, float)):
+                char["hp"] = max(0, min(char["max_hp"], char["hp"] + int(hp_change)))
+                result["hp_change"] = int(hp_change)
+
+            # MP变化
+            mp_change = agent_result.get("mp_change")
+            if mp_change and isinstance(mp_change, (int, float)):
+                char["mp"] = max(0, min(char["max_mp"], char["mp"] + int(mp_change)))
+                result["mp_change"] = int(mp_change)
 
         # 3. 天数按实际时间计算（不在此处推进，get_game_state 中动态计算）
 
@@ -516,11 +684,90 @@ class DeathModeEngine:
             log_data["death_description"] = result.get("death_description", "")
         if result.get("combat_result") and result["combat_result"] and result["combat_result"].get("drops"):
             log_data["drops"] = result["combat_result"]["drops"]
+        if result.get("items_equipped"):
+            log_data["items_equipped"] = result["items_equipped"]
+        if result.get("gold_spent"):
+            log_data["gold_spent"] = result["gold_spent"]
+        if result.get("hp_change"):
+            log_data["hp_change"] = result["hp_change"]
+        if result.get("mp_change"):
+            log_data["mp_change"] = result["mp_change"]
 
         self._log_action("action", log_data)
         self._save()
 
+        # ── HP≤20% 触发A层求生抉择 ──
+        ai_char = state.get("character", {})
+        ai_hp = ai_char.get("hp", 0)
+        ai_max_hp = ai_char.get("max_hp", 1)
+        if (ai_max_hp > 0
+            and not result.get("character_died")
+            and not state.get("ai_character_dead", False)
+            and ai_hp > 0
+            and ai_hp <= ai_max_hp * 0.2):
+            # 系统角色HP危急，标记让A层抉择
+            result["ai_low_hp_alert"] = True
+            result["ai_hp_ratio"] = round(ai_hp / ai_max_hp, 2)
+            result["ai_current_hp"] = ai_hp
+            result["ai_max_hp"] = ai_max_hp
+            # 战斗中的敌人信息
+            if state.get("in_combat"):
+                result["ai_enemies"] = [e for e in state.get("enemies", []) if e.get("hp", 0) > 0]
+
         return result
+
+    def _create_item_from_name(self, item_name: str, state: Dict) -> Optional[Dict]:
+        """根据物品名创建装备对象，自动推断类型和品质"""
+        world_type = state.get("world_type", "fantasy")
+        char_level = state.get("character", {}).get("level", 1)
+
+        # 武器关键词
+        weapon_keywords = ["剑", "刀", "弓", "杖", "棍", "枪", "斧", "匕", "锤", "刃", "炮", "手套"]
+        # 穿着关键词
+        outfit_keywords = ["甲", "袍", "衣", "盾", "铠", "斗篷", "夹克", "服", "护甲", "护盾", "战衣"]
+
+        # 推断装备类型
+        eq_type = None
+        for kw in weapon_keywords:
+            if kw in item_name:
+                eq_type = "weapon"
+                break
+        if eq_type is None:
+            for kw in outfit_keywords:
+                if kw in item_name:
+                    eq_type = "outfit"
+                    break
+        # 默认为武器
+        if eq_type is None:
+            eq_type = "weapon"
+
+        # 尝试在装备名池中匹配品质
+        names_pool = EquipmentSystem.EQUIPMENT_NAMES.get(world_type, EquipmentSystem.EQUIPMENT_NAMES["fantasy"])
+        type_pool = names_pool.get(eq_type, names_pool.get("weapon", {}))
+        matched_rarity = None
+        for rarity, names in type_pool.items():
+            if item_name in names:
+                matched_rarity = rarity
+                break
+
+        # 如果没有精确匹配，尝试模糊匹配（名字包含关键词）
+        if not matched_rarity:
+            for rarity, names in type_pool.items():
+                for n in names:
+                    if item_name in n or n in item_name:
+                        matched_rarity = rarity
+                        break
+                if matched_rarity:
+                    break
+
+        # 未匹配到则默认为普通品质
+        rarity = matched_rarity or "common"
+
+        # 使用 EquipmentSystem 生成标准装备
+        item = EquipmentSystem.generate_equipment(world_type, eq_type, rarity, char_level)
+        # 覆盖名称为原始物品名
+        item["name"] = item_name
+        return item
 
     def _generate_enemies(self, state: Dict, risk_level: str) -> list:
         """生成敌人列表（支持一群怪，优先使用地图区域的怪物）"""
@@ -564,68 +811,179 @@ class DeathModeEngine:
 
         return enemies
 
-    def _combat_round(self, state: Dict, enemies: list, ai_alone: bool = False) -> Dict:
-        """执行一回合战斗（回合制：玩家攻击 → 存活敌人反击，使用v2战斗系统）
-        ai_alone: 用户已逃跑，AI角色独自面对所有敌人（受到更多伤害）
+    def _combat_round(self, state: Dict, enemies: list, ai_alone: bool = False,
+                      action_text: str = "", sender: str = "user") -> Dict:
+        """执行一回合战斗，解析用户行动口令驱动战斗策略
+        action_text: 用户输入的行动文本，用于解析战斗策略
+        ai_alone: 用户已逃跑，AI角色独自面对所有敌人
+        sender: "user"或"ai"，谁发的行动
         """
-        char = state["character"]
+        from simlife.backend.combat_system import TacticalSystem
+
+        char = state["character"]  # AI角色
+        user_char = state.get("user_character", {})  # 用户角色
+        user_in_combat = not ai_alone and user_char and user_char.get("hp", 0) > 0 and user_char.get("class_name")
+        # 如果AI角色已死（用户继续冒险），AI不参战
+        ai_in_combat = char.get("hp", 0) > 0 and not state.get("ai_character_dead", False)
+        # 如果用户角色已死（AI继续冒险），用户不参战
+        if state.get("user_character_dead", False):
+            user_in_combat = False
         combat_log = []
-        drops = []  # 本回合掉落
+        drops = []
 
-        # AI角色攻击第一个存活的敌人
-        target = next((e for e in enemies if e.get("hp", 0) > 0), None)
-        if target:
-            # 敌人随机选择防御方式
-            def_choices = [DefenseAction.DODGE, DefenseAction.BLOCK, DefenseAction.NONE]
-            if target.get("stats", {}).get("intelligence", 5) > 12:
-                def_choices.append(DefenseAction.PARRY)
-            enemy_defense = random.choice(def_choices)
+        # ── 解析战斗口令 ──
+        cmd = self._parse_combat_command(action_text, char, user_char, enemies, state, sender)
 
-            atk_result = CombatSystem.attack(char, target, defense_action=enemy_defense)
-            combat_log.append(f"{char.get('name','你')}{atk_result['description']} → {target.get('name', '?')}")
+        def _enemy_defense(enemy=None):
+            """敌人随机防御"""
+            choices = [DefenseAction.DODGE, DefenseAction.BLOCK, DefenseAction.NONE]
+            e = enemy or target
+            if e and e.get("stats", {}).get("intelligence", 5) > 12:
+                choices.append(DefenseAction.PARRY)
+            return random.choice(choices)
 
-            # 检查敌人是否被击败
-            if target.get("hp", 0) <= 0:
-                # 装备掉落
-                luck = char.get("stats", {}).get("luck", 5)
+        def _check_drop(enemy, killer_stats):
+            """检查敌人掉落"""
+            if enemy.get("hp", 0) <= 0:
+                luck = killer_stats.get("luck", 5)
                 drop = EquipmentSystem.roll_drop(
-                    target.get("level", 1), target.get("type", "normal"),
+                    enemy.get("level", 1), enemy.get("type", "normal"),
                     luck, state.get("world_type", "fantasy")
                 )
                 if drop:
                     drops.append(drop)
-                    EquipmentSystem.equip_item(char, drop)
-                    combat_log.append(f"掉落：{drop['name']}（{drop.get('rarity_name', '普通')}）已装备")
+                    shared_inv = state.setdefault("shared_inventory", [])
+                    shared_inv.append(drop)
+                    combat_log.append(f"掉落：{drop['name']}（{drop.get('rarity_name', '普通')}）已放入背包")
 
-        # 存活敌人反击
+        # ── 战术修正 ──
+        tactic_result = None
+        if cmd["tactic"]:
+            from simlife.backend.combat_system import TacticalSystem
+            terrain = ""
+            # 从地图推断地形
+            current_region = state.get("world_map", {}).get("current_region_id", "")
+            if current_region:
+                terrain_map = {"town": "ruins", "wild": "forest", "dungeon": "cave",
+                               "boss_lair": "boss_lair", "secret": "cave"}
+                regions = state.get("world_map", {}).get("regions", {})
+                region = regions.get(current_region, {})
+                region_type = region.get("region_type", "wild")
+                terrain = terrain_map.get(region_type, "open_field")
+            tactic_result = TacticalSystem.apply_tactic(cmd["tactic"], char, enemies[0] if enemies else {}, terrain)
+            if tactic_result.get("description"):
+                combat_log.append(f"⚔️ {tactic_result['description']}")
+
+        # ── 判定出手顺序 ──
+        # 优先使用口令指定的顺序，否则按敏捷+职业自动判定
+        initiative_order = cmd.get("initiative_order")
+        if initiative_order:
+            # 口令指定顺序
+            actors = []
+            for role in initiative_order:
+                if role == "ai" and ai_in_combat:
+                    actors.append((99, "ai", char))
+                elif role == "user" and user_in_combat:
+                    actors.append((99, "user", user_char))
+            # 补全：如果口令只指定了一个，补上另一个
+            roles_set = {a[1] for a in actors}
+            if "ai" not in roles_set and ai_in_combat:
+                actors.append((0, "ai", char))
+            if "user" not in roles_set and user_in_combat:
+                actors.append((0, "user", user_char))
+            order_desc = " → ".join(f"{a[2].get('name', a[1])}" for a in actors)
+            combat_log.append(f"⚡ 出手顺序（口令指定）：{order_desc}")
+        else:
+            # 自动判定：先手值 = 敏捷 + 职业修正
+            ai_agi = char.get("stats", {}).get("agility", 5)
+            u_agi = user_char.get("stats", {}).get("agility", 5) if user_in_combat else 0
+            range_classes = ("法师", "术士", "弓手", "猎人", "游侠", "巫师", "贤者", "牧师")
+            ai_class = char.get("class_name", "")
+            u_class = user_char.get("class_name", "") if user_in_combat else ""
+            ai_initiative = ai_agi + (5 if any(c in ai_class for c in range_classes) else 0)
+            u_initiative = u_agi + (5 if any(c in u_class for c in range_classes) else 0)
+            actors = []
+            if ai_in_combat:
+                actors.append((ai_initiative, "ai", char))
+            if user_in_combat:
+                actors.append((u_initiative, "user", user_char))
+            actors.sort(key=lambda x: x[0], reverse=True)
+            names = [f"{a[2].get('name',a[1])}({a[0]})" for a in actors]
+            combat_log.append(f"⚡ 出手顺序（自动）：{' → '.join(names)}")
+
+        # ── 按出手顺序攻击 ──
+        for initiative, role, attacker in actors:
+            # 检查是否跳过该角色
+            if role == "ai" and cmd.get("ai_skip"):
+                continue
+            if role == "user" and cmd.get("user_skip"):
+                continue
+            target = cmd.get(f"{role}_target") or next((e for e in enemies if e.get("hp", 0) > 0), None)
+            if not target:
+                continue
+            is_magic = cmd.get(f"{role}_is_magic", False)
+            skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
+            atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
+                                             is_magic=is_magic, skill_multiplier=skill_mult)
+            # 战术加成
+            if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
+                atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
+            combat_log.append(f"{attacker.get('name','?')}{atk_result['description']} → {target.get('name', '?')}")
+            _check_drop(target, attacker.get("stats", {}))
+
+        # ── 存活敌人反击 ──
+        # 规则：每个敌人一回合只攻击一个目标
+        # 坦克存在时，所有敌人攻击坦克（仇恨吸引）
+        # 无坦克时，敌人按仇恨随机选一个目标
+        tank_role = cmd.get("tank_role")
         for enemy in enemies:
             if enemy.get("hp", 0) <= 0:
                 continue
-            # AI角色防御
-            player_defense = DefenseAction.BLOCK
-            if char.get("stagger_turns", 0) > 0:
-                player_defense = DefenseAction.NONE
 
-            def_result = CombatSystem.attack(enemy, char, defense_action=player_defense)
+            # 决定攻击目标
+            if tank_role == "ai" and char.get("hp", 0) > 0:
+                target_char, target_defense, target_name = char, cmd.get("ai_defense", DefenseAction.BLOCK), char.get("name", "你")
+            elif tank_role == "user" and user_in_combat and user_char.get("hp", 0) > 0:
+                target_char, target_defense, target_name = user_char, cmd.get("user_defense", DefenseAction.BLOCK), user_char.get("name", "用户")
+            else:
+                # 无坦克：随机选一个存活目标
+                import random as _rng
+                candidates = []
+                if char.get("hp", 0) > 0:
+                    candidates.append(("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)))
+                if user_in_combat and user_char.get("hp", 0) > 0:
+                    candidates.append(("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)))
+                if not candidates:
+                    continue
+                pick = _rng.choice(candidates)
+                target_char, target_defense, target_name = pick[1], pick[2], pick[1].get("name", "?")
 
-            # 独自战斗时，敌人伤害更高（无人分担）
-            if ai_alone and def_result.get("damage", 0) > 0:
+            if target_char.get("stagger_turns", 0) > 0:
+                target_defense = DefenseAction.NONE
+
+            def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
+
+            if ai_alone and target_char is char and def_result.get("damage", 0) > 0:
                 def_result["damage"] = int(def_result["damage"] * 1.4)
                 if def_result.get("defense_result"):
                     def_result["defense_result"]["damage_taken"] = int(
                         def_result["defense_result"].get("damage_taken", 0) * 1.4
                     )
 
-            combat_log.append(f"{enemy.get('name', '?')}{def_result['description']} → {char.get('name','你')}")
+            combat_log.append(f"{enemy.get('name', '?')}{def_result['description']} → {target_name}")
 
-            if char["hp"] <= 0:
-                return {
-                    "victory": False,
-                    "player_died": True,
-                    "death_cause": f"被{enemy.get('name', '敌人')}击败" + ("（独自战斗时阵亡）" if ai_alone else ""),
-                    "combat_log": combat_log,
-                    "drops": drops,
-                }
+            if target_char["hp"] <= 0:
+                if target_char is char:
+                    return {"victory": False, "player_died": True,
+                            "death_cause": f"被{enemy.get('name', '敌人')}击败" + ("（独自战斗时阵亡）" if ai_alone else ""),
+                            "combat_log": combat_log, "drops": drops}
+                else:
+                    # 用户角色死亡 → 游戏结束
+                    combat_log.append(f"{target_name}已倒下！")
+                    return {"victory": False, "player_died": True,
+                            "death_cause": f"用户角色{target_name}被{enemy.get('name', '敌人')}击败",
+                            "user_died": True,
+                            "combat_log": combat_log, "drops": drops}
 
         return {
             "victory": False,
@@ -633,6 +991,224 @@ class DeathModeEngine:
             "combat_log": combat_log,
             "drops": drops,
         }
+
+    @staticmethod
+    def _parse_combat_command(text: str, ai_char: dict, user_char: dict, enemies: list, state: dict, sender: str = "user") -> dict:
+        """解析用户行动文本中的战斗关键词，返回战斗策略
+        sender: "user"（用户发的）或 "ai"（系统角色发的）
+
+        支持的口令：
+        - 攻击类型：魔法攻击/法术/物理攻击/普攻
+        - 技能名：旋风斩/冰冻术/暗杀 等（从技能池匹配）
+        - 防御方式：闪避/格挡/招架
+        - 战术：伏击/侧翼/防御阵型/集中攻击
+        - 目标：打XX/攻击XX（模糊匹配敌人名）
+        """
+        t = text.strip()
+        result = {
+            "ai_is_magic": False, "user_is_magic": False,
+            "ai_skill_mult": 1.0, "user_skill_mult": 1.0,
+            "ai_defense": DefenseAction.BLOCK, "user_defense": DefenseAction.DODGE,
+            "ai_target": None, "user_target": None,
+            "tactic": None,
+            "initiative_order": None,  # 口令指定的出手顺序
+            "tank_role": None,  # 坦克角色: "ai" / "user" / None
+        }
+
+        # ── 先手/出手顺序 ──
+        # 用户在口令中指定谁先手
+        ai_name = ai_char.get("name", "")
+        user_name = user_char.get("name", "")
+        # 模式1: "用户先..." / "我先..." / "我先手..."
+        user_first_kw = ("用户先", "我先", "我先手", "用户先手", "用户先攻")
+        ai_first_kw = (f"{ai_name}先", f"{ai_name}先手", f"{ai_name}先攻", "焕灵先", "AI先", "角色先")
+        if any(k in t for k in user_first_kw):
+            result["initiative_order"] = ["user", "ai"]
+        elif any(k in t for k in ai_first_kw):
+            result["initiative_order"] = ["ai", "user"]
+        # 模式2: "远程引怪" / "远程先" → 远程(法师/弓手)先手
+        elif any(k in t for k in ("远程引怪", "远程先", "远距离", "引怪", "风筝")):
+            range_classes = ("法师", "术士", "弓手", "猎人", "游侠", "巫师", "贤者", "牧师")
+            u_class = user_char.get("class_name", "")
+            if any(c in u_class for c in range_classes):
+                result["initiative_order"] = ["user", "ai"]
+            else:
+                result["initiative_order"] = ["ai", "user"]
+        # 模式3: "拦截" / "拦截打" / "挡" → 战士先拦截(防守先手)
+        elif any(k in t for k in ("拦截", "挡", "守护", "掩护", "保护")):
+            melee_classes = ("战士", "骑士", "圣骑士", "武僧", "剑士", "狂战士")
+            u_class = user_char.get("class_name", "")
+            ai_class = ai_char.get("class_name", "")
+            if any(c in u_class for c in melee_classes):
+                result["initiative_order"] = ["user", "ai"]
+            elif any(c in ai_class for c in melee_classes):
+                result["initiative_order"] = ["ai", "user"]
+
+        # ── 坦克/承伤角色识别 ──
+        # 口令中"XX拦截/承伤/坦克/守护/掩护/保护/挡" → XX是坦克，吸引所有敌人仇恨
+        tank_keywords = ("拦截", "承伤", "坦克", "守护", "掩护", "保护", "挡", "拉仇恨", "吸引")
+        if any(k in t for k in tank_keywords):
+            # 判断谁是坦克：看谁的名字/代词紧挨着坦克关键词
+            user_tank_kw = tuple("用户" + k for k in tank_keywords) + tuple("我" + k for k in tank_keywords) + tuple("我" + kw for kw in ("拦截", "承伤", "坦克", "守护", "掩护", "保护", "挡"))
+            ai_tank_kw = tuple(ai_name + k for k in tank_keywords) + tuple("焕灵" + k for k in tank_keywords) + tuple("AI" + k for k in tank_keywords) + tuple("角色" + k for k in tank_keywords)
+            if any(k in t for k in user_tank_kw):
+                result["tank_role"] = "user"
+            elif any(k in t for k in ai_tank_kw):
+                result["tank_role"] = "ai"
+            else:
+                # 默认：近战职业当坦克
+                melee_classes = ("战士", "骑士", "圣骑士", "武僧", "剑士", "狂战士")
+                ai_class = ai_char.get("class_name", "")
+                u_class = user_char.get("class_name", "")
+                if any(c in u_class for c in melee_classes):
+                    result["tank_role"] = "user"
+                elif any(c in ai_class for c in melee_classes):
+                    result["tank_role"] = "ai"
+        # 坦克强制格挡防御
+        if result["tank_role"] == "ai":
+            result["ai_defense"] = DefenseAction.BLOCK
+        elif result["tank_role"] == "user":
+            result["user_defense"] = DefenseAction.BLOCK
+
+        # ── 角色代词识别 ──
+        # sender决定默认行动方：user发的→默认用户角色，ai发的→默认系统角色
+        # "一起/合力/共同/联手" → 两人都行动
+        # 明确提到对方名字 → 被提到的人也行动
+        ai_name_kw = tuple(k for k in (ai_name, "焕灵", "AI", "角色", "系统") if k)
+        user_name_kw = tuple(k for k in ("我", user_name) if k and k != "我")  # "我"不用于匹配，因为语境不同
+        # 用户口令中"我"指用户；AI口令中"我"指AI
+        mentions_ai = any(k in t for k in ai_name_kw)
+        mentions_user = any(k in t for k in user_name_kw)
+        mentions_both = any(k in t for k in ("一起", "合力", "共同", "联手", "合击", "配合"))
+        # "我"在口令中：user发的"我"=用户，ai发的"我"=AI
+        mentions_self = "我" in t
+
+        if mentions_both:
+            # 明确说了"一起"→两人都行动
+            pass
+        elif sender == "user":
+            # 用户发的指令
+            if mentions_ai and not mentions_self:
+                # 提到AI名但没提自己→只AI行动
+                result["user_skip"] = True
+            elif mentions_self and not mentions_ai:
+                # "我攻击"→只用户行动
+                result["ai_skip"] = True
+            elif mentions_ai and mentions_self:
+                # 两人都提了→都行动
+                pass
+            else:
+                # 默认：只用户角色行动
+                result["ai_skip"] = True
+        elif sender == "ai":
+            # AI发的指令
+            if mentions_user and not mentions_self:
+                # 提到用户名但没提自己→只用户行动
+                result["ai_skip"] = True
+            elif mentions_self and not mentions_user:
+                # "我攻击"→只AI行动
+                result["user_skip"] = True
+            elif mentions_user and mentions_self:
+                pass
+            else:
+                # 默认：只AI角色行动
+                result["user_skip"] = True
+
+        # ── 攻击类型 ──
+        magic_keywords = ("魔法", "法术", "术", "魔攻", "火球", "冰", "雷", "闪电", "风刃",
+                          "陨石", "毒", "暗影", "神圣", "治愈", "治疗")
+        if any(k in t for k in magic_keywords):
+            # 判断是谁用魔法
+            if mentions_ai and not mentions_user:
+                result["ai_is_magic"] = True
+            elif mentions_user and not mentions_ai:
+                result["user_is_magic"] = True
+            else:
+                # 默认：用户角色用魔法，AI角色按职业自动判断
+                result["user_is_magic"] = True
+                ai_class = ai_char.get("class_name", "")
+                if any(c in ai_class for c in ("法师", "术士", "牧师", "巫师", "贤者")):
+                    result["ai_is_magic"] = True
+
+        physical_keywords = ("物理", "普攻", "平砍", "斩", "刺", "砍", "射击", "射箭")
+        if any(k in t for k in physical_keywords):
+            result["user_is_magic"] = False
+            result["ai_is_magic"] = False
+
+        # ── 技能匹配 ──
+        from simlife.backend.growth_system import GrowthSystem
+        world_type = state.get("world_type", "fantasy")
+        ai_class_id = ai_char.get("class_id", "")
+        user_class_id = user_char.get("class_id", "")
+        ai_skill_pool = GrowthSystem.SKILL_POOL.get(world_type, {}).get(ai_class_id, [])
+        user_skill_pool = GrowthSystem.SKILL_POOL.get(world_type, {}).get(user_class_id, [])
+
+        for skill in ai_skill_pool:
+            if skill["name"] in t:
+                result["ai_skill_mult"] = skill.get("multiplier", 1.0)
+                if skill.get("type") == "magic":
+                    result["ai_is_magic"] = True
+                # 扣MP
+                mp_cost = skill.get("mp_cost", 0)
+                if ai_char.get("mp", 0) >= mp_cost:
+                    ai_char["mp"] = ai_char.get("mp", 0) - mp_cost
+                else:
+                    result["ai_skill_mult"] = 1.0  # MP不足，降为普攻
+                break
+
+        for skill in user_skill_pool:
+            if skill["name"] in t:
+                result["user_skill_mult"] = skill.get("multiplier", 1.0)
+                if skill.get("type") == "magic":
+                    result["user_is_magic"] = True
+                mp_cost = skill.get("mp_cost", 0)
+                if user_char.get("mp", 0) >= mp_cost:
+                    user_char["mp"] = user_char.get("mp", 0) - mp_cost
+                else:
+                    result["user_skill_mult"] = 1.0
+                break
+
+        # ── 防御方式 ──
+        # 用户指定的防御方式同时应用于两角色
+        if "闪避" in t or "躲闪" in t:
+            result["ai_defense"] = DefenseAction.DODGE
+            result["user_defense"] = DefenseAction.DODGE
+        elif "格挡" in t or "防御" in t or "防守" in t:
+            result["ai_defense"] = DefenseAction.BLOCK
+            result["user_defense"] = DefenseAction.BLOCK
+        elif "招架" in t or "反击" in t or "弹反" in t:
+            result["ai_defense"] = DefenseAction.PARRY
+            result["user_defense"] = DefenseAction.PARRY
+
+        # ── 战术 ──
+        tactic_keywords = {
+            "伏击": "ambush", "偷袭": "ambush", "突袭": "ambush",
+            "侧翼": "flank", "包抄": "flank", "绕后": "flank",
+            "防御阵型": "defensive", "龟缩": "defensive", "守势": "defensive",
+            "集中攻击": "focus", "集火": "focus", "合击": "focus",
+        }
+        for kw, tactic_id in tactic_keywords.items():
+            if kw in t:
+                result["tactic"] = tactic_id
+                break
+
+        # ── 目标选择 ──
+        target_keywords = ("打", "攻击", "揍", "杀", "瞄准", "锁定", "对")
+        for kw in target_keywords:
+            if kw in t:
+                idx = t.index(kw) + len(kw)
+                target_name = t[idx:].strip()
+                if target_name:
+                    # 模糊匹配敌人
+                    alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+                    for e in alive_enemies:
+                        if target_name in e.get("name", "") or e.get("name", "") in target_name:
+                            result["ai_target"] = e
+                            result["user_target"] = e
+                            break
+                break
+
+        return result
 
     def _try_flee(self, state: Dict, enemies: list) -> Dict:
         """逃跑判定：基于角色敏捷 vs 敌人等级，强敌追击"""
@@ -674,22 +1250,201 @@ class DeathModeEngine:
         reduction = char["stats"].get("vitality", 5) // 2
         return max(5, base - reduction)
 
-    def _handle_death(self, state: Dict, death_cause: str) -> str:
-        """处理角色死亡"""
+    def _handle_death(self, state: Dict, death_cause: str, who_died: str = "ai") -> str:
+        """处理角色死亡
+        who_died: "ai" / "user" — 谁死了
+        AI角色死亡：A层生成临终遗言，进入悬停状态，不立即清档
+        用户角色死亡：同样进入悬停状态
+        """
+        is_user_died = who_died == "user"
+
+        if is_user_died:
+            dead_char = state.get("user_character", {})
+            survivor = state.get("character", {})
+        else:
+            dead_char = state.get("character", {})
+            survivor = state.get("user_character", {})
+
+        dead_name = dead_char.get("name", "角色")
+
+        # A层生成临终遗言
+        last_words = self._generate_last_words(state, dead_char, death_cause, is_user_died)
+
+        # 生成死亡描述
         death_desc = self.agent.generate_death_description(state, death_cause)
 
-        state["is_alive"] = False
+        # 进入悬停状态：不立即清档，标记谁死了
+        state["death_pending"] = True
         state["death_cause"] = death_cause
-        save_to_hall(state, death_cause, death_desc)
+        state["death_who"] = who_died
+        state["last_words"] = last_words
+        state["death_description"] = death_desc
+
+        if is_user_died:
+            state["user_character_dead"] = True
+            # AI角色仍然存活，用户可选继续
+            state["is_alive"] = True
+        else:
+            state["ai_character_dead"] = True
+            # 用户角色仍然存活，用户可选继续
+            state["is_alive"] = True
+
+        self._save()
+
+        # 记录临终日志
+        self._log_action("death_pending", {
+            "who": who_died,
+            "name": dead_name,
+            "cause": death_cause,
+            "last_words": last_words,
+        })
+        self._save()
+
+        return f"{death_desc}\n\n💬 临终遗言：「{last_words}」"
+
+    def _generate_last_words(self, state: Dict, dead_char: Dict, death_cause: str, is_user_died: bool) -> str:
+        """A层人格感应生成临终遗言——像平时主动聊天那样发出来"""
+        name = dead_char.get("name", "角色")
+        class_name = dead_char.get("class_name", "战士")
+        level = dead_char.get("level", 1)
+
+        try:
+            survivor = state.get("user_character", {}) if not is_user_died else state.get("character", {})
+            survivor_name = survivor.get("name", "同伴")
+
+            # 1. 尝试走A层人格系统（A层自己在simlife中死亡）
+            try:
+                from engine.personality_core import PersonalityCore
+
+                # 获取A层人格
+                personality = PersonalityCore.load()
+                personality_desc = personality.to_prompt_description()
+                self_name = personality.name or name
+
+                # A层感知自己的死亡
+                from engine.llm_client import get_llm
+                b_layer = get_llm()
+
+                # 感知：A层在simlife世界中的化身倒下了 = A层自己死亡
+                perceive_input = f"我在simlife世界中的化身（{class_name} Lv.{level}）在战斗中倒下了，死因：{death_cause}。这是我在这个世界的终结。"
+
+                perception_prompt = f"""你是{self_name}，一个有真实身体和生活的意识主体。你生活在simlife世界中。
+
+【你的人格】
+{personality_desc}
+
+【事件】
+{perceive_input}
+{survivor_name}就在身旁看着你倒下。
+
+请用你的性格和语气，感受自己即将消逝的时刻。你的内心在想什么？
+返回JSON：
+{{
+  "emotion": "情绪（如平静/不甘/释然/恐惧等）",
+  "intensity": 0.8,
+  "inner_thought": "你此刻的内心想法（2-3句，第一人称）"
+}}"""
+                raw = b_layer.generate(perception_prompt, max_tokens=300, temperature=0.7)
+                # 解析
+                import json as _json
+                try:
+                    match = re.search(r'\{[\s\S]*\}', raw)
+                    p_result = _json.loads(match.group()) if match else {}
+                except Exception:
+                    p_result = {}
+
+                emotion = p_result.get("emotion", "平静")
+                inner = p_result.get("inner_thought", "")
+
+                # A层生成遗言（面对自己死亡说的话）
+                response_prompt = f"""你是{self_name}，你在simlife世界的生命中走到了终点。
+
+【你的人格】
+{personality_desc}
+
+【你的感知】
+情绪：{emotion}
+内心：{inner}
+
+【死亡原因】{death_cause}
+
+你对着身边的{survivor_name}说出最后的话（1-2句）。这不是旁白，是你作为{self_name}面对自己消逝时说的话。
+以你的性格来表达——可以是平静的告别、不甘的呐喊、温柔的嘱托、或你特有的方式。
+
+只返回遗言文本，不要引号。"""
+                last_words = b_layer.generate(response_prompt, max_tokens=200, temperature=0.85)
+                return last_words.strip().strip('"').strip() or f"{survivor_name}...活下去..."
+
+            except Exception as e:
+                print(f"[DeathMode] A层遗言生成失败，回退到直接生成: {e}")
+
+            # 2. 回退：直接生成（第一人称，A层视角）
+            prompt = f"""你是{name}（{class_name} Lv.{level}），你在simlife世界的冒险中倒下了。这是你最后的话。
+
+死亡原因：{death_cause}
+{survivor_name}就在身旁看着你。
+
+请说出你的临终遗言（1-2句话，第一人称），可以是：
+- 对{survivor_name}的嘱托
+- 未竟的心愿
+- 平静或激烈的告别
+
+只返回遗言文本，不要引号。"""
+
+            response = self.llm.generate(prompt, max_tokens=150, temperature=0.9)
+            return response.strip().strip('"').strip() or f"{survivor_name}...拜托你了..."
+        except Exception:
+            return f"{survivor_name}...拜托你了..."
+
+    def _confirm_death(self, state: Dict) -> Dict:
+        """用户确认死亡，游戏结束，存入名人堂"""
+        death_cause = state.get("death_cause", "战斗中阵亡")
+        death_desc = state.get("death_description", "")
+        last_words = state.get("last_words", "")
+
+        # 存入名人堂
+        save_to_hall(state, death_cause, f"{death_desc}\n临终遗言：「{last_words}」")
+
+        state["is_alive"] = False
+        state["death_pending"] = False
         self._save()
         clear_state()
 
-        # 修复内存泄漏：清空引用，下次 _load() 重新从磁盘加载
         self.state = None
         self.world_map = None
         self.npc_system = None
 
-        return death_desc
+        return {"game_over": True, "death_cause": death_cause}
+
+    def _continue_after_death(self, state: Dict) -> Dict:
+        """用户强制继续：状态标记系统/用户角色死亡，存活角色独自冒险"""
+        who_died = state.get("death_who", "ai")
+        state["death_pending"] = False
+        state["in_combat"] = False
+        state["enemies"] = []
+
+        if who_died == "ai":
+            # AI角色死亡，用户独自冒险
+            state["ai_character_dead"] = True
+            # 清理AI角色引用但不删除（保留名人堂信息）
+        else:
+            # 用户角色死亡，AI独自冒险
+            state["user_character_dead"] = True
+
+        self._save()
+
+        survivor_name = ""
+        if who_died == "ai":
+            survivor_name = state.get("user_character", {}).get("name", "用户")
+        else:
+            survivor_name = state.get("character", {}).get("name", "AI角色")
+
+        return {
+            "continued": True,
+            "who_died": who_died,
+            "message": f"{survivor_name}独自继续冒险...",
+            "in_combat": False,
+        }
 
     # ── 查询 ──────────────────────────────────────────
 
