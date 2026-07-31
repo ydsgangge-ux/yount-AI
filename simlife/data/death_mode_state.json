@@ -5,11 +5,11 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 3,
-    "hp": 205,
-    "max_hp": 210,
-    "mp": 50,
-    "max_mp": 50,
+    "level": 4,
+    "hp": 240,
+    "max_hp": 240,
+    "mp": 65,
+    "max_mp": 65,
     "stats": {
       "strength": 15,
       "agility": 8,
@@ -38,9 +38,9 @@
       }
     ],
     "inventory": [],
-    "experience": 60,
-    "exp_to_next": 131,
-    "gold": 198,
+    "experience": 73,
+    "exp_to_next": 150,
+    "gold": 246,
     "world_type": "fantasy"
   },
   "world_setting": {
@@ -454,7 +454,7 @@
   "world_type": "fantasy",
   "growth_mode": "fast",
   "story": {
-    "current_chapter": 5,
+    "current_chapter": 6,
     "current_scene_id": null,
     "scene_description": "",
     "choices": [],
@@ -578,66 +578,67 @@
         "summary": "你们再次挥剑斩向那团扭动的元素史莱姆，铁剑切入其核心时发出刺耳的嘶鸣。你感觉到剑身传来的反震越来越弱，仿佛它的核心正在破碎，但它同时猛烈地抖动起来，迸发出更多的酸性黏液溅向四周。",
         "action": "两人继续攻击",
         "outcome": "combat_success"
+      },
+      {
+        "chapter": 5,
+        "summary": "两人一左一右，同时挥剑斩向那头Elemental Slime。剑锋切入胶质身体，激起一阵翠绿色的火花，但它的核心微微亮起，似在积蓄反击之力。",
+        "action": "两人继续攻击",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 5,
+        "summary": "你握紧铁剑，冲向一只元素史莱姆。史莱姆的身体泛着微光，蠕动躲避，但你的重击砍中了它的一侧，溅出冰蓝色的液体。它猛地弹起朝你扑来，你举起盾牌格挡，冲击力震得手臂发麻，趁它坠落时你又补上一记旋风斩，剑刃切",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 5,
+        "summary": "你握紧铁剑冲向前方一只元素史莱姆，剑刃劈开它半透明的身体，溅起一片闪光粘液。史莱姆颤动了一下，猛地弹起，朝你的胸口撞来，你侧身一闪，勉强避开它的核心冲击。不远处，另一只史莱姆正在聚集魔力，空气中弥漫着",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 5,
+        "summary": "你举起铁剑，冲向一只在浮空岛边缘徘徊的元素史莱姆。剑刃切入其凝胶状的身体，却只划开一道浅痕，史莱姆发出滋滋声，溅出灼热的元素液体。你及时后撤，但溅落的液滴在护甲上烧出缕缕青烟。你正准备再度挥剑，却注意",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 5,
+        "summary": "你握紧新手铁剑，朝前方一只元素史莱姆冲去。它弹跳着迎向你，身体表面闪烁着微光。你侧身躲过它的冲击，顺势一剑劈向它的核心，剑刃切入半透明的胶质，发出一声闷响。史莱姆剧烈颤动，喷出几滴酸液溅在你的护臂上，",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 6,
+        "summary": "你握紧铁剑，冲向一只扑来的Elemental Slime。剑刃切入其胶质核心，溅起一片蓝色火花。它扭曲着试图包裹你的手臂，灼热的魔力腐蚀着剑身。你猛力抽剑回撤，扯出粘稠的残液。嘶嘶声中，它重新聚拢，弹",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 6,
+        "summary": "你握紧新手铁剑，冲向一只挡在前方的元素史莱姆。剑刃劈开它的凝胶身体，溅起蓝色的液体，但史莱姆迅速重组，向你弹射而来。你侧身闪避，反手一记重击砸在它的核心上，裂纹蔓延开来。不远处，另一只史莱姆正从阴影中",
+        "action": "继续战斗",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 6,
+        "summary": "你举起铁剑冲向一只元素史莱姆，剑刃劈开它的凝胶身体，溅出蓝色液体。它嘶嘶作响，试图裹住你的脚踝，你后退一步，又补上一记重击，将其彻底打散。远处，另一只更大的史莱姆正从雾气中蠕动而来。",
+        "action": "继续战斗",
+        "outcome": "combat_success"
       }
     ],
     "pending_action": null,
     "current_location": "village"
   },
   "enemy": null,
-  "enemies": [
-    {
-      "name": "Umbra Lupus1",
-      "level": 4,
-      "hp": 0,
-      "max_hp": 80,
-      "mp": 32,
-      "max_mp": 32,
-      "stats": {
-        "strength": 12,
-        "agility": 11,
-        "intelligence": 9,
-        "vitality": 12,
-        "luck": 8
-      },
-      "equipment": [],
-      "skills": [],
-      "exp_reward": 48,
-      "gold_reward": 24,
-      "type": "normal",
-      "stagger_turns": 0,
-      "stance_points": 100,
-      "injuries": {}
-    },
-    {
-      "name": "Feral Crystals2",
-      "level": 2,
-      "hp": 80,
-      "max_hp": 80,
-      "mp": 32,
-      "max_mp": 32,
-      "stats": {
-        "strength": 12,
-        "agility": 11,
-        "intelligence": 9,
-        "vitality": 12,
-        "luck": 8
-      },
-      "equipment": [],
-      "skills": [],
-      "exp_reward": 48,
-      "gold_reward": 24,
-      "type": "normal",
-      "stagger_turns": 0,
-      "stance_points": 100,
-      "injuries": {}
-    }
-  ],
-  "in_combat": true,
+  "enemies": [],
+  "in_combat": false,
   "is_alive": true,
   "death_cause": null,
   "play_time_days": 1,
   "start_time": "2026-07-31T13:40:38.674173",
-  "kill_count": 3,
+  "kill_count": 5,
   "created_at": "2026-07-31T13:40:38.674179",
   "shared_inventory": [
     {
@@ -659,11 +660,11 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 3,
-    "hp": 196,
-    "max_hp": 210,
-    "mp": 50,
-    "max_mp": 50,
+    "level": 4,
+    "hp": 240,
+    "max_hp": 240,
+    "mp": 65,
+    "max_mp": 65,
     "stats": {
       "strength": 15,
       "agility": 8,
@@ -689,8 +690,8 @@
         "sell_price": 8
       }
     ],
-    "experience": 60,
-    "exp_to_next": 131,
+    "experience": 73,
+    "exp_to_next": 150,
     "gold": 0,
     "world_type": "fantasy",
     "inventory": []
@@ -1568,6 +1569,172 @@
             "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
           ]
         }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:20:05.815924",
+      "day": 1,
+      "data": {
+        "action": "两人继续攻击",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "两人一左一右，同时挥剑斩向那头Elemental Slime。剑锋切入胶质身体，激起一阵翠绿色的火花，但它的核心微微亮起，似在积蓄反击之力。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountyount的攻击落空 → Feral Crystals2",
+            "Feral Crystals2Feral Crystals2的攻击落空 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:20:27.424118",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧铁剑，冲向一只元素史莱姆。史莱姆的身体泛着微光，蠕动躲避，但你的重击砍中了它的一侧，溅出冰蓝色的液体。它猛地弹起朝你扑来，你举起盾牌格挡，冲击力震得手臂发麻，趁它坠落时你又补上一记旋风斩，剑刃切割着它的胶质核心。空气中弥漫着魔力的刺鼻气味，远处还有两颗史莱姆正缓缓逼近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2格挡，减免部分伤害，造成8点伤害 → Feral Crystals2",
+            "Feral Crystals2焕灵格挡，减免部分伤害，造成1点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:21:12.324017",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧铁剑冲向前方一只元素史莱姆，剑刃劈开它半透明的身体，溅起一片闪光粘液。史莱姆颤动了一下，猛地弹起，朝你的胸口撞来，你侧身一闪，勉强避开它的核心冲击。不远处，另一只史莱姆正在聚集魔力，空气中弥漫着刺鼻的臭氧味。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2毫无防备，直接承受攻击，造成15点伤害 → Feral Crystals2",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成2点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:22:20.675852",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你举起铁剑，冲向一只在浮空岛边缘徘徊的元素史莱姆。剑刃切入其凝胶状的身体，却只划开一道浅痕，史莱姆发出滋滋声，溅出灼热的元素液体。你及时后撤，但溅落的液滴在护甲上烧出缕缕青烟。你正准备再度挥剑，却注意到草丛中闪过一道幽绿的目光——另一只史莱姆正在悄然靠近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2闪避判断失误，攻击命中，造成12点伤害 → Feral Crystals2",
+            "Feral Crystals2Feral Crystals2的攻击落空 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:22:27.022571",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧新手铁剑，朝前方一只元素史莱姆冲去。它弹跳着迎向你，身体表面闪烁着微光。你侧身躲过它的冲击，顺势一剑劈向它的核心，剑刃切入半透明的胶质，发出一声闷响。史莱姆剧烈颤动，喷出几滴酸液溅在你的护臂上，冒出丝丝白烟。它的形状开始不稳，似乎在酝酿某种反击。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yount暴击！Feral Crystals2闪避判断失误，攻击命中，造成21点伤害 → Feral Crystals2",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成2点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:22:31.951018",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧铁剑，冲向一只扑来的Elemental Slime。剑刃切入其胶质核心，溅起一片蓝色火花。它扭曲着试图包裹你的手臂，灼热的魔力腐蚀着剑身。你猛力抽剑回撤，扯出粘稠的残液。嘶嘶声中，它重新聚拢，弹射而起直取你面门。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2格挡，减免部分伤害，造成7点伤害 → Feral Crystals2",
+            "Feral Crystals2Feral Crystals2的攻击落空 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:22:38.799408",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧新手铁剑，冲向一只挡在前方的元素史莱姆。剑刃劈开它的凝胶身体，溅起蓝色的液体，但史莱姆迅速重组，向你弹射而来。你侧身闪避，反手一记重击砸在它的核心上，裂纹蔓延开来。不远处，另一只史莱姆正从阴影中蠕动靠近，仿佛在等待机会。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2毫无防备，直接承受攻击，造成15点伤害 → Feral Crystals2",
+            "Feral Crystals2yount闪避判断失误，攻击命中，造成1点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T18:22:47.609996",
+      "day": 1,
+      "data": {
+        "action": "继续战斗",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你举起铁剑冲向一只元素史莱姆，剑刃劈开它的凝胶身体，溅出蓝色液体。它嘶嘶作响，试图裹住你的脚踝，你后退一步，又补上一记重击，将其彻底打散。远处，另一只更大的史莱姆正从雾气中蠕动而来。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Umbra Lupus1",
+            "Feral Crystals2"
+          ],
+          "combat_log": [
+            "⚡ 出手顺序（自动）：焕灵(8) → yount(8)",
+            "yountFeral Crystals2毫无防备，直接承受攻击，造成11点伤害 → Feral Crystals2"
+          ]
+        },
+        "exp_gained": 96,
+        "gold_gained": 48,
+        "leveled_up": true,
+        "new_level": 4
       }
     }
   ]
