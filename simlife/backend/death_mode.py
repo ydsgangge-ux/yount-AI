@@ -438,7 +438,8 @@ class DeathModeEngine:
 
         if is_sweep:
             # ── 快速战斗：跳过逐回合LLM叙事，直接结算 ──
-            sweep_result = self._quick_combat(state, enemies, action_text=action, sender=sender)
+            sweep_result = self._quick_combat(state, enemies, action_text=action, sender=sender,
+                                              stop_condition=self._parse_sweep_condition(action))
             result = {
                 "narrative": sweep_result.get("narrative", ""),
                 "combat_result": sweep_result,
@@ -509,7 +510,8 @@ class DeathModeEngine:
             state["enemies"] = enemies_list
             state["in_combat"] = True
 
-            sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender)
+            sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender,
+                                              stop_condition=self._parse_sweep_condition(action))
             result = {
                 "narrative": sweep_result.get("narrative", ""),
                 "combat_result": sweep_result,
@@ -711,7 +713,8 @@ class DeathModeEngine:
 
                 # ── 扫荡模式：新战斗触发时，如果含扫荡关键词或敌人远弱 → 快速结算 ──
                 if self._is_sweep_action(action) or self._should_auto_sweep(state, enemies_list):
-                    sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender)
+                    sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender,
+                                                      stop_condition=self._parse_sweep_condition(action))
                     result["combat_result"] = sweep_result
                     result["is_sweep"] = True
                     result["sweep_rounds"] = sweep_result.get("rounds", 0)
@@ -1341,10 +1344,14 @@ class DeathModeEngine:
         }
 
     def _quick_combat(self, state: Dict, enemies: list, action_text: str = "",
-                      sender: str = "user", max_rounds: int = 30) -> Dict:
-        """快速战斗（扫荡模式）：自动计算所有回合直到战斗结束，不调用LLM叙事
-        适用于：小怪碾压、用户明确说"扫荡/清掉/直接打完"等关键词
+                      sender: str = "user", max_rounds: int = 30,
+                      stop_condition: str = "kill") -> Dict:
+        """快速战斗（扫荡模式）：自动连续战斗直到达成目标，不调用LLM叙事
+        适用于：小怪碾压、用户明确说"扫荡/清掉/直接打完/把怪打死"等关键词
         max_rounds: 最大回合数上限，防止无限循环
+        stop_condition:
+            - "kill"  → 把怪全部打死（默认）
+            - "half"  → 把怪打到总HP剩一半就停
         返回: {
             "victory": bool,
             "player_died": bool,
@@ -1358,6 +1365,7 @@ class DeathModeEngine:
             "gold_reward": int,
             "key_events": [],           # 关键事件摘要（供叙事Agent使用）
             "narrative": str,           # LLM生成的总结叙事
+            "stopped_at": str,          # 停止原因：kill/half/enemies_defeated/player_died
         }
         """
         char = state["character"]
@@ -1371,6 +1379,7 @@ class DeathModeEngine:
         all_drops = []
         key_events = []
         rounds = 0
+        stopped_at = "kill"
 
         # 保存初始HP用于计算损失
         ai_hp_start = char.get("hp", 0)
@@ -1382,6 +1391,10 @@ class DeathModeEngine:
         # 保存初始敌人信息用于总结
         enemy_names_start = [e.get("name", "?") for e in enemies]
 
+        # 初始敌人总HP（用于"打到半血"目标）
+        enemy_total_hp_start = sum(e.get("hp", e.get("max_hp", 0)) for e in enemies)
+        enemy_half_target = enemy_total_hp_start * 0.5 if stop_condition == "half" else 0
+
         # 用于兜底（当循环未执行时）
         combat_result = {"combat_log": [], "drops": [], "player_died": False, "user_died": False}
 
@@ -1389,7 +1402,15 @@ class DeathModeEngine:
             rounds = round_num
             alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
             if not alive_enemies:
+                stopped_at = "enemies_defeated"
                 break
+
+            # 半血目标：敌人总HP已降到初始一半以下 → 停止
+            if stop_condition == "half":
+                cur_enemy_hp = sum(e.get("hp", 0) for e in enemies)
+                if cur_enemy_hp <= enemy_half_target:
+                    stopped_at = "half"
+                    break
 
             # ── 构造默认攻击口令（扫荡模式不解析用户口令，使用默认策略）──
             # 优先攻击HP最低的敌人（效率最优）
@@ -1437,6 +1458,7 @@ class DeathModeEngine:
                     "narrative": "",
                     "death_cause": death_cause,
                     "user_died": combat_result.get("user_died", False),
+                    "stopped_at": "player_died",
                 }
 
             # 收集战斗日志
@@ -1525,20 +1547,35 @@ class DeathModeEngine:
             "gold_reward": total_gold,
             "key_events": key_events[:8],
             "narrative": narrative,
+            "stopped_at": stopped_at,
         }
 
     @staticmethod
     def _is_sweep_action(action: str) -> bool:
-        """判断用户行动是否为扫荡/速战速决关键词"""
+        """判断用户行动是否为扫荡/速战速决/一口气打死关键词"""
         sweep_keywords = (
             "扫荡", "清掉", "清理", "清空", "直接打完", "速战速决",
             "自动战斗", "快速战斗", "速杀", "碾压", "一举歼灭",
             "全部消灭", "一口气", "连战", "连杀", "横扫",
             "小怪", "直接杀", "打到底", "战斗到底", "打完",
             "刷怪", "刷完", "全灭", "一扫",
+            "打死", "杀掉", "灭了", "干死", "打死它", "打光",
+            "秒掉", "秒杀", "清场", "收割", "打半血", "半血",
+            "一口气打完", "把怪打死",
         )
         action_lower = action.strip()
         return any(kw in action_lower for kw in sweep_keywords)
+
+    @staticmethod
+    def _parse_sweep_condition(action: str) -> str:
+        """识别扫荡的目标条件：
+        - 含"半血/一半血/打一半/减半" → "half"（打到半血）
+        - 其他扫荡指令 → "kill"（把怪打死，默认）
+        """
+        half_keywords = ("半血", "一半血", "一半", "打一半", "减半", "磨到一半")
+        if any(k in action for k in half_keywords):
+            return "half"
+        return "kill"
 
     @staticmethod
     def _should_auto_sweep(state: Dict, enemies: list) -> bool:
