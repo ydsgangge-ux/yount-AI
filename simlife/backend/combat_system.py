@@ -446,7 +446,22 @@ class CombatSystem:
             "stagger_turns": 0,
             "stance_points": 100,
             "injuries": {},
+            "pursuit": _enemy_pursuit(enemy_name, enemy_type),
         }
+
+def _enemy_pursuit(name: str, etype: str) -> bool:
+    """判断敌人是否会追击逃跑的玩家"""
+    no_pursuit_kw = ("史莱姆", "软泥", "元素", "植物", "蘑菇", "孢子", "水晶", "藤蔓")
+    for kw in no_pursuit_kw:
+        if kw in name:
+            return False
+    # 按类型
+    if etype == "boss":
+        return True
+    if etype == "elite":
+        return random.random() < 0.75
+    # 普通怪 40% 追击
+    return random.random() < 0.4
 
     @staticmethod
     def calculate_exp_reward(enemy, player_level: int) -> int:

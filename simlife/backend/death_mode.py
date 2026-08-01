@@ -1095,7 +1095,14 @@ class DeathModeEngine:
 
         enemies = []
         for i in range(count):
-            enemy = CombatSystem.generate_enemy(char_level, world_setting, enemy_type)
+            # 低风险区域出低等级怪（玩家可以刷级）
+            if risk_level == "low":
+                enemy_level = max(1, char_level - random.randint(2, 4))
+            elif risk_level == "medium":
+                enemy_level = max(1, char_level - random.randint(0, 2))
+            else:
+                enemy_level = char_level + random.randint(0, 1)
+            enemy = CombatSystem.generate_enemy(enemy_level, world_setting, enemy_type)
             # 如果当前区域有怪物，替换名称
             if region_monster_names:
                 enemy["name"] = random.choice(region_monster_names)
@@ -1579,34 +1586,16 @@ class DeathModeEngine:
 
     @staticmethod
     def _should_auto_sweep(state: Dict, enemies: list) -> bool:
-        """判断是否应该自动触发扫荡（敌人远弱于角色）
-        条件：所有敌人等级低于角色等级5级以上，且角色HP > 50%
+        """判断是否应该自动触发扫荡（直接计算到战斗结束）
+        条件：非BOSS/非精英怪 → 直接扫荡（省token）
+        BOSS/精英怪 → 逐回合叙事
         """
-        char = state.get("character", {})
-        user_char = state.get("user_character", {})
-        char_level = char.get("level", 1)
-        ai_hp_ratio = char.get("hp", 0) / max(char.get("max_hp", 1), 1)
-
-        # 角色 HP < 50%时不自动扫荡（有风险）
-        if ai_hp_ratio < 0.5:
-            return False
-
-        # 检查所有敌人是否都远低于角色等级
         for enemy in enemies:
-            enemy_level = enemy.get("level", 1)
-            if enemy_level >= char_level - 3:  # 等级差 < 3 就不自动扫荡
-                return False
-            # BOSS绝不自动扫荡
+            # BOSS和精英怪走逐回合叙事
             if enemy.get("type") == "boss" or enemy.get("type") == "elite":
                 return False
 
-        # 用户角色如果也参战，检查其等级
-        if user_char and user_char.get("class_name") and user_char.get("hp", 0) > 0:
-            user_level = user_char.get("level", 1)
-            user_hp_ratio = user_char.get("hp", 0) / max(user_char.get("max_hp", 1), 1)
-            if user_hp_ratio < 0.5:
-                return False
-
+        # 普通怪直接扫荡
         return True
 
     @staticmethod
@@ -1829,23 +1818,31 @@ class DeathModeEngine:
         return result
 
     def _try_flee(self, state: Dict, enemies: list) -> Dict:
-        """逃跑判定：基于角色敏捷 vs 敌人等级，强敌追击"""
+        """逃跑判定：基于角色敏捷 vs 追击敌人等级"""
         char = state["character"]
         char_agi = char["stats"].get("agility", 5)
-        enemy_total_level = sum(e.get("level", 1) for e in enemies)
-        enemy_max_level = max((e.get("level", 1) for e in enemies), default=1)
 
-        # 逃跑成功率：角色敏捷 / (角色敏捷 + 敌人总等级 * 2)
+        # 筛选出会追击的敌人
+        pursuing_enemies = [e for e in enemies if e.get("pursuit", False)]
+        non_pursuing = [e for e in enemies if not e.get("pursuit", False)]
+
+        if not pursuing_enemies:
+            # 没有敌人追击，直接逃跑成功
+            return {"fled": True, "player_died": False, "non_pursuing": [e.get("name","?") for e in non_pursuing]}
+
+        enemy_total_level = sum(e.get("level", 1) for e in pursuing_enemies)
+        enemy_max_level = max((e.get("level", 1) for e in pursuing_enemies), default=1)
+
+        # 逃跑成功率：角色敏捷 / (角色敏捷 + 追击敌人总等级 * 2)
         flee_chance = char_agi / (char_agi + enemy_total_level * 2 + 1)
 
         if random.random() < flee_chance:
-            return {"fled": True, "player_died": False}
+            return {"fled": True, "player_died": False, "pursuing": [e.get("name","?") for e in pursuing_enemies]}
         else:
-            # 逃跑失败，敌人追击
-            # 强敌（高等级）追击伤害更高
+            # 逃跑失败，追击敌人造成伤害
             pursuit_damage = int(enemy_max_level * 3 + random.randint(5, 15))
             char["hp"] -= pursuit_damage
-            pursued_by = enemies[0].get("name", "敌人") if enemies else "敌人"
+            pursued_by = pursuing_enemies[0].get("name", "敌人") if pursuing_enemies else "敌人"
 
             result = {
                 "fled": False,
@@ -1853,6 +1850,8 @@ class DeathModeEngine:
                 "pursuit_damage": pursuit_damage,
                 "pursued_by": pursued_by,
                 "player_died": False,
+                "non_pursuing": [e.get("name","?") for e in non_pursuing],
+                "pursuing": [e.get("name","?") for e in pursuing_enemies],
             }
 
             if char["hp"] <= 0:
