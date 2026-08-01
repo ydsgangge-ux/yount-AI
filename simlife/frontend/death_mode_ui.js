@@ -310,40 +310,20 @@ const DeathModeUI = {
         headerChar.textContent = `${char.name || '?'} Lv.${char.level || 1} · HP ${char.hp}/${char.max_hp}${this._userName ? ' · 👤' + this._userName : ''}`;
       }
 
-      // 装备（AI角色，含卸下按钮 + 属性显示）
-      const equipment = char.equipment || [];
-      const aiName = char.name || 'AI';
-      const eqHtml = equipment.length > 0 ? equipment.map(eq => {
-        const icon = eq.type === 'weapon' ? '🗡️' : '🛡️';
-        // 属性描述：bonus(攻击/防御) + stat_bonus(属性加成)
-        let bonusText = '';
-        if (eq.bonus) {
-          const bonusLabel = eq.type === 'weapon' ? '攻' : '防';
-          bonusText += `${bonusLabel}+${eq.bonus}`;
-        }
-        if (eq.stat_bonus) {
-          const sb = eq.stat_bonus;
-          const statLabels = {strength:'力',agility:'敏',intelligence:'智',vitality:'体',luck:'运'};
-          const sbParts = Object.entries(sb).map(([k,v]) => `${statLabels[k]||k}+${v}`);
-          if (sbParts.length > 0) bonusText += (bonusText ? ' ' : '') + sbParts.join(' ');
-        }
-        const bonusHtml = bonusText ? `<span style="font-size:9px;color:#3fb950;margin-left:4px;">${bonusText}</span>` : '';
-        return `<div style="font-size:11px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:1px;">
-          <span>${icon} ${eq.name}（${eq.rarity_name || '普通'}）${bonusHtml}</span>
-          <button onclick="DeathModeUI._unequip('${eq.name}','ai')" style="font-size:9px;padding:1px 4px;background:#21262d;border:1px solid #30363d;border-radius:3px;color:#8b949e;cursor:pointer;">卸下</button>
-        </div>`;
-      }).join('') : '<div style="font-size:11px;color:#484f58;">无装备</div>';
+      // 装备（AI角色，4槽位显示，含卸下按钮 + 属性显示）
+      const eqHtml = this._renderEquipmentSlots(char, 'ai');
 
       // 共享背包（从 state 读取，含属性显示）
       const sharedInv = state.shared_inventory || [];
       let invHtml = '';
       if (sharedInv.length > 0) {
         invHtml = sharedInv.map(item => {
-          const icon = item.type === 'weapon' ? '🗡️' : item.type === 'outfit' ? '🛡️' : '📦';
+          const slotIcon = this._getItemSlotIcon(item);
           // 属性描述
           let bonusText = '';
           if (item.bonus) {
-            const bonusLabel = item.type === 'weapon' ? '攻' : item.type === 'outfit' ? '防' : '值';
+            const dt = item.damage_type || 'physical';
+            const bonusLabel = dt === 'magic' ? '法' : dt === 'ranged' ? '远' : dt === 'defense' ? '防' : '攻';
             bonusText += `${bonusLabel}+${item.bonus}`;
           }
           if (item.stat_bonus) {
@@ -354,7 +334,7 @@ const DeathModeUI = {
           }
           const bonusHtml = bonusText ? `<span style="font-size:9px;color:#3fb950;">${bonusText}</span>` : '';
           return `<div style="font-size:11px;color:${item.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${icon} ${item.name}（${item.rarity_name || '普通'}）${bonusHtml}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${slotIcon} ${item.name}（${item.rarity_name || '普通'}）${bonusHtml}</span>
             <div style="display:flex;gap:3px;flex-shrink:0;">
               <button onclick="DeathModeUI._equipFromInv('${item.name}','ai')" style="font-size:9px;padding:1px 4px;background:#1a3a1a;border:1px solid #3fb950;border-radius:3px;color:#3fb950;cursor:pointer;">AI</button>
               <button onclick="DeathModeUI._equipFromInv('${item.name}','user')" style="font-size:9px;padding:1px 4px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:3px;color:#58a6ff;cursor:pointer;">我</button>
@@ -375,27 +355,7 @@ const DeathModeUI = {
         const uExpPct = uc.exp_to_next > 0 ? ((uc.experience || 0) / uc.exp_to_next * 100) : 0;
         const uHpColor = uHpPct > 60 ? '#3fb950' : uHpPct > 30 ? '#d29922' : '#f85149';
         const uStats = uc.stats || {};
-        const uEquipment = uc.equipment || [];
-        const uEqHtml = uEquipment.length > 0 ? uEquipment.map(eq => {
-          const icon = eq.type === 'weapon' ? '🗡️' : '🛡️';
-          // 属性描述
-          let bonusText = '';
-          if (eq.bonus) {
-            const bonusLabel = eq.type === 'weapon' ? '攻' : '防';
-            bonusText += `${bonusLabel}+${eq.bonus}`;
-          }
-          if (eq.stat_bonus) {
-            const sb = eq.stat_bonus;
-            const statLabels = {strength:'力',agility:'敏',intelligence:'智',vitality:'体',luck:'运'};
-            const sbParts = Object.entries(sb).map(([k,v]) => `${statLabels[k]||k}+${v}`);
-            if (sbParts.length > 0) bonusText += (bonusText ? ' ' : '') + sbParts.join(' ');
-          }
-          const bonusHtml = bonusText ? `<span style="font-size:9px;color:#3fb950;margin-left:4px;">${bonusText}</span>` : '';
-          return `<div style="font-size:11px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;">
-            <span>${icon} ${eq.name}（${eq.rarity_name || '普通'}）${bonusHtml}</span>
-            <button onclick="DeathModeUI._unequip('${eq.name}','user')" style="font-size:9px;padding:1px 4px;background:#21262d;border:1px solid #30363d;border-radius:3px;color:#8b949e;cursor:pointer;">卸下</button>
-          </div>`;
-        }).join('') : '';
+        const uEqHtml = this._renderEquipmentSlots(uc, 'user');
         ucHtml = `
           <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #30363d;">
             <div style="text-align:center;margin-bottom:8px;">
@@ -904,6 +864,83 @@ const DeathModeUI = {
       if (data.error) { alert(data.message || '卸下失败'); return; }
       this._renderStatusPanel();
     } catch (e) { alert('卸下失败: ' + e.message); }
+  },
+
+  // ── 装备槽位渲染 ──────────────────────────────────
+
+  _getItemSlotIcon(item) {
+    const slotIcons = { main_hand: '🗡️', off_hand: '🛡️', ranged: '🏹', outfit: '👕' };
+    const slot = item.slot || this._guessItemSlot(item);
+    return slotIcons[slot] || '📦';
+  },
+
+  _guessItemSlot(item) {
+    if (item.type === 'outfit') return 'outfit';
+    const subtype = item.subtype || 'one_handed';
+    const slotMap = { one_handed: 'main_hand', two_handed: 'main_hand', ranged: 'ranged', wand: 'ranged', shield: 'off_hand', off_hand: 'off_hand' };
+    return slotMap[subtype] || 'main_hand';
+  },
+
+  _renderEquipmentSlots(character, owner) {
+    const equipment = character.equipment || [];
+    // 4个槽位定义
+    const slots = [
+      { id: 'main_hand', label: '主手', icon: '🗡️', empty: '无武器' },
+      { id: 'off_hand', label: '副手', icon: '🛡️', empty: '无' },
+      { id: 'ranged', label: '远程', icon: '🏹', empty: '无' },
+      { id: 'outfit', label: '穿着', icon: '👕', empty: '无' },
+    ];
+
+    // 按槽位查找装备
+    function getBySlot(id) {
+      for (const eq of equipment) {
+        const slot = eq.slot || 'main_hand';
+        if (slot === id) return eq;
+      }
+      return null;
+    }
+
+    return slots.map(slot => {
+      const eq = getBySlot(slot.id);
+      if (!eq) {
+        return `<div style="font-size:10px;color:#484f58;display:flex;align-items:center;gap:4px;margin-bottom:2px;padding:2px 4px;background:#0d1117;border-radius:3px;border:1px dashed #21262d;">
+          <span>${slot.icon}</span>
+          <span>${slot.label}：${slot.empty}</span>
+        </div>`;
+      }
+      // 属性描述
+      let bonusText = '';
+      if (eq.bonus) {
+        const dt = eq.damage_type || 'physical';
+        const bonusLabel = dt === 'magic' ? '法' : dt === 'ranged' ? '远' : dt === 'defense' ? '防' : '攻';
+        bonusText += `${bonusLabel}+${eq.bonus}`;
+      }
+      if (eq.stat_bonus) {
+        const sb = eq.stat_bonus;
+        const statLabels = {strength:'力',agility:'敏',intelligence:'智',vitality:'体',luck:'运'};
+        const sbParts = Object.entries(sb).map(([k,v]) => `${statLabels[k]||k}+${v}`);
+        if (sbParts.length > 0) bonusText += (bonusText ? ' ' : '') + sbParts.join(' ');
+      }
+      const bonusHtml = bonusText ? `<span style="font-size:8px;color:#3fb950;margin-left:3px;">${bonusText}</span>` : '';
+      // 重量提示
+      let weightHtml = '';
+      if (eq.weight) {
+        const str = character.stats?.strength || 5;
+        const overload = str < eq.weight;
+        weightHtml = `<span style="font-size:8px;color:${overload ? '#f85149' : '#484f58'};margin-left:2px;">⚖️${eq.weight}</span>`;
+      }
+      const subtypeText = eq.subtype ? (eq.subtype === 'one_handed' ? '单手' : eq.subtype === 'two_handed' ? '双手' : eq.subtype === 'ranged' ? '弓' : eq.subtype === 'wand' ? '法杖' : eq.subtype === 'shield' ? '盾牌' : eq.subtype === 'off_hand' ? '副手' : '') : '';
+      return `<div style="font-size:10px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;padding:2px 4px;background:#161b22;border-radius:3px;border:1px solid #21262d;">
+        <span style="display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;">
+          <span>${slot.icon}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</span>
+          <span style="font-size:8px;color:#484f58;">${subtypeText}</span>
+          ${bonusHtml}
+          ${weightHtml}
+        </span>
+        <button onclick="DeathModeUI._unequip('${eq.name}','${owner}')" style="font-size:8px;padding:1px 3px;background:#21262d;border:1px solid #30363d;border-radius:2px;color:#8b949e;cursor:pointer;flex-shrink:0;">卸下</button>
+      </div>`;
+    }).join('');
   },
 
   // ── 地图可视化 ──────────────────────────────────────

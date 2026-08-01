@@ -1048,28 +1048,55 @@ class DeathModeEngine:
 
         # 尝试在装备名池中匹配品质
         names_pool = EquipmentSystem.EQUIPMENT_NAMES.get(world_type, EquipmentSystem.EQUIPMENT_NAMES["fantasy"])
-        type_pool = names_pool.get(eq_type, names_pool.get("weapon", {}))
-        matched_rarity = None
-        for rarity, names in type_pool.items():
-            if item_name in names:
-                matched_rarity = rarity
-                break
 
-        # 如果没有精确匹配，尝试模糊匹配（名字包含关键词）
-        if not matched_rarity:
-            for rarity, names in type_pool.items():
-                for n in names:
-                    if item_name in n or n in item_name:
+        # 武器：搜索所有武器子类型池
+        weapon_subtypes = ("one_handed", "two_handed", "ranged", "wand", "shield", "off_hand")
+        matched_rarity = None
+        matched_subtype = None
+        if eq_type == "weapon":
+            for subtype_key in weapon_subtypes:
+                type_pool = names_pool.get(subtype_key, {})
+                for rarity, names in type_pool.items():
+                    if item_name in names:
                         matched_rarity = rarity
+                        matched_subtype = subtype_key
                         break
                 if matched_rarity:
                     break
+            # 模糊匹配
+            if not matched_rarity:
+                for subtype_key in weapon_subtypes:
+                    type_pool = names_pool.get(subtype_key, {})
+                    for rarity, names in type_pool.items():
+                        for n in names:
+                            if item_name in n or n in item_name:
+                                matched_rarity = rarity
+                                matched_subtype = subtype_key
+                                break
+                        if matched_rarity:
+                            break
+                    if matched_rarity:
+                        break
+        else:
+            type_pool = names_pool.get(eq_type, {})
+            for rarity, names in type_pool.items():
+                if item_name in names:
+                    matched_rarity = rarity
+                    break
+            if not matched_rarity:
+                for rarity, names in type_pool.items():
+                    for n in names:
+                        if item_name in n or n in item_name:
+                            matched_rarity = rarity
+                            break
+                    if matched_rarity:
+                        break
 
         # 未匹配到则默认为普通品质
         rarity = matched_rarity or "common"
 
         # 使用 EquipmentSystem 生成标准装备
-        item = EquipmentSystem.generate_equipment(world_type, eq_type, rarity, char_level)
+        item = EquipmentSystem.generate_equipment(world_type, eq_type, rarity, char_level, subtype=matched_subtype)
         # 覆盖名称为原始物品名
         item["name"] = item_name
         return item
@@ -1276,7 +1303,7 @@ class DeathModeEngine:
                 is_magic = cmd.get(f"{role}_is_magic", False)
                 skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
                 atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
-                                                 is_magic=is_magic, skill_multiplier=skill_mult)
+                                                 attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
                 # 战术加成
                 if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
                     atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)

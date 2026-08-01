@@ -144,16 +144,51 @@ class CombatSystem:
     """数值战斗系统 v2：防御三选一、硬直、等级压制、伤势、装备"""
 
     @staticmethod
-    def _weapon_bonus(entity) -> int:
-        if isinstance(entity, dict):
-            return sum(e.get("bonus", 0) for e in entity.get("equipment", []) if e.get("type") == "weapon")
-        return sum(e.get("bonus", 0) for e in entity.equipment if e.get("type") == "weapon")
+    def _weapon_bonus_by_type(entity, damage_type: str = "physical") -> int:
+        """按伤害类型获取武器加成"""
+        equip_list = entity.get("equipment", []) if isinstance(entity, dict) else entity.equipment
+        total = 0
+        for e in equip_list:
+            e_type = e.get("type") if isinstance(e, dict) else getattr(e, "type", "weapon")
+            if e_type == "outfit":
+                continue
+            dt = e.get("damage_type", "physical") if isinstance(e, dict) else "physical"
+            if dt == damage_type or (damage_type == "physical" and dt == "physical"):
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
+            elif dt == "defense":
+                pass  # 盾牌不加攻击力
+            elif dt == "magic" and damage_type == "magic":
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
+            elif dt == "ranged" and damage_type == "ranged":
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
+            elif damage_type == "physical" and dt in ("physical",):
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
+        return total
 
     @staticmethod
     def _armor_bonus(entity) -> int:
         if isinstance(entity, dict):
-            return sum(e.get("bonus", 0) for e in entity.get("equipment", []) if e.get("type") == "outfit")
+            outfit_bonus = sum(e.get("bonus", 0) for e in entity.get("equipment", []) if e.get("type") == "outfit")
+            shield_bonus = sum(e.get("bonus", 0) for e in entity.get("equipment", [])
+                               if e.get("type") == "weapon" and e.get("subtype") == "shield")
+            return outfit_bonus + shield_bonus
         return sum(e.get("bonus", 0) for e in entity.equipment if e.get("type") == "outfit")
+
+    @staticmethod
+    def _get_weight_penalty(entity) -> Dict:
+        """获取角色重量减益"""
+        from simlife.backend.equipment_system import EquipmentSystem
+        equip_list = entity.get("equipment", []) if isinstance(entity, dict) else []
+        penalty = {"hit_chance": 0, "damage": 0, "dodge": 0}
+        for e in equip_list:
+            p = EquipmentSystem.check_weight_penalty(
+                entity if isinstance(entity, dict) else {},
+                e if isinstance(e, dict) else {}
+            )
+            if p.get("penalty"):
+                for k, v in p["penalty_values"].items():
+                    penalty[k] = penalty.get(k, 0) + v
+        return penalty
 
     @staticmethod
     def _get_stats(entity) -> Dict:
@@ -174,10 +209,19 @@ class CombatSystem:
         return entity.get("name", "未知")
 
     @staticmethod
-    def calc_attack_power(entity, is_magic: bool = False) -> int:
+    def calc_attack_power(entity, attack_type: str = "physical") -> int:
+        """
+        计算攻击力
+        attack_type: physical(近战物理) / ranged(远程物理) / magic(法术)
+        """
         s = CombatSystem._get_stats(entity)
-        bonus = CombatSystem._weapon_bonus(entity)
-        base = s.get("intelligence", 5) * 2 if is_magic else s.get("strength", 5) * 2
+        bonus = CombatSystem._weapon_bonus_by_type(entity, attack_type)
+        if attack_type == "magic":
+            base = s.get("intelligence", 5) * 2
+        elif attack_type == "ranged":
+            base = s.get("agility", 5) * 2
+        else:  # physical
+            base = s.get("strength", 5) * 2
         return int(base + bonus)
 
     @staticmethod
@@ -310,16 +354,18 @@ class CombatSystem:
         attacker,
         defender,
         defense_action: DefenseAction = DefenseAction.NONE,
-        is_magic: bool = False,
+        attack_type: str = "physical",
         skill_multiplier: float = 1.0,
         target_part: Optional[str] = None,
         part_injury_severity: float = 0.0,
     ) -> Dict:
         """
         执行一次完整攻击：命中判定 → 防御三选一 → 伤害结算 → 部位伤势
-        兼容旧版 Dict 和新版 CombatEntity 格式
+        attack_type: physical(近战物理) / ranged(远程物理) / magic(法术)
         """
-        hit_chance = CombatSystem.calc_hit_chance(attacker, defender)
+        # 重量减益
+        atk_penalty = CombatSystem._get_weight_penalty(attacker)
+        hit_chance = CombatSystem.calc_hit_chance(attacker, defender) + atk_penalty.get("hit_chance", 0)
         atk_name = CombatSystem._get_name(attacker)
         def_name = CombatSystem._get_name(defender)
 
@@ -327,7 +373,11 @@ class CombatSystem:
             return {"hit": False, "crit": False, "dodged": False, "damage": 0,
                     "defense_result": None, "description": f"{atk_name}的攻击落空"}
 
-        base_atk = int(CombatSystem.calc_attack_power(attacker, is_magic) * skill_multiplier)
+        base_atk = int(CombatSystem.calc_attack_power(attacker, attack_type) * skill_multiplier)
+        # 重量减益：伤害降低
+        dmg_penalty = atk_penalty.get("damage", 0)
+        base_atk = max(1, int(base_atk * (1 + dmg_penalty)))
+
         defense_stat = CombatSystem.calc_defense(defender)
         raw_damage = max(1, base_atk - defense_stat)
         damage = CombatSystem.roll_damage(raw_damage)
@@ -348,6 +398,13 @@ class CombatSystem:
                 defender.apply_injury(target_part, part_injury_severity)
         elif isinstance(defender, dict):
             defender["hp"] = max(0, defender.get("hp", 0) - final_damage)
+
+        # 加攻击者重量减益到闪避
+        if isinstance(attacker, dict):
+            def_penalty = CombatSystem._get_weight_penalty(attacker)
+            res_dodge_penalty = def_penalty.get("dodge", 0)
+        else:
+            res_dodge_penalty = 0
 
         # 构建描述
         crit_str = "暴击！" if is_crit else ""
@@ -482,7 +539,7 @@ def _enemy_pursuit(name: str, etype: str) -> bool:
     # ------------------------------------------------------------
 
     @staticmethod
-    def attack_simple(attacker: Dict, defender: Dict, is_magic: bool = False,
+    def attack_simple(attacker: Dict, defender: Dict, attack_type: str = "physical",
                       skill_multiplier: float = 1.0) -> Dict:
         """旧版简单攻击接口（无防御三选一，自动随机选择防御方式）"""
         # 敌人随机选择防御方式
@@ -494,7 +551,7 @@ def _enemy_pursuit(name: str, etype: str) -> bool:
         defense = random.choice(defense_choices)
 
         return CombatSystem.attack(attacker, defender, defense_action=defense,
-                                   is_magic=is_magic, skill_multiplier=skill_multiplier)
+                                   attack_type=attack_type, skill_multiplier=skill_multiplier)
 
 
 # ============================================================
