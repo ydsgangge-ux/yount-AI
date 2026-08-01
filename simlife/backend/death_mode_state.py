@@ -111,6 +111,41 @@ def get_class_template(world_type: str, class_id: str) -> Optional[Dict]:
 
 # ── 状态结构 ──────────────────────────────────────────
 
+def _convert_skill_names_to_ids(skill_names: list, world_type: str, class_id: str) -> list:
+    """将技能名称列表转换为技能ID列表（支持精确匹配和模糊匹配）"""
+    from simlife.backend.skill_system import SkillSystem
+    ids = []
+    for name in skill_names:
+        # 先从职业技能中精确匹配
+        class_skills = SkillSystem.get_class_skills(world_type, class_id)
+        found = False
+        for s in class_skills:
+            if s.name == name:
+                ids.append(s.id)
+                found = True
+                break
+        if found:
+            continue
+        # 模糊匹配：职业技能名包含输入名称
+        for s in class_skills:
+            if name in s.name or s.name in name:
+                ids.append(s.id)
+                found = True
+                break
+        if found:
+            continue
+        # 通用技能中匹配
+        skill = SkillSystem.get_skill_by_name(name)
+        if skill:
+            ids.append(skill.id)
+            continue
+        # 回退到通用Lv.1技能
+        common = SkillSystem.get_skill_by_name("防御")
+        if common:
+            ids.append(common.id)
+    return ids
+
+
 def create_initial_state(
     character_name: str,
     class_id: str,
@@ -150,11 +185,12 @@ def create_initial_state(
             "mp": user_cls["base_mp"],
             "max_mp": user_cls["base_mp"],
             "stats": dict(user_cls["base_stats"]),
-            "skills": list(user_cls["starting_skills"]),
+            "skills": _convert_skill_names_to_ids(user_cls["starting_skills"], world_type, user_class_id),
             "equipment": [],
             "experience": 0,
             "exp_to_next": 100,
             "gold": 0,
+            "awakening_skills": [],
         }
     else:
         user_character = {
@@ -165,6 +201,7 @@ def create_initial_state(
             "level": 1, "hp": 0, "max_hp": 0, "mp": 0, "max_mp": 0,
             "stats": {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5},
             "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0,
+            "awakening_skills": [],
         }
 
     return {
@@ -180,7 +217,8 @@ def create_initial_state(
             "mp": cls["base_mp"],
             "max_mp": cls["base_mp"],
             "stats": stats,
-            "skills": list(cls["starting_skills"]),
+            "skills": _convert_skill_names_to_ids(cls["starting_skills"], world_type, class_id),
+            "awakening_skills": [],
             "equipment": [],
             "inventory": [],
             "experience": 0,

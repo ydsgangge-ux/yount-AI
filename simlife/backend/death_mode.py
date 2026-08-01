@@ -260,6 +260,8 @@ class DeathModeEngine:
                 "max_mp": char.get("max_mp", 0),
                 "stats": char.get("stats", {}),
                 "skills": char.get("skills", []),
+                "awakening_skills": char.get("awakening_skills", []),
+                "max_skills": 10,  # 最大技能数
                 "equipment": char.get("equipment", []),
                 "gold": char.get("gold", 0),
                 "experience": char.get("experience", 0),
@@ -1022,84 +1024,50 @@ class DeathModeEngine:
         return result
 
     def _create_item_from_name(self, item_name: str, state: Dict) -> Optional[Dict]:
-        """根据物品名创建装备对象，自动推断类型和品质"""
+        """根据物品名创建装备对象，仅在装备名池中存在时生成，拒绝凭空变出"""
         world_type = state.get("world_type", "fantasy")
         char_level = state.get("character", {}).get("level", 1)
-
-        # 武器关键词
-        weapon_keywords = ["剑", "刀", "弓", "杖", "棍", "枪", "斧", "匕", "锤", "刃", "炮", "手套"]
-        # 穿着关键词
-        outfit_keywords = ["甲", "袍", "衣", "盾", "铠", "斗篷", "夹克", "服", "护甲", "护盾", "战衣"]
-
-        # 推断装备类型
-        eq_type = None
-        for kw in weapon_keywords:
-            if kw in item_name:
-                eq_type = "weapon"
-                break
-        if eq_type is None:
-            for kw in outfit_keywords:
-                if kw in item_name:
-                    eq_type = "outfit"
-                    break
-        # 默认为武器
-        if eq_type is None:
-            eq_type = "weapon"
-
-        # 尝试在装备名池中匹配品质
         names_pool = EquipmentSystem.EQUIPMENT_NAMES.get(world_type, EquipmentSystem.EQUIPMENT_NAMES["fantasy"])
 
-        # 武器：搜索所有武器子类型池
+        # 搜索所有武器子类型池（含 shield / off_hand）
         weapon_subtypes = ("one_handed", "two_handed", "ranged", "wand", "shield", "off_hand")
-        matched_rarity = None
-        matched_subtype = None
-        if eq_type == "weapon":
-            for subtype_key in weapon_subtypes:
-                type_pool = names_pool.get(subtype_key, {})
-                for rarity, names in type_pool.items():
-                    if item_name in names:
-                        matched_rarity = rarity
-                        matched_subtype = subtype_key
-                        break
-                if matched_rarity:
-                    break
-            # 模糊匹配
-            if not matched_rarity:
-                for subtype_key in weapon_subtypes:
-                    type_pool = names_pool.get(subtype_key, {})
-                    for rarity, names in type_pool.items():
-                        for n in names:
-                            if item_name in n or n in item_name:
-                                matched_rarity = rarity
-                                matched_subtype = subtype_key
-                                break
-                        if matched_rarity:
-                            break
-                    if matched_rarity:
-                        break
-        else:
-            type_pool = names_pool.get(eq_type, {})
+
+        # 1. 精确匹配
+        for subtype_key in weapon_subtypes:
+            type_pool = names_pool.get(subtype_key, {})
             for rarity, names in type_pool.items():
                 if item_name in names:
-                    matched_rarity = rarity
-                    break
-            if not matched_rarity:
-                for rarity, names in type_pool.items():
-                    for n in names:
-                        if item_name in n or n in item_name:
-                            matched_rarity = rarity
-                            break
-                    if matched_rarity:
-                        break
+                    item = EquipmentSystem.generate_equipment(world_type, "weapon", rarity, char_level, subtype=subtype_key)
+                    item["name"] = item_name
+                    return item
 
-        # 未匹配到则默认为普通品质
-        rarity = matched_rarity or "common"
+        type_pool = names_pool.get("outfit", {})
+        for rarity, names in type_pool.items():
+            if item_name in names:
+                item = EquipmentSystem.generate_equipment(world_type, "outfit", rarity, char_level)
+                item["name"] = item_name
+                return item
 
-        # 使用 EquipmentSystem 生成标准装备
-        item = EquipmentSystem.generate_equipment(world_type, eq_type, rarity, char_level, subtype=matched_subtype)
-        # 覆盖名称为原始物品名
-        item["name"] = item_name
-        return item
+        # 2. 模糊匹配（子串匹配）
+        for subtype_key in weapon_subtypes:
+            type_pool = names_pool.get(subtype_key, {})
+            for rarity, names in type_pool.items():
+                for n in names:
+                    if item_name in n or n in item_name:
+                        item = EquipmentSystem.generate_equipment(world_type, "weapon", rarity, char_level, subtype=subtype_key)
+                        item["name"] = item_name
+                        return item
+
+        type_pool = names_pool.get("outfit", {})
+        for rarity, names in type_pool.items():
+            for n in names:
+                if item_name in n or n in item_name:
+                    item = EquipmentSystem.generate_equipment(world_type, "outfit", rarity, char_level)
+                    item["name"] = item_name
+                    return item
+
+        # 3. 装备池中不存在 → 拒绝生成，防止用户口令凭空变出
+        return None
 
     def _generate_enemies(self, state: Dict, risk_level: str) -> list:
         """生成敌人列表（支持一群怪，优先使用地图区域的怪物）"""
@@ -1462,6 +1430,7 @@ class DeathModeEngine:
             default_cmd = {
                 "ai_is_magic": False, "user_is_magic": False,
                 "ai_skill_mult": 1.0, "user_skill_mult": 1.0,
+                "ai_skill": None, "user_skill": None,
                 "ai_defense": DefenseAction.BLOCK, "user_defense": DefenseAction.BLOCK,
                 "ai_target": target_enemy, "user_target": target_enemy,
                 "tactic": None, "initiative_order": None, "tank_role": None,
@@ -1651,6 +1620,7 @@ class DeathModeEngine:
         result = {
             "ai_is_magic": False, "user_is_magic": False,
             "ai_skill_mult": 1.0, "user_skill_mult": 1.0,
+            "ai_skill": None, "user_skill": None,
             "ai_defense": DefenseAction.BLOCK, "user_defense": DefenseAction.DODGE,
             "ai_target": None, "user_target": None,
             "tactic": None,
@@ -1779,36 +1749,41 @@ class DeathModeEngine:
             result["user_is_magic"] = False
             result["ai_is_magic"] = False
 
-        # ── 技能匹配 ──
-        from simlife.backend.growth_system import GrowthSystem
+        # ── 技能匹配（使用 SkillSystem）──
+        from simlife.backend.skill_system import SkillSystem
         world_type = state.get("world_type", "fantasy")
-        ai_class_id = ai_char.get("class_id", "")
-        user_class_id = user_char.get("class_id", "")
-        ai_skill_pool = GrowthSystem.SKILL_POOL.get(world_type, {}).get(ai_class_id, [])
-        user_skill_pool = GrowthSystem.SKILL_POOL.get(world_type, {}).get(user_class_id, [])
 
-        for skill in ai_skill_pool:
-            if skill["name"] in t:
-                result["ai_skill_mult"] = skill.get("multiplier", 1.0)
-                if skill.get("type") == "magic":
+        # AI角色技能匹配
+        ai_skills = ai_char.get("skills", [])
+        for skill_id in ai_skills:
+            skill = SkillSystem.get_skill(skill_id)
+            if skill and skill.name in t:
+                result["ai_skill"] = skill.id
+                result["ai_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
+                if skill.type == "magic":
                     result["ai_is_magic"] = True
-                # 扣MP
-                mp_cost = skill.get("mp_cost", 0)
+                mp_cost = skill.mp_cost
                 if ai_char.get("mp", 0) >= mp_cost:
                     ai_char["mp"] = ai_char.get("mp", 0) - mp_cost
                 else:
-                    result["ai_skill_mult"] = 1.0  # MP不足，降为普攻
+                    result["ai_skill"] = None
+                    result["ai_skill_mult"] = 1.0
                 break
 
-        for skill in user_skill_pool:
-            if skill["name"] in t:
-                result["user_skill_mult"] = skill.get("multiplier", 1.0)
-                if skill.get("type") == "magic":
+        # 用户角色技能匹配
+        user_skills = user_char.get("skills", [])
+        for skill_id in user_skills:
+            skill = SkillSystem.get_skill(skill_id)
+            if skill and skill.name in t:
+                result["user_skill"] = skill.id
+                result["user_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
+                if skill.type == "magic":
                     result["user_is_magic"] = True
-                mp_cost = skill.get("mp_cost", 0)
+                mp_cost = skill.mp_cost
                 if user_char.get("mp", 0) >= mp_cost:
                     user_char["mp"] = user_char.get("mp", 0) - mp_cost
                 else:
+                    result["user_skill"] = None
                     result["user_skill_mult"] = 1.0
                 break
 

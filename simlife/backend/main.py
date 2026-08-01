@@ -1444,6 +1444,7 @@ def api_death_mode_start(data: dict):
                 "max_mp": user_cls["base_mp"],
                 "stats": dict(user_cls["base_stats"]),
                 "skills": list(user_cls["starting_skills"]),
+                "awakening_skills": [],
                 "equipment": [],
                 "experience": 0,
                 "exp_to_next": 100,
@@ -1673,6 +1674,237 @@ def api_death_mode_log(limit: int = 50, offset: int = 0):
     from simlife.backend.death_mode import DeathModeEngine
     engine = DeathModeEngine()
     return engine.get_action_log(limit=limit, offset=offset)
+
+
+# ── 技能系统 API ─────────────────────────────────────
+
+
+@app.get("/api/death-mode/learnable-skills")
+def api_death_mode_learnable_skills(who: str = "ai"):
+    """
+    获取所有可学习的技能（跨职业自由选择）
+    who: "ai" 或 "user"
+    """
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.skill_system import SkillSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    world_type = state.get("world_type", "fantasy")
+    who = who.strip().lower()
+
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    level = character.get("level", 1)
+    stats = character.get("stats", {})
+    known_skills = character.get("skills", [])
+
+    # 获取所有可学技能
+    learnable = SkillSystem.get_all_learnable_skills(
+        world_type, level, stats, known_skills
+    )
+
+    # 获取剩余技能槽位
+    from simlife.backend.skill_system import MAX_SKILLS
+    normal_skills_count = len([sid for sid in known_skills if not sid.startswith("awakening_")])
+    remaining_slots = MAX_SKILLS - normal_skills_count
+
+    return {
+        "learnable_skills": [
+            {
+                "skill": item["skill"].to_dict(),
+                "source": item["source"],
+                "source_class_id": item["source_class_id"],
+                "class_icon": item["class_icon"],
+            }
+            for item in learnable
+        ],
+        "known_skills": known_skills,
+        "skill_count": normal_skills_count,
+        "max_skills": MAX_SKILLS,
+        "remaining_slots": remaining_slots,
+    }
+
+
+@app.post("/api/death-mode/learn-skill")
+def api_death_mode_learn_skill(data: dict):
+    """
+    学习技能
+    data: {"skill_id": "war_heavy_strike", "who": "ai"}
+    who: "ai" 或 "user"
+    """
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.skill_system import SkillSystem, MAX_SKILLS
+
+    skill_id = data.get("skill_id", "").strip()
+    who = data.get("who", "ai").strip().lower()
+
+    if not skill_id:
+        raise HTTPException(400, "请指定要学习的技能ID")
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    # 检查技能是否存在
+    skill = SkillSystem.get_skill(skill_id)
+    if not skill:
+        raise HTTPException(400, f"技能不存在: {skill_id}")
+
+    # 检查是否已学习
+    if skill_id in character.get("skills", []):
+        raise HTTPException(400, f"已学习技能「{skill.name}」")
+
+    # 检查技能槽位
+    normal_skills = [sid for sid in character.get("skills", []) if not sid.startswith("awakening_")]
+    if len(normal_skills) >= MAX_SKILLS:
+        raise HTTPException(400, f"技能已达上限（{MAX_SKILLS}个）")
+
+    # 检查等级需求
+    level = character.get("level", 1)
+    if skill.req_level > level:
+        raise HTTPException(400, f"需要等级{skill.req_level}，当前等级{level}")
+
+    # 检查属性需求
+    stats = character.get("stats", {})
+    for stat, val in skill.req_stats.items():
+        if stats.get(stat, 0) < val:
+            raise HTTPException(400, f"需要{stat}≥{val}，当前{stats.get(stat, 0)}")
+
+    # 学习技能
+    character.setdefault("skills", []).append(skill_id)
+    engine._save()
+
+    return {
+        "success": True,
+        "skill_name": skill.name,
+        "skill_id": skill_id,
+        "skill_count": len([s for s in character.get("skills", []) if not s.startswith("awakening_")]),
+        "max_skills": MAX_SKILLS,
+        "message": f"学习了技能「{skill.name}」",
+    }
+
+
+@app.get("/api/death-mode/awakening-skills")
+def api_death_mode_awakening_skills(who: str = "ai"):
+    """获取觉醒技能槽位状态"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.skill_system import SkillSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    who = who.strip().lower()
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    slots = SkillSystem.get_awakening_slots(character)
+
+    return {
+        "slots": [
+            {
+                "slot_index": s["slot_index"],
+                "is_empty": s["is_empty"],
+                "skill": s["skill"].to_dict() if s["skill"] else None,
+            }
+            for s in slots
+        ],
+        "total_slots": 3,
+    }
+
+
+@app.post("/api/death-mode/set-awakening")
+def api_death_mode_set_awakening(data: dict):
+    """
+    设置觉醒技能
+    data: {
+        "who": "ai",
+        "slot_index": 0,
+        "name": "觉醒技名",
+        "type": "physical",
+        "mp_cost": 10,
+        "effects": [{"type": "damage", "target": "single_enemy", "value": 2.0}],
+        "description": "技能描述",
+        "cooldown": 0,
+    }
+    """
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.skill_system import SkillSystem
+
+    who = data.get("who", "ai").strip().lower()
+    slot_index = data.get("slot_index", 0)
+    name = data.get("name", "").strip()
+    skill_type = data.get("type", "physical")
+    mp_cost = data.get("mp_cost", 10)
+    effects = data.get("effects", [])
+    description = data.get("description", "")
+    cooldown = data.get("cooldown", 0)
+
+    if not name:
+        raise HTTPException(400, "技能名称不能为空")
+
+    if not effects:
+        raise HTTPException(400, "至少需要一个效果")
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    skill_data = {
+        "name": name,
+        "type": skill_type,
+        "mp_cost": mp_cost,
+        "effects": effects,
+        "description": description,
+        "cooldown": cooldown,
+    }
+
+    success, msg = SkillSystem.set_awakening_skill(character, slot_index, skill_data)
+    if not success:
+        raise HTTPException(400, msg)
+
+    engine._save()
+
+    return {
+        "success": True,
+        "message": msg,
+        "slot_index": slot_index,
+        "skill_name": name,
+    }
 
 
 # ── 用户入驻管理 API ─────────────────────────────────

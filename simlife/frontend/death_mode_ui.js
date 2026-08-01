@@ -396,8 +396,11 @@ const DeathModeUI = {
               <div style="font-size:10px;color:#3fb950;margin-bottom:2px;">装备</div>
               ${uEqHtml || '<div style="font-size:11px;color:#484f58;">无</div>'}
             </div>
-            <div style="font-size:10px;color:#8b949e;">
+            <div style="font-size:10px;color:#8b949e;margin-bottom:6px;">
               <div>💰 金币: ${uc.gold||0}</div>
+            </div>
+            <div style="margin-bottom:6px;">
+              <button onclick="DeathModeUI.showSkillPanel('user')" style="width:100%;padding:5px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:6px;color:#58a6ff;cursor:pointer;font-size:10px;">⚔️ 技能管理（我）</button>
             </div>
           </div>`;
       }
@@ -440,6 +443,10 @@ const DeathModeUI = {
           <div>💪力量${stats.strength||5} 🏃敏捷${stats.agility||5}</div>
           <div>🧠智力${stats.intelligence||5} ❤️体质${stats.vitality||5}</div>
           <div>🍀运气${stats.luck||5}</div>
+        </div>
+
+        <div style="margin-bottom:8px;">
+          <button onclick="DeathModeUI.showSkillPanel('ai')" style="width:100%;padding:6px;background:#1a3a1a;border:1px solid #3fb950;border-radius:6px;color:#3fb950;cursor:pointer;font-size:11px;">⚔️ 技能管理（AI）</button>
         </div>
 
         <div style="margin-bottom:8px;">
@@ -1036,6 +1043,382 @@ const DeathModeUI = {
           ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}
         </div>
       </div>`;
+  },
+
+  // ── 技能管理 ──────────────────────────────────────
+
+  async showSkillPanel(who) {
+    const whoLabel = who === 'user' ? '我' : 'AI';
+    const whoColor = who === 'user' ? '#58a6ff' : '#3fb950';
+
+    // 移除旧面板
+    const old = document.getElementById('dm-skill-panel');
+    if (old) old.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-skill-panel';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9998;display:flex;align-items:center;justify-content:center;';
+
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <h3 style="margin:0;color:${whoColor};font-size:16px;">⚔️ 技能管理（${whoLabel}）</h3>
+          <button onclick="this.closest('#dm-skill-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
+        </div>
+
+        <div id="dm-skill-content" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    await this._renderSkillContent(who);
+  },
+
+  async _renderSkillContent(who) {
+    const container = document.getElementById('dm-skill-content');
+    if (!container) return;
+
+    const whoLabel = who === 'user' ? '我' : 'AI';
+
+    try {
+      // 获取技能数据
+      const [learnResp, awakeningResp, stateResp] = await Promise.all([
+        fetch(`/api/death-mode/learnable-skills?who=${who}`),
+        fetch(`/api/death-mode/awakening-skills?who=${who}`),
+        fetch('/api/death-mode/state'),
+      ]);
+
+      const learnData = await learnResp.json();
+      const awakeningData = await awakeningResp.json();
+      const stateData = await stateResp.json();
+
+      const char = who === 'user' ? (stateData.user_character || {}) : (stateData.character || {});
+      const learnedSkills = char.skills || [];
+      const currentSkills = learnedSkills.map(sid => {
+        // 从可学列表中找已学技能的信息
+        for (const item of learnData.learnable_skills) {
+          if (item.skill.id === sid) {
+            return { ...item.skill, is_learned: true };
+          }
+        }
+        return { id: sid, name: sid, is_learned: true, req_level: 1, mp_cost: 0, type: 'unknown', description: '' };
+      });
+
+      // 补充已学技能（从所有技能中查找）
+      const allSkills = learnData.learnable_skills || [];
+      for (let i = 0; i < learnedSkills.length; i++) {
+        const sid = learnedSkills[i];
+        if (!currentSkills.find(s => s.id === sid)) {
+          // 尝试从API获取技能信息
+          try {
+            const resp = await fetch(`/api/death-mode/learnable-skills?who=${who}`);
+            // 已学技能不在可学列表中，用简单信息显示
+            currentSkills.push({ id: sid, name: sid.replace(/^(common|war|mag|rog|arc|cle)_/, ''), is_learned: true, req_level: '?', mp_cost: '?', type: '?', description: '' });
+          } catch(e) {}
+        }
+      }
+
+      const skillCount = learnData.skill_count || 0;
+      const maxSkills = learnData.max_skills || 10;
+      const remainingSlots = learnData.remaining_slots || 0;
+      const learnable = allSkills.filter(item => {
+        // 只显示可学的（未学过的）
+        return !learnedSkills.includes(item.skill.id);
+      });
+
+      // 觉醒技能
+      const awakeningSlots = awakeningData.slots || [];
+      const totalAwakeningSlots = awakeningData.total_slots || 3;
+
+      // 生成HTML
+      let html = `
+        <div style="margin-bottom:12px;padding:8px;background:#161b22;border-radius:8px;border:1px solid #30363d;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span style="font-size:12px;color:#c9d1d9;">技能槽位</span>
+            <span style="font-size:12px;color:${skillCount >= maxSkills ? '#f85149' : '#3fb950'};">
+              ${skillCount} / ${maxSkills}
+            </span>
+          </div>
+          <div style="height:4px;background:#21262d;border-radius:2px;overflow:hidden;">
+            <div style="height:100%;width:${maxSkills > 0 ? (skillCount/maxSkills*100) : 0}%;background:${skillCount >= maxSkills ? '#f85149' : '#3fb950'};transition:width 0.3s;"></div>
+          </div>
+          <div style="font-size:10px;color:#8b949e;margin-top:4px;">
+            剩余可学 ${remainingSlots} 个 · 觉醒 ${totalAwakeningSlots} 个槽位
+            <span style="font-size:9px;color:#484f58;margin-left:4px;">（可跨职业学习任意技能）</span>
+          </div>
+        </div>
+      `;
+
+      // ── 已学技能 ──
+      html += `<div style="margin-bottom:12px;">
+        <div style="font-size:12px;color:#58a6ff;margin-bottom:6px;font-weight:600;">📖 已学技能（${currentSkills.length}个）</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;">`;
+      for (const skill of currentSkills) {
+        const typeColor = skill.type === 'magic' ? '#d29922' : skill.type === 'heal' ? '#3fb950' : skill.type === 'buff' ? '#58a6ff' : '#c9d1d9';
+        html += `<div style="padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:6px;font-size:11px;">
+          <div style="font-weight:bold;color:#c9d1d9;">${skill.name || skill.id}</div>
+          <div style="font-size:9px;color:#8b949e;margin-top:2px;">
+            <span style="color:${typeColor};">${skill.type}</span>
+            · MP ${skill.mp_cost}
+            · Lv.${skill.req_level}
+          </div>
+          <div style="font-size:9px;color:#484f58;margin-top:1px;">${skill.description || ''}</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+
+      // ── 可学技能 ──
+      if (remainingSlots > 0 && learnable.length > 0) {
+        html += `<div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:#d29922;margin-bottom:6px;font-weight:600;">📚 可学习技能（${learnable.length}个）</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;">`;
+        for (const item of learnable) {
+          const skill = item.skill;
+          const typeColor = skill.type === 'magic' ? '#d29922' : skill.type === 'heal' ? '#3fb950' : skill.type === 'buff' ? '#58a6ff' : '#c9d1d9';
+          const hasReq = Object.keys(skill.req_stats || {}).length > 0;
+          const reqText = hasReq ? Object.entries(skill.req_stats).map(([k,v]) => `${k}:${v}`).join(' ') : '';
+          html += `<div style="padding:6px;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;align-items:start;">
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:bold;color:#c9d1d9;">${item.class_icon} ${skill.name}</div>
+                <div style="font-size:9px;color:#8b949e;margin-top:2px;">
+                  <span style="color:${typeColor};">${skill.type}</span>
+                  · MP ${skill.mp_cost}
+                  · Lv.${skill.req_level}
+                  ${item.source ? `· ${item.source}` : ''}
+                </div>
+                <div style="font-size:9px;color:#484f58;margin-top:1px;">${skill.description || ''}</div>
+                ${reqText ? `<div style="font-size:8px;color:#d29922;margin-top:1px;">需求: ${reqText}</div>` : ''}
+              </div>
+              <button onclick="DeathModeUI._learnSkill('${skill.id}','${who}')" style="flex-shrink:0;padding:3px 8px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;margin-left:4px;">学习</button>
+            </div>
+          </div>`;
+        }
+        html += `</div></div>`;
+      } else if (remainingSlots <= 0) {
+        html += `<div style="padding:12px;background:#2d0d0d;border:1px solid #f85149;border-radius:8px;text-align:center;margin-bottom:12px;">
+          <div style="color:#f85149;font-size:12px;">⚠️ 技能槽位已满</div>
+          <div style="color:#8b949e;font-size:10px;margin-top:2px;">已达到最大技能数（${maxSkills}个），无法学习新技能</div>
+        </div>`;
+      } else {
+        html += `<div style="padding:12px;background:#161b22;border:1px solid #30363d;border-radius:8px;text-align:center;margin-bottom:12px;">
+          <div style="color:#8b949e;font-size:12px;">暂无更多可学习技能</div>
+        </div>`;
+      }
+
+      // ── 觉醒技能 ──
+      html += `<div style="margin-bottom:8px;">
+        <div style="font-size:12px;color:#d29922;margin-bottom:6px;font-weight:600;">💡 觉醒技能（${totalAwakeningSlots}个槽位）</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;">`;
+      for (const slot of awakeningSlots) {
+        if (slot.is_empty) {
+          html += `<div style="padding:8px;background:#0d1117;border:1px dashed #30363d;border-radius:6px;text-align:center;">
+            <div style="font-size:10px;color:#484f58;">槽位 ${slot.slot_index + 1}</div>
+            <div style="font-size:9px;color:#484f58;margin:4px 0;">空</div>
+            <button onclick="DeathModeUI._showAwakeningForm(${slot.slot_index},'${who}')" style="padding:3px 8px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">创建</button>
+          </div>`;
+        } else {
+          const sk = slot.skill;
+          const typeColor = sk.type === 'magic' ? '#d29922' : sk.type === 'heal' ? '#3fb950' : sk.type === 'buff' ? '#58a6ff' : '#c9d1d9';
+          html += `<div style="padding:8px;background:#161b22;border:1px solid #d29922;border-radius:6px;">
+            <div style="font-size:11px;font-weight:bold;color:#d29922;">${sk.name}</div>
+            <div style="font-size:9px;color:#8b949e;margin-top:2px;">
+              <span style="color:${typeColor};">${sk.type}</span>
+              · MP ${sk.mp_cost}
+            </div>
+            <div style="font-size:9px;color:#484f58;margin-top:1px;">${sk.description || ''}</div>
+            <button onclick="DeathModeUI._showAwakeningForm(${slot.slot_index},'${who}')" style="margin-top:4px;padding:2px 6px;background:#2d2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:9px;">编辑</button>
+          </div>`;
+        }
+      }
+      html += `</div></div>`;
+
+      container.innerHTML = html;
+    } catch (e) {
+      container.innerHTML = `<div style="color:#f85149;font-size:12px;">加载失败: ${e.message}</div>`;
+    }
+  },
+
+  async _learnSkill(skillId, who) {
+    try {
+      const resp = await fetch('/api/death-mode/learn-skill', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skill_id: skillId, who: who }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('学习失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+      alert('技能学习成功！');
+      this._renderSkillContent(who);
+    } catch (e) {
+      alert('学习失败: ' + e.message);
+    }
+  },
+
+  _showAwakeningForm(slotIndex, who) {
+    const whoLabel = who === 'user' ? '我' : 'AI';
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-awakening-form';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #d29922;border-radius:16px;padding:24px;max-width:500px;width:90%;color:#c9d1d9;">
+        <h3 style="margin:0 0 16px;color:#d29922;font-size:16px;">💡 觉醒技能 - 槽位${slotIndex + 1}（${whoLabel}）</h3>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">技能名称</label>
+          <input id="aw-name" type="text" placeholder="觉醒技能的名称" style="width:100%;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:14px;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">技能类型</label>
+          <select id="aw-type" style="width:100%;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:14px;box-sizing:border-box;">
+            <option value="physical">物理</option>
+            <option value="magic">魔法</option>
+            <option value="heal">治疗</option>
+            <option value="buff">增益</option>
+            <option value="utility">特殊</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">MP消耗</label>
+          <input id="aw-mp" type="number" value="10" min="0" style="width:100%;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:14px;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">冷却回合（0=无冷却）</label>
+          <input id="aw-cd" type="number" value="0" min="0" style="width:100%;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:14px;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">技能描述</label>
+          <textarea id="aw-desc" rows="2" placeholder="描述技能效果..." style="width:100%;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;box-sizing:border-box;resize:vertical;"></textarea>
+        </div>
+        <div style="margin-bottom:16px;padding:12px;background:#161b22;border-radius:8px;border:1px solid #30363d;">
+          <div style="font-size:11px;color:#58a6ff;margin-bottom:6px;font-weight:600;">⚙️ 效果配置</div>
+          <div style="font-size:10px;color:#8b949e;margin-bottom:6px;">选择效果类型和数值（支持多个效果）</div>
+          <div id="aw-effects">
+            <div class="aw-effect-row" style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
+              <select class="aw-effect-type" style="flex:1;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;">
+                <option value="damage">伤害</option>
+                <option value="heal">治疗</option>
+                <option value="dot">持续伤害</option>
+                <option value="hot">持续治疗</option>
+                <option value="buff_stat">属性增益</option>
+                <option value="debuff_stat">属性减益</option>
+                <option value="shield">护盾</option>
+                <option value="stun">眩晕</option>
+                <option value="slow">减速</option>
+              </select>
+              <select class="aw-effect-target" style="width:80px;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;">
+                <option value="single_enemy">单体敌</option>
+                <option value="all_enemies">全体敌</option>
+                <option value="self">自身</option>
+                <option value="single_ally">单体友</option>
+                <option value="all_allies">全体友</option>
+              </select>
+              <input class="aw-effect-value" type="number" value="1.5" step="0.1" style="width:60px;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;text-align:center;">
+              <span style="font-size:9px;color:#484f58;">倍率</span>
+              <button onclick="this.parentElement.remove()" style="padding:4px;background:#2d0d0d;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:9px;">✕</button>
+            </div>
+          </div>
+          <button onclick="DeathModeUI._addEffectRow()" style="padding:4px 10px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">+ 添加效果</button>
+        </div>
+        <div id="aw-error" style="color:#f85149;font-size:12px;margin-bottom:12px;display:none;"></div>
+        <div style="display:flex;gap:12px;">
+          <button onclick="this.closest('#dm-awakening-form').remove()" style="flex:1;padding:10px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;cursor:pointer;font-size:14px;">取消</button>
+          <button onclick="DeathModeUI._saveAwakeningSkill(${slotIndex},'${who}')" style="flex:1;padding:10px;background:#d29922;border:none;border-radius:8px;color:white;cursor:pointer;font-size:14px;font-weight:bold;">保存觉醒技能</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  },
+
+  _addEffectRow() {
+    const container = document.getElementById('aw-effects');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'aw-effect-row';
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:4px;align-items:center;';
+    row.innerHTML = `
+      <select class="aw-effect-type" style="flex:1;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;">
+        <option value="damage">伤害</option>
+        <option value="heal">治疗</option>
+        <option value="dot">持续伤害</option>
+        <option value="hot">持续治疗</option>
+        <option value="buff_stat">属性增益</option>
+        <option value="debuff_stat">属性减益</option>
+        <option value="shield">护盾</option>
+        <option value="stun">眩晕</option>
+        <option value="slow">减速</option>
+      </select>
+      <select class="aw-effect-target" style="width:80px;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;">
+        <option value="single_enemy">单体敌</option>
+        <option value="all_enemies">全体敌</option>
+        <option value="self">自身</option>
+        <option value="single_ally">单体友</option>
+        <option value="all_allies">全体友</option>
+      </select>
+      <input class="aw-effect-value" type="number" value="1.0" step="0.1" style="width:60px;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;text-align:center;">
+      <span style="font-size:9px;color:#484f58;">倍率</span>
+      <button onclick="this.parentElement.remove()" style="padding:4px;background:#2d0d0d;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:9px;">✕</button>
+    `;
+    container.appendChild(row);
+  },
+
+  async _saveAwakeningSkill(slotIndex, who) {
+    const overlay = document.getElementById('dm-awakening-form');
+    if (!overlay) return;
+
+    const name = overlay.querySelector('#aw-name').value.trim();
+    const type = overlay.querySelector('#aw-type').value;
+    const mpCost = parseInt(overlay.querySelector('#aw-mp').value) || 10;
+    const cooldown = parseInt(overlay.querySelector('#aw-cd').value) || 0;
+    const description = overlay.querySelector('#aw-desc').value.trim();
+
+    const errEl = overlay.querySelector('#aw-error');
+    if (!name) { errEl.textContent = '请输入技能名称'; errEl.style.display = 'block'; return; }
+
+    // 收集效果
+    const effectRows = overlay.querySelectorAll('.aw-effect-row');
+    const effects = [];
+    for (const row of effectRows) {
+      const etype = row.querySelector('.aw-effect-type').value;
+      const target = row.querySelector('.aw-effect-target').value;
+      const value = parseFloat(row.querySelector('.aw-effect-value').value) || 1.0;
+      effects.push({ type: etype, target: target, value: value });
+    }
+
+    if (effects.length === 0) {
+      errEl.textContent = '至少需要一个效果'; errEl.style.display = 'block'; return;
+    }
+
+    errEl.style.display = 'none';
+
+    try {
+      const resp = await fetch('/api/death-mode/set-awakening', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          who: who,
+          slot_index: slotIndex,
+          name: name,
+          type: type,
+          mp_cost: mpCost,
+          cooldown: cooldown,
+          effects: effects,
+          description: description,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('保存失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+
+      alert('觉醒技能「' + name + '」保存成功！');
+      overlay.remove();
+      this._renderSkillContent(who);
+    } catch (e) {
+      alert('保存失败: ' + e.message);
+    }
   },
 };
 
