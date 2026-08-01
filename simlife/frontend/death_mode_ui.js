@@ -500,6 +500,8 @@ const DeathModeUI = {
           ${state.story?.current_location ? `<div>📍 ${state.story.current_location}</div>` : ''}
         </div>
 
+        ${this._renderMap(state)}
+
         ${ucHtml}
       `;
 
@@ -902,6 +904,101 @@ const DeathModeUI = {
       if (data.error) { alert(data.message || '卸下失败'); return; }
       this._renderStatusPanel();
     } catch (e) { alert('卸下失败: ' + e.message); }
+  },
+
+  // ── 地图可视化 ──────────────────────────────────────
+
+  _renderMap(state) {
+    const md = state.map_display;
+    if (!md || !md.current) return '';
+
+    const current = md.current;
+
+    // 方向 → 3x3 grid 位置
+    const dirMap = {
+      '西北': '0,0', '北': '0,1', '东北': '0,2',
+      '西': '1,0', '中': '1,1', '东': '1,2',
+      '西南': '2,0', '南': '2,1', '东南': '2,2',
+    };
+
+    // 构建3x3网格
+    const grid = {};
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        grid[`${r},${c}`] = null;
+      }
+    }
+    grid['1,1'] = { type: 'center', name: current.name };
+
+    // 填入相邻区域
+    for (const adj of md.adjacent) {
+      const pos = dirMap[adj.direction];
+      if (pos) {
+        grid[pos] = {
+          type: 'adjacent',
+          direction: adj.direction,
+          name: adj.name,
+          explored: adj.explored,
+          danger: adj.danger_level,
+          regionType: adj.region_type,
+        };
+      }
+    }
+
+    // 方向标签箭头
+    const dirArrow = { '北': '↑', '东北': '↗', '东': '→', '东南': '↘', '南': '↓', '西南': '↙', '西': '←', '西北': '↖' };
+
+    // 危险色
+    function dangerColor(d) {
+      if (d >= 4) return '#f85149';
+      if (d >= 3) return '#d29922';
+      if (d >= 2) return '#58a6ff';
+      return '#3fb950';
+    }
+
+    // 区域类型图标
+    function regionIcon(type) {
+      const icons = { town: '🏘️', wild: '🌲', dungeon: '🕳️', boss_lair: '👑', secret: '✨', unknown: '❓' };
+      return icons[type] || '📍';
+    }
+
+    let cells = '';
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const cell = grid[`${r},${c}`];
+        if (!cell) {
+          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:#21262d;">.</div>`;
+          continue;
+        }
+        if (cell.type === 'center') {
+          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a3a1a;border-radius:6px;border:1px solid #3fb950;">
+            <span style="font-size:14px;">📍</span>
+            <span style="font-size:7px;color:#3fb950;font-weight:bold;text-align:center;line-height:1.2;max-width:100%;word-break:break-all;">${cell.name}</span>
+          </div>`;
+        } else {
+          const arrow = dirArrow[cell.direction] || '?';
+          const color = cell.explored ? dangerColor(cell.danger) : '#484f58';
+          const icon = cell.explored ? regionIcon(cell.regionType) : '❓';
+          const name = cell.explored ? cell.name : '未知';
+          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};">
+            <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
+            <span style="font-size:14px;margin:1px 0;">${icon}</span>
+            <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">${name}</span>
+          </div>`;
+        }
+      }
+    }
+
+    return `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #30363d;">
+        <div style="font-size:10px;color:#58a6ff;margin-bottom:4px;text-align:center;">🗺️ 地图</div>
+        <div style="display:flex;flex-wrap:wrap;width:100%;gap:2px;">
+          ${cells}
+        </div>
+        <div style="font-size:8px;color:#484f58;text-align:center;margin-top:4px;">
+          ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}
+        </div>
+      </div>`;
   },
 };
 

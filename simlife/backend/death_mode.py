@@ -278,6 +278,7 @@ class DeathModeEngine:
             "kill_count": state.get("kill_count", 0),
             "growth_mode": state.get("growth_mode", "normal"),
             "world_map": state.get("world_map", {}),
+            "map_display": self.world_map.get_map_display() if self.world_map else None,
             "npc_death_records": state.get("npc_death_records", []),
             "shared_inventory": state.get("shared_inventory", []),
             "user_character": state.get("user_character", {}),
@@ -417,6 +418,11 @@ class DeathModeEngine:
         restore_keywords = ("药水", "恢复", "治疗", "疗伤", "使用", "喝", "服用", "补给",
                             "回血", "回蓝", "补充", "治愈", "嗑药", "吃药", "灌")
         _has_restore_intent = any(k in action for k in restore_keywords) if action else False
+
+        # 休息关键词检测（独立于物品恢复，用于强制触发休息恢复逻辑）
+        rest_keywords = ("休息", "休整", "歇息", "扎营", "露宿", "露營", "扎寨", "宿营", "休憩",
+                         "休养", "歇脚", "歇一歇", "歇一会", "歇會兒")
+        _is_rest_action = any(k in action for k in rest_keywords) if action else False
 
         if _has_restore_intent:
             # 有恢复意图，跳过扫荡检测
@@ -573,6 +579,10 @@ class DeathModeEngine:
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
         next_tension = agent_result.get("next_tension", "medium")
+
+        # 休息关键词强制覆盖：确保"休息"相关指令可靠触发恢复逻辑
+        if _is_rest_action:
+            outcome_type = "rest"
 
         result = {
             "narrative": narrative,

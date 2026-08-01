@@ -106,6 +106,42 @@ class WorldMap:
         if region:
             region.boss_defeated = True
 
+    def get_map_display(self, region_id: str = None) -> Dict:
+        """获取前端地图显示数据，为相邻区域分配方向标签"""
+        rid = region_id or self.current_region_id
+        current = self.regions.get(rid) if rid else None
+        if not current:
+            return {"current": None, "adjacent": []}
+
+        # 8个方向，按顺序分配给相邻区域
+        directions = ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
+        adjacent = []
+        for i, cid in enumerate(current.connections):
+            region = self.regions.get(cid)
+            if not region:
+                continue
+            dir_label = directions[i % len(directions)] if i < len(directions) else "?"
+            adjacent.append({
+                "region_id": cid,
+                "name": region.name if region.explored else "未知",
+                "direction": dir_label,
+                "explored": region.explored,
+                "danger_level": region.danger_level if region.explored else 0,
+                "region_type": region.region_type if region.explored else "unknown",
+            })
+
+        return {
+            "current": {
+                "region_id": current.region_id,
+                "name": current.name,
+                "description": current.description,
+                "danger_level": current.danger_level,
+                "region_type": current.region_type,
+                "explored": current.explored,
+            },
+            "adjacent": adjacent,
+        }
+
     def can_move_to(self, target_id: str) -> bool:
         """检查是否可以移动到目标区域（必须相邻且已探索）"""
         current = self.get_current_region()
