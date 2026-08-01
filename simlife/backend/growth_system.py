@@ -4,7 +4,7 @@
 技能系统已迁移至 skill_system.py
 """
 import random
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from simlife.backend.skill_system import SkillSystem
 
@@ -73,7 +73,10 @@ class GrowthSystem:
             character["max_mp"] += config["mp_growth"]
             character["mp"] = character["max_mp"]
 
-            result["stat_points_gained"] += config["stat_points_per_level"]
+            # 属性点存入角色，由玩家手动分配
+            points = config["stat_points_per_level"]
+            character["stat_points"] = character.get("stat_points", 0) + points
+            result["stat_points_gained"] += points
 
             # 检查新技能解锁（使用 SkillSystem）
             class_id = character.get("class_id", "warrior")
@@ -94,17 +97,28 @@ class GrowthSystem:
         return result
 
     @staticmethod
-    def allocate_stat_points(character: Dict, allocations: Dict) -> bool:
+    def allocate_stat_points(character: Dict, allocations: Dict) -> Tuple[bool, str]:
         """
-        分配属性点。
+        手动分配属性点。
         allocations: {"strength": 1, "agility": 2, ...}
-        返回是否成功。
+        返回 (是否成功, 消息)。
         """
+        valid_stats = {"strength", "agility", "intelligence", "vitality", "luck"}
+        total_request = sum(v for v in allocations.values() if v > 0)
+        available = character.get("stat_points", 0)
+
+        if total_request <= 0:
+            return False, "请至少分配1点"
+        if total_request > available:
+            return False, f"属性点不足，剩余{available}点"
+
         stats = character.get("stats", {})
         for k, v in allocations.items():
-            if k in stats and v > 0:
+            if k in valid_stats and k in stats and v > 0:
                 stats[k] += v
-        return True
+
+        character["stat_points"] = available - total_request
+        return True, f"成功分配{total_request}点属性"
 
     @staticmethod
     def get_available_skills(world_type: str, class_id: str, current_level: int,

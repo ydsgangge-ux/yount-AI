@@ -146,7 +146,88 @@ class DeathModeEngine:
                     "class_icon": "👤", "level": 1, "hp": 0, "max_hp": 0, "mp": 0, "max_mp": 0,
                     "stats": {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5},
                     "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0}
+        # 迁移旧存档：技能中文名 → ID
+        if self.state:
+            for char_key in ("character", "user_character"):
+                char = self.state.get(char_key, {})
+                if char and char.get("skills"):
+                    char["skills"] = self._migrate_skill_names_to_ids(char["skills"])
+                # 迁移旧存档：补发未分配的升级属性点
+                if char and char.get("level", 1) > 1:
+                    self._backfill_stat_points(char, self.state.get("world_type", "fantasy"))
         return self.state
+
+    @staticmethod
+    def _migrate_skill_names_to_ids(skills: list) -> list:
+        """将技能列表中的中文名迁移为标准ID，去重"""
+        from simlife.backend.skill_system import SkillSystem
+        SkillSystem._build_db()
+        name_to_id = {}
+        for sid, skill in SkillSystem._SKILL_DB.items():
+            name_to_id[skill.name] = sid
+        result = []
+        seen = set()
+        for s in skills:
+            if s.startswith("awakening_"):
+                if s not in seen:
+                    result.append(s)
+                    seen.add(s)
+                continue
+            # 如果已经是ID，直接保留
+            if s in SkillSystem._SKILL_DB:
+                if s not in seen:
+                    result.append(s)
+                    seen.add(s)
+                continue
+            # 尝试中文名 → ID
+            sid = name_to_id.get(s)
+            if sid and sid not in seen:
+                result.append(sid)
+                seen.add(sid)
+                continue
+            # 无法匹配，保留原值
+            if s not in seen:
+                result.append(s)
+                seen.add(s)
+        return result
+
+    @staticmethod
+    def _backfill_stat_points(character: Dict, world_type: str = "fantasy"):
+        """补发旧存档中未分配的升级属性点（只执行一次）"""
+        if character.get("_stat_backfilled"):
+            return
+        from simlife.backend.death_mode_state import get_class_template
+        from simlife.backend.growth_system import GrowthSystem
+
+        class_id = character.get("class_id", "warrior")
+        level = character.get("level", 1)
+        growth_mode = "normal"  # 旧存档默认平衡模式
+
+        # 获取基础属性
+        cls_template = get_class_template(world_type, class_id)
+        if not cls_template:
+            return
+        base_stats = cls_template["base_stats"]
+
+        # 计算当前总属性 - 基础总属性 = 已分配点数
+        current_stats = character.get("stats", {})
+        base_total = sum(base_stats.values())
+        current_total = sum(current_stats.values())
+        already_allocated = current_total - base_total
+
+        # 应得点数：(level - 1) * 每级点数
+        config = GrowthSystem.get_config(growth_mode)
+        expected_points = (level - 1) * config["stat_points_per_level"]
+
+        # 需要补发的点数
+        to_backfill = expected_points - already_allocated
+        if to_backfill <= 0:
+            character["_stat_backfilled"] = True
+            return
+
+        # 补发到 stat_points，由玩家手动分配
+        character["stat_points"] = character.get("stat_points", 0) + to_backfill
+        character["_stat_backfilled"] = True
 
     def _save(self):
         """保存状态"""
@@ -259,6 +340,7 @@ class DeathModeEngine:
                 "mp": char.get("mp", 0),
                 "max_mp": char.get("max_mp", 0),
                 "stats": char.get("stats", {}),
+                "stat_points": char.get("stat_points", 0),
                 "skills": char.get("skills", []),
                 "awakening_skills": char.get("awakening_skills", []),
                 "max_skills": 10,  # 最大技能数

@@ -48,7 +48,8 @@ class CombatEntity:
 
     def __init__(self, name: str, level: int, base_stats: Dict[str, int],
                  hp: int, max_hp: int, equipment: List[Dict] = None,
-                 mp: int = 0, max_mp: int = 0, skills: List[str] = None):
+                 mp: int = 0, max_mp: int = 0, skills: List[str] = None,
+                 passive_effects: Dict = None):
         self.name = name
         self.level = level
         self.base_stats = dict(base_stats)
@@ -58,6 +59,7 @@ class CombatEntity:
         self.max_mp = max_mp
         self.equipment = equipment or []
         self.skills = skills or []
+        self.passive_effects = passive_effects or {}  # 职业被动技能效果
         # 战斗中动态状态
         self.stagger_turns = 0
         self.stance_points = 100
@@ -119,6 +121,13 @@ class CombatEntity:
     def from_dict(cls, data: Dict) -> "CombatEntity":
         """从旧版 Dict 格式创建"""
         char = data.get("character", data)  # 兼容嵌套结构
+        # 自动加载职业被动技能
+        passive_effects = {}
+        class_id = char.get("class_id", "")
+        world_type = data.get("world_type", char.get("world_type", ""))
+        if class_id and world_type:
+            from simlife.backend.skill_system import SkillSystem
+            passive_effects = SkillSystem.get_passive_effects(char, world_type)
         entity = cls(
             name=char.get("name", "未知"),
             level=char.get("level", 1),
@@ -129,7 +138,17 @@ class CombatEntity:
             max_mp=char.get("max_mp", 0),
             equipment=char.get("equipment", []),
             skills=char.get("skills", []),
+            passive_effects=passive_effects,
         )
+        # 应用被动HP/MP倍率
+        if passive_effects.get("max_hp_mult"):
+            bonus_hp = int(entity.max_hp * (passive_effects["max_hp_mult"] - 1))
+            entity.max_hp += bonus_hp
+            entity.hp += bonus_hp
+        if passive_effects.get("max_mp_mult"):
+            bonus_mp = int(entity.max_mp * (passive_effects["max_mp_mult"] - 1))
+            entity.max_mp += bonus_mp
+            entity.mp += bonus_mp
         entity.stagger_turns = data.get("stagger_turns", 0)
         entity.stance_points = data.get("stance_points", 100)
         entity.injuries = data.get("injuries", {})
@@ -197,6 +216,13 @@ class CombatSystem:
         return entity.get("stats", {})
 
     @staticmethod
+    def _get_passive(entity) -> Dict:
+        """获取实体的职业被动效果"""
+        if isinstance(entity, CombatEntity):
+            return entity.passive_effects
+        return entity.get("passive_effects", {})
+
+    @staticmethod
     def _get_level(entity) -> int:
         if isinstance(entity, CombatEntity):
             return entity.level
@@ -222,7 +248,16 @@ class CombatSystem:
             base = s.get("agility", 5) * 2
         else:  # physical
             base = s.get("strength", 5) * 2
-        return int(base + bonus)
+        raw = int(base + bonus)
+        # 职业被动伤害加成
+        passive = CombatSystem._get_passive(entity)
+        if attack_type == "magic" and passive.get("magic_damage_mult"):
+            raw = int(raw * passive["magic_damage_mult"])
+        elif attack_type == "ranged" and passive.get("ranged_damage_mult"):
+            raw = int(raw * passive["ranged_damage_mult"])
+        elif attack_type == "physical" and passive.get("phys_damage_mult"):
+            raw = int(raw * passive["phys_damage_mult"])
+        return raw
 
     @staticmethod
     def calc_defense(entity) -> int:
@@ -252,12 +287,18 @@ class CombatSystem:
     @staticmethod
     def calc_dodge_chance(entity) -> float:
         s = CombatSystem._get_stats(entity)
-        return min(MAX_DODGE_CHANCE, s.get("agility", 5) / 200.0)
+        dodge = s.get("agility", 5) / 200.0
+        passive = CombatSystem._get_passive(entity)
+        dodge += passive.get("dodge_bonus", 0)
+        return min(MAX_DODGE_CHANCE + passive.get("dodge_bonus", 0), dodge)
 
     @staticmethod
     def calc_crit_chance(entity) -> float:
         s = CombatSystem._get_stats(entity)
-        return (s.get("agility", 5) + s.get("luck", 5)) / 200.0
+        crit = (s.get("agility", 5) + s.get("luck", 5)) / 200.0
+        passive = CombatSystem._get_passive(entity)
+        crit += passive.get("crit_rate_bonus", 0)
+        return min(0.75, crit)
 
     @staticmethod
     def roll_damage(base_damage: int) -> int:
@@ -390,6 +431,16 @@ class CombatSystem:
         # 防御判定
         defense_result = CombatSystem.resolve_defense(attacker, defender, defense_action, damage)
         final_damage = defense_result["damage_taken"]
+
+        # 防御方职业被动减伤
+        def_passive = CombatSystem._get_passive(defender)
+        if def_passive.get("damage_reduce"):
+            final_damage = int(final_damage * (1 - def_passive["damage_reduce"]))
+        if attack_type == "physical" and def_passive.get("phys_damage_reduce"):
+            final_damage = int(final_damage * (1 - def_passive["phys_damage_reduce"]))
+        elif attack_type == "magic" and def_passive.get("magic_damage_reduce"):
+            final_damage = int(final_damage * (1 - def_passive["magic_damage_reduce"]))
+        final_damage = max(0, final_damage)
 
         # 扣血（兼容两种格式）
         if isinstance(defender, CombatEntity):

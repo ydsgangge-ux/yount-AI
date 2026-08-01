@@ -1129,6 +1129,12 @@ const DeathModeUI = {
       const awakeningSlots = awakeningData.slots || [];
       const totalAwakeningSlots = awakeningData.total_slots || 3;
 
+      // 属性点
+      const statPoints = char.stat_points || 0;
+      const stats = char.stats || {};
+      const statNames = {'strength': '力量', 'agility': '敏捷', 'intelligence': '智力', 'vitality': '体质', 'luck': '运气'};
+      const statIcons = {'strength': '💪', 'agility': '🏃', 'intelligence': '🧠', 'vitality': '❤️', 'luck': '🍀'};
+
       // 生成HTML
       let html = `
         <div style="margin-bottom:12px;padding:8px;background:#161b22;border-radius:8px;border:1px solid #30363d;">
@@ -1147,6 +1153,52 @@ const DeathModeUI = {
           </div>
         </div>
       `;
+
+      // ── 属性点分配 ──
+      html += `<div style="margin-bottom:12px;padding:10px;background:#161b22;border-radius:8px;border:1px solid ${statPoints > 0 ? '#d29922' : '#30363d'};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:12px;color:#d29922;font-weight:600;">⚡ 属性点</span>
+          <span style="font-size:13px;color:${statPoints > 0 ? '#3fb950' : '#8b949e'};font-weight:bold;">可用 ${statPoints} 点</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;">`;
+      for (const [key, name] of Object.entries(statNames)) {
+        html += `<div style="text-align:center;padding:6px 2px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+          <div style="font-size:14px;">${statIcons[key]}</div>
+          <div style="font-size:10px;color:#8b949e;">${name}</div>
+          <div style="font-size:14px;color:#c9d1d9;font-weight:bold;" id="dm-stat-${key}">${stats[key] || 0}</div>
+        </div>`;
+      }
+      html += `</div>`;
+      if (statPoints > 0) {
+        html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;">`;
+        for (const [key, name] of Object.entries(statNames)) {
+          html += `<div style="text-align:center;">
+            <button onclick="DeathModeUI._allocStat('${key}',1,'${who}')" style="width:100%;padding:3px;background:#1a2a1a;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:11px;">+1</button>
+          </div>`;
+        }
+        html += `</div>`;
+        html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
+          <div></div>
+          <div></div>
+          <button onclick="DeathModeUI._allocStat('all',5,'${who}')" style="padding:3px;background:#2d2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;grid-column:span 1;">全+5</button>
+          <div></div>
+          <div></div>
+        </div>`;
+      }
+      html += `</div>`;
+
+      // ── 职业被动技能 ──
+      const passive = char.class_id ? await (await fetch(`/api/death-mode/passive-skill?who=${who}`)).json() : null;
+      if (passive && passive.name) {
+        html += `<div style="margin-bottom:12px;padding:8px;background:#1a1a2d;border:1px solid #58a6ff;border-radius:8px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span style="font-size:14px;">🛡️</span>
+            <span style="font-size:12px;color:#58a6ff;font-weight:600;">${passive.name}</span>
+            <span style="font-size:9px;color:#8b949e;background:#161b22;padding:1px 6px;border-radius:3px;">被动</span>
+          </div>
+          <div style="font-size:10px;color:#8b949e;">${passive.description}</div>
+        </div>`;
+      }
 
       // ── 已学技能 ──
       html += `<div style="margin-bottom:12px;">
@@ -1235,6 +1287,36 @@ const DeathModeUI = {
       container.innerHTML = html;
     } catch (e) {
       container.innerHTML = `<div style="color:#f85149;font-size:12px;">加载失败: ${e.message}</div>`;
+    }
+  },
+
+  async _allocStat(stat, amount, who) {
+    const allocations = {};
+    if (stat === 'all') {
+      allocations.strength = amount;
+      allocations.agility = amount;
+      allocations.intelligence = amount;
+      allocations.vitality = amount;
+      allocations.luck = amount;
+    } else {
+      allocations[stat] = amount;
+    }
+    try {
+      const resp = await fetch('/api/death-mode/allocate-stats', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ who, allocations }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('分配失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+      // 刷新面板
+      this._renderSkillContent(who);
+      // 刷新主界面
+      if (typeof this.refresh === 'function') this.refresh();
+    } catch (e) {
+      alert('分配失败: ' + e.message);
     }
   },
 

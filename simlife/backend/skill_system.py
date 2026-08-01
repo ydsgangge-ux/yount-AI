@@ -450,6 +450,79 @@ COMMON_SKILLS = [
 
 
 # ============================================================
+# 职业被动技能（始终生效，不占技能槽位）
+# ============================================================
+
+PASSIVE_SKILLS = {
+    # ── 奇幻魔法 ──
+    "fantasy": {
+        "warrior":  {"id": "passive_warrior",  "name": "坚韧体魄", "description": "最大HP+15%，受到的物理伤害-10%",
+                     "effects": {"max_hp_mult": 1.15, "phys_damage_reduce": 0.10}},
+        "mage":     {"id": "passive_mage",     "name": "魔法亲和", "description": "魔法伤害+15%，最大MP+10%",
+                     "effects": {"magic_damage_mult": 1.15, "max_mp_mult": 1.10}},
+        "rogue":    {"id": "passive_rogue",    "name": "暗影直觉", "description": "暴击率+15%，闪避+10%",
+                     "effects": {"crit_rate_bonus": 0.15, "dodge_bonus": 0.10}},
+        "archer":   {"id": "passive_archer",   "name": "鹰眼瞄准", "description": "远程伤害+15%，命中率+10%",
+                     "effects": {"ranged_damage_mult": 1.15, "hit_rate_bonus": 0.10}},
+        "cleric":   {"id": "passive_cleric",   "name": "神圣庇护", "description": "治疗效果+20%，受到伤害-8%",
+                     "effects": {"heal_mult": 1.20, "damage_reduce": 0.08}},
+    },
+    # ── 仙侠修真 ──
+    "xianxia": {
+        "sword_cultivator":       {"id": "passive_sword",  "name": "剑意护体", "description": "物理伤害+12%，闪避+8%",
+                                   "effects": {"phys_damage_mult": 1.12, "dodge_bonus": 0.08}},
+        "body_cultivator":        {"id": "passive_body",   "name": "金刚不坏", "description": "最大HP+20%，物理减伤+12%",
+                                   "effects": {"max_hp_mult": 1.20, "phys_damage_reduce": 0.12}},
+        "pill_cultivator":        {"id": "passive_pill",   "name": "丹毒免疫", "description": "治疗效果+15%，免疫中毒",
+                                   "effects": {"heal_mult": 1.15, "immune_dot": True}},
+        "talisman_cultivator":    {"id": "passive_talisman","name": "符箓护身", "description": "受到魔法伤害-15%，最大MP+10%",
+                                   "effects": {"magic_damage_reduce": 0.15, "max_mp_mult": 1.10}},
+        "soul_cultivator":        {"id": "passive_soul",   "name": "神魂凝聚", "description": "魔法伤害+12%，MP恢复+20%",
+                                   "effects": {"magic_damage_mult": 1.12, "mp_regen_mult": 1.20}},
+    },
+    # ── 末世废土 ──
+    "post_apocalyptic": {
+        "esper":      {"id": "passive_esper",     "name": "超能觉醒", "description": "魔法伤害+15%，MP+10%",
+                       "effects": {"magic_damage_mult": 1.15, "max_mp_mult": 1.10}},
+        "scavenger":  {"id": "passive_scavenger", "name": "废土求生", "description": "闪避+12%，物品掉落率+15%",
+                       "effects": {"dodge_bonus": 0.12, "drop_rate_bonus": 0.15}},
+        "mechanic":   {"id": "passive_mechanic",  "name": "机械改造", "description": "物理减伤+10%，HP+10%",
+                       "effects": {"phys_damage_reduce": 0.10, "max_hp_mult": 1.10}},
+        "mutant":     {"id": "passive_mutant",    "name": "基因变异", "description": "HP再生+5%/回合，力量+10%",
+                       "effects": {"hp_regen_pct": 0.05, "stat_mult": {"strength": 1.10}}},
+        "survivor":   {"id": "passive_survivor",  "name": "适者生存", "description": "全属性+5%，受伤-5%",
+                       "effects": {"all_stat_mult": 1.05, "damage_reduce": 0.05}},
+    },
+    # ── 现世超武 ──
+    "modern_power": {
+        "martial_artist":     {"id": "passive_martial",   "name": "内力贯通", "description": "物理伤害+12%，HP+8%",
+                               "effects": {"phys_damage_mult": 1.12, "max_hp_mult": 1.08}},
+        "awakened":           {"id": "passive_awakened",  "name": "异能增幅", "description": "魔法伤害+12%，MP+12%",
+                               "effects": {"magic_damage_mult": 1.12, "max_mp_mult": 1.12}},
+        "ancient_inheritor":  {"id": "passive_ancient",   "name": "古武传承", "description": "闪避+10%，暴击+10%",
+                               "effects": {"dodge_bonus": 0.10, "crit_rate_bonus": 0.10}},
+        "dark_ability":       {"id": "passive_dark",      "name": "暗影潜行", "description": "闪避+15%，先手+10%",
+                               "effects": {"dodge_bonus": 0.15, "initiative_bonus": 10}},
+        "enhancer":           {"id": "passive_enhancer",  "name": "全维强化", "description": "全属性+8%",
+                               "effects": {"all_stat_mult": 1.08}},
+    },
+    # ── 科幻未来 ──
+    "scifi": {
+        "mecha_pilot":         {"id": "passive_mecha",   "name": "机甲装甲", "description": "物理减伤+15%，HP+15%",
+                                "effects": {"phys_damage_reduce": 0.15, "max_hp_mult": 1.15}},
+        "nano_soldier":        {"id": "passive_nano",    "name": "纳米自适应", "description": "HP再生+3%/回合，全属性+5%",
+                                "effects": {"hp_regen_pct": 0.03, "all_stat_mult": 1.05}},
+        "hacker":              {"id": "passive_hacker",  "name": "信息操控", "description": "魔法伤害+15%，先手+15%",
+                                "effects": {"magic_damage_mult": 1.15, "initiative_bonus": 15}},
+        "gene_modified":       {"id": "passive_gene",    "name": "基因优化", "description": "物理伤害+10%，HP再生+3%/回合",
+                                "effects": {"phys_damage_mult": 1.10, "hp_regen_pct": 0.03}},
+        "energy_manipulator":  {"id": "passive_energy",  "name": "能量场域", "description": "魔法减伤+12%，MP+15%",
+                                "effects": {"magic_damage_reduce": 0.12, "max_mp_mult": 1.15}},
+    },
+}
+
+
+# ============================================================
 # 技能系统主类
 # ============================================================
 
@@ -458,6 +531,21 @@ class SkillSystem:
 
     # 统一技能数据库（含通用技能）
     _SKILL_DB = None
+
+    @staticmethod
+    def get_passive_skill(world_type: str, class_id: str) -> Optional[Dict]:
+        """获取职业被动技能"""
+        world_passives = PASSIVE_SKILLS.get(world_type, {})
+        return world_passives.get(class_id)
+
+    @staticmethod
+    def get_passive_effects(character: Dict, world_type: str) -> Dict:
+        """获取角色的被动技能效果（合并到战斗计算中）"""
+        class_id = character.get("class_id", "")
+        passive = SkillSystem.get_passive_skill(world_type, class_id)
+        if not passive:
+            return {}
+        return passive.get("effects", {})
 
     @classmethod
     def _build_db(cls):

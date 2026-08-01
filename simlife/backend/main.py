@@ -1803,6 +1803,68 @@ def api_death_mode_learn_skill(data: dict):
     }
 
 
+@app.post("/api/death-mode/allocate-stats")
+def api_death_mode_allocate_stats(data: dict):
+    """分配属性点 data: {"who": "ai"/"user", "allocations": {"strength": 1, ...}}"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.growth_system import GrowthSystem
+
+    who = data.get("who", "ai").strip().lower()
+    allocations = data.get("allocations", {})
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    success, msg = GrowthSystem.allocate_stat_points(character, allocations)
+    if not success:
+        raise HTTPException(400, msg)
+
+    engine._save()
+    return {
+        "success": True,
+        "message": msg,
+        "stat_points": character.get("stat_points", 0),
+        "stats": character.get("stats", {}),
+    }
+
+
+@app.get("/api/death-mode/passive-skill")
+def api_death_mode_passive_skill(who: str = "ai"):
+    """获取角色职业被动技能"""
+    from simlife.backend.skill_system import SkillSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    world_type = state.get("world_type", "fantasy")
+    who = who.strip().lower()
+
+    if who == "user":
+        character = state.get("user_character", {})
+    else:
+        character = state.get("character", {})
+
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    passive = SkillSystem.get_passive_skill(world_type, character.get("class_id", ""))
+    if not passive:
+        return {"name": "", "description": ""}
+    return passive
+
+
 @app.get("/api/death-mode/awakening-skills")
 def api_death_mode_awakening_skills(who: str = "ai"):
     """获取觉醒技能槽位状态"""
