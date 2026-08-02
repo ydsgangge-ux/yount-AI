@@ -154,7 +154,12 @@ class DeathModeEngine:
                     char["skills"] = self._migrate_skill_names_to_ids(char["skills"])
                 # 迁移旧存档：补发未分配的升级属性点
                 if char and char.get("level", 1) > 1:
-                    self._backfill_stat_points(char, self.state.get("world_type", "fantasy"))
+                    old_sp = char.get("stat_points", 0)
+                    self._backfill_stat_points(char, self.state.get("world_type", "fantasy"),
+                                               self.state.get("growth_mode", "normal"))
+                    # 如果补发了属性点，立即保存防止重复
+                    if char.get("stat_points", 0) != old_sp:
+                        save_state(self.state)
         return self.state
 
     @staticmethod
@@ -179,20 +184,29 @@ class DeathModeEngine:
                     result.append(s)
                     seen.add(s)
                 continue
-            # 尝试中文名 → ID
+            # 尝试中文名 → ID（精确匹配）
             sid = name_to_id.get(s)
             if sid and sid not in seen:
                 result.append(sid)
                 seen.add(sid)
                 continue
-            # 无法匹配，保留原值
-            if s not in seen:
-                result.append(s)
-                seen.add(s)
+            # 模糊匹配：技能名包含或被包含
+            for db_name, db_id in name_to_id.items():
+                if s in db_name or db_name in s:
+                    if db_id not in seen:
+                        result.append(db_id)
+                        seen.add(db_id)
+                    break
+            else:
+                # 无法匹配，保留原值
+                if s not in seen:
+                    result.append(s)
+                    seen.add(s)
+            continue
         return result
 
     @staticmethod
-    def _backfill_stat_points(character: Dict, world_type: str = "fantasy"):
+    def _backfill_stat_points(character: Dict, world_type: str = "fantasy", growth_mode: str = "normal"):
         """补发旧存档中未分配的升级属性点（只执行一次）"""
         if character.get("_stat_backfilled"):
             return
@@ -201,7 +215,6 @@ class DeathModeEngine:
 
         class_id = character.get("class_id", "warrior")
         level = character.get("level", 1)
-        growth_mode = "normal"  # 旧存档默认平衡模式
 
         # 获取基础属性
         cls_template = get_class_template(world_type, class_id)
@@ -1201,16 +1214,24 @@ class DeathModeEngine:
         return enemies
 
     def _combat_round(self, state: Dict, enemies: list, ai_alone: bool = False,
-                      action_text: str = "", sender: str = "user") -> Dict:
+                      action_text: str = "", sender: str = "user",
+                      cmd_override: dict = None) -> Dict:
         """执行一回合战斗，解析用户行动口令驱动战斗策略
         action_text: 用户输入的行动文本，用于解析战斗策略
         ai_alone: 用户已逃跑，AI角色独自面对所有敌人
         sender: "user"或"ai"，谁发的行动
+        cmd_override: 若提供，则跳过口令解析直接使用此战斗策略
         """
         from simlife.backend.combat_system import TacticalSystem
+        from simlife.backend.skill_system import SkillSystem
 
         char = state["character"]  # AI角色
         user_char = state.get("user_character", {})  # 用户角色
+        # 注入职业被动效果到Dict实体
+        world_type = state.get("world_type", "fantasy")
+        char["passive_effects"] = SkillSystem.get_passive_effects(char, world_type)
+        if user_char and user_char.get("class_name"):
+            user_char["passive_effects"] = SkillSystem.get_passive_effects(user_char, world_type)
         user_in_combat = not ai_alone and user_char and user_char.get("hp", 0) > 0 and user_char.get("class_name")
         # 如果AI角色已死（用户继续冒险），AI不参战
         ai_in_combat = char.get("hp", 0) > 0 and not state.get("ai_character_dead", False)
@@ -1220,8 +1241,10 @@ class DeathModeEngine:
         combat_log = []
         drops = []
 
-        # ── 解析战斗口令 ──
+        # ── 解析战斗口令（支持cmd_override） ──
         cmd = self._parse_combat_command(action_text, char, user_char, enemies, state, sender)
+        if cmd_override:
+            cmd.update(cmd_override)
 
         def _enemy_defense(enemy=None):
             """敌人随机防御"""
@@ -1464,6 +1487,12 @@ class DeathModeEngine:
         """
         char = state["character"]
         user_char = state.get("user_character", {})
+        # 注入职业被动效果
+        from simlife.backend.skill_system import SkillSystem
+        world_type = state.get("world_type", "fantasy")
+        char["passive_effects"] = SkillSystem.get_passive_effects(char, world_type)
+        if user_char and user_char.get("class_name"):
+            user_char["passive_effects"] = SkillSystem.get_passive_effects(user_char, world_type)
         ai_in_combat = char.get("hp", 0) > 0 and not state.get("ai_character_dead", False)
         user_in_combat = (user_char and user_char.get("hp", 0) > 0
                           and user_char.get("class_name")
@@ -1519,13 +1548,41 @@ class DeathModeEngine:
                 "ai_skip": False, "user_skip": False,
             }
 
+            # ── 自动选择技能（扫荡模式自动使用已学技能）──
+            from simlife.backend.skill_system import SkillSystem
+            cmd_override = {}
+            for role_name, role_char in [("ai", char), ("user", user_char)]:
+                if role_char.get("hp", 0) <= 0:
+                    continue
+                if role_name == "user" and not user_in_combat:
+                    continue
+                learned = role_char.get("skills", [])
+                if not learned:
+                    continue
+                mp = role_char.get("mp", 0)
+                # 筛选有MP可用的伤害技能
+                usable = []
+                for sid in learned:
+                    sk = SkillSystem.get_skill(sid)
+                    if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+                        usable.append(sk)
+                if not usable:
+                    continue
+                # 随机选一个技能
+                sk = random.choice(usable)
+                is_magic = sk.type == "magic"
+                cmd_override[f"{role_name}_is_magic"] = is_magic
+                cmd_override[f"{role_name}_skill_mult"] = sk.effects[0].value if sk.effects else 1.0
+                cmd_override[f"{role_name}_skill"] = sk.id
+                # 消耗MP
+                role_char["mp"] = mp - sk.mp_cost
+
             # ── 执行一回合战斗（复用 _combat_round）──
-            # 为扫荡模式传入简化的口令
-            # 构造一个简单的行动文本用于判定出手顺序
             sweep_action = f"扫荡攻击{target_enemy.get('name', '敌人')}"
             combat_result = self._combat_round(
                 state, alive_enemies,
-                action_text=sweep_action, sender=sender
+                action_text=sweep_action, sender=sender,
+                cmd_override=cmd_override if cmd_override else None
             )
 
             # 检查战斗结果

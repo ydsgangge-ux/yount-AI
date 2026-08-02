@@ -1048,29 +1048,34 @@ const DeathModeUI = {
   // ── 技能管理 ──────────────────────────────────────
 
   async showSkillPanel(who) {
-    const whoLabel = who === 'user' ? '我' : 'AI';
-    const whoColor = who === 'user' ? '#58a6ff' : '#3fb950';
+    try {
+      const whoLabel = who === 'user' ? '我' : 'AI';
+      const whoColor = who === 'user' ? '#58a6ff' : '#3fb950';
 
-    // 移除旧面板
-    const old = document.getElementById('dm-skill-panel');
-    if (old) old.remove();
+      // 移除旧面板
+      const old = document.getElementById('dm-skill-panel');
+      if (old) old.remove();
 
-    const overlay = document.createElement('div');
-    overlay.id = 'dm-skill-panel';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9998;display:flex;align-items:center;justify-content:center;';
+      const overlay = document.createElement('div');
+      overlay.id = 'dm-skill-panel';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
 
-    overlay.innerHTML = `
-      <div style="background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h3 style="margin:0;color:${whoColor};font-size:16px;">⚔️ 技能管理（${whoLabel}）</h3>
-          <button onclick="this.closest('#dm-skill-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
+      overlay.innerHTML = `
+        <div style="background:#0d1117;border:1px solid #30363d;border-radius:16px;padding:20px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="margin:0;color:${whoColor};font-size:16px;">⚔️ 技能管理（${whoLabel}）</h3>
+            <button onclick="this.closest('#dm-skill-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
+          </div>
+
+          <div id="dm-skill-content" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div>
         </div>
-
-        <div id="dm-skill-content" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    await this._renderSkillContent(who);
+      `;
+      document.body.appendChild(overlay);
+      await this._renderSkillContent(who);
+    } catch (e) {
+      const content = document.getElementById('dm-skill-content');
+      if (content) content.innerHTML = `<div style="color:#f85149;font-size:12px;">加载失败：${e.message}</div>`;
+    }
   },
 
   async _renderSkillContent(who) {
@@ -1093,29 +1098,22 @@ const DeathModeUI = {
 
       const char = who === 'user' ? (stateData.user_character || {}) : (stateData.character || {});
       const learnedSkills = char.skills || [];
-      const currentSkills = learnedSkills.map(sid => {
-        // 从可学列表中找已学技能的信息
-        for (const item of learnData.learnable_skills) {
-          if (item.skill.id === sid) {
-            return { ...item.skill, is_learned: true };
+      // 批量获取已学技能的中文名
+      const skillNameCache = {};
+      await Promise.all(learnedSkills.map(async sid => {
+        try {
+          const r = await fetch(`/api/death-mode/skill-info?skill_id=${encodeURIComponent(sid)}`);
+          if (r.ok) {
+            const d = await r.json();
+            if (d && d.name) skillNameCache[sid] = d;
           }
-        }
+        } catch(e) {}
+      }));
+      const currentSkills = learnedSkills.map(sid => {
+        const info = skillNameCache[sid];
+        if (info) return { ...info, is_learned: true };
         return { id: sid, name: sid, is_learned: true, req_level: 1, mp_cost: 0, type: 'unknown', description: '' };
       });
-
-      // 补充已学技能（从所有技能中查找）
-      const allSkills = learnData.learnable_skills || [];
-      for (let i = 0; i < learnedSkills.length; i++) {
-        const sid = learnedSkills[i];
-        if (!currentSkills.find(s => s.id === sid)) {
-          // 尝试从API获取技能信息
-          try {
-            const resp = await fetch(`/api/death-mode/learnable-skills?who=${who}`);
-            // 已学技能不在可学列表中，用简单信息显示
-            currentSkills.push({ id: sid, name: sid.replace(/^(common|war|mag|rog|arc|cle)_/, ''), is_learned: true, req_level: '?', mp_cost: '?', type: '?', description: '' });
-          } catch(e) {}
-        }
-      }
 
       const skillCount = learnData.skill_count || 0;
       const maxSkills = learnData.max_skills || 10;
@@ -1188,7 +1186,13 @@ const DeathModeUI = {
       html += `</div>`;
 
       // ── 职业被动技能 ──
-      const passive = char.class_id ? await (await fetch(`/api/death-mode/passive-skill?who=${who}`)).json() : null;
+      let passive = null;
+      if (char.class_id) {
+        try {
+          const passiveResp = await fetch(`/api/death-mode/passive-skill?who=${who}`);
+          if (passiveResp.ok) passive = await passiveResp.json();
+        } catch(e) {}
+      }
       if (passive && passive.name) {
         html += `<div style="margin-bottom:12px;padding:8px;background:#1a1a2d;border:1px solid #58a6ff;border-radius:8px;">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">

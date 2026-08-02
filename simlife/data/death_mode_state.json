@@ -5,25 +5,48 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 5,
-    "hp": 270,
-    "max_hp": 270,
-    "mp": 80,
-    "max_mp": 80,
+    "level": 10,
+    "hp": 239,
+    "max_hp": 420,
+    "mp": 113,
+    "max_mp": 155,
     "stats": {
-      "strength": 15,
+      "strength": 42,
       "agility": 8,
       "intelligence": 5,
       "vitality": 15,
       "luck": 5
     },
     "skills": [
-      "重击",
-      "格挡",
-      "旋风斩",
-      "战吼"
+      "war_heavy_strike",
+      "war_block",
+      "war_whirlwind",
+      "war_battle_cry",
+      "war_shield_bash",
+      "war_berserker",
+      "mag_fireball"
     ],
     "equipment": [
+      {
+        "name": "秘银甲",
+        "type": "outfit",
+        "subtype": null,
+        "slot": "outfit",
+        "damage_type": "defense",
+        "rarity": "rare",
+        "rarity_name": "稀有",
+        "color": "#58a6ff",
+        "bonus": 16,
+        "stat_bonus": {
+          "strength": 3,
+          "agility": 1,
+          "vitality": 1,
+          "luck": 0
+        },
+        "weight": 3,
+        "level_req": 8,
+        "sell_price": 68
+      },
       {
         "name": "新手铁剑",
         "type": "weapon",
@@ -39,10 +62,42 @@
       }
     ],
     "inventory": [],
-    "experience": 107,
-    "exp_to_next": 172,
-    "gold": 371,
-    "world_type": "fantasy"
+    "experience": 253,
+    "exp_to_next": 341,
+    "gold": 1070,
+    "world_type": "fantasy",
+    "awakening_skills": [
+      {
+        "id": "awakening_0",
+        "name": "天崩地裂",
+        "type": "physical",
+        "mp_cost": 30,
+        "effects": [
+          {
+            "type": "damage",
+            "target": "all_enemies",
+            "value": 2.5
+          },
+          {
+            "type": "stun",
+            "target": "all_enemies",
+            "value": 1,
+            "chance": 0.3
+          }
+        ],
+        "req_level": 1,
+        "req_class": null,
+        "req_stats": {},
+        "cooldown": 3,
+        "description": "猛烈震击地面，对所有敌人造成巨大伤害并概率眩晕"
+      }
+    ],
+    "stat_points": 18,
+    "_stat_backfilled": true,
+    "passive_effects": {
+      "max_hp_mult": 1.15,
+      "phys_damage_reduce": 0.1
+    }
   },
   "world_setting": {
     "world_id": "aincrad-magus",
@@ -455,7 +510,7 @@
   "world_type": "fantasy",
   "growth_mode": "fast",
   "story": {
-    "current_chapter": 7,
+    "current_chapter": 12,
     "current_scene_id": null,
     "scene_description": "",
     "choices": [],
@@ -651,6 +706,144 @@
         "summary": "你靠在一棵古树的粗壮根系上，闭上眼睛，调整呼吸。四周的魔法粒子缓缓涌入你的身体，伤口以肉眼可见的速度愈合，疲劳感也逐渐消退。当你再次睁开眼时，感觉浑身充满了力量。远处传来一阵低沉的咆哮声，似乎有什么东",
         "action": "yount把状态恢复满",
         "outcome": "rest"
+      },
+      {
+        "chapter": 7,
+        "summary": "你靠着墙缓缓坐下，冰冷的石地透过皮甲传来阵阵寒意。你闭上眼睛，试图平复战斗后急促的呼吸。你的全身肌肉逐渐放松，血液的搏动声在耳边渐渐缓和。伤口处传来微微的痒意，似乎正在以肉眼可见的速度愈合。你感到体力",
+        "action": "yount坐下恢复HP",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 7,
+        "summary": "你在一棵巨大的水晶橡树下坐下，背靠着粗糙的树干，缓缓吐出一口浊气。四周的魔法萤火虫在微光中飘动，空气中残留着刚才战斗的焦灼气息。你闭上眼睛，感受着体内的魔力流动逐渐平稳，肌肉的酸痛感也在慢慢消退。然而",
+        "action": "yount坐下恢复HP",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 7,
+        "summary": "你们在Primus Arcus边缘的草地发现了两只绿色史莱姆，它们正懒洋洋地晒着日光。你和同伴交换眼神，同时举起武器冲上前。你的铁剑劈开第一只史莱姆的凝胶状身体，但它迅速重新凝聚；同伴的剑紧随其后斩下",
+        "action": "寻找1级史莱姆，两人进行进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 8,
+        "summary": "你与同伴交替掩护推进，长剑与魔法交织成密集的火力网。怪物的防御被层层撕开，它的反击愈发狂暴，但你们凭借战吼与格挡稳住阵脚，将战线一步步前压。空气中弥漫着焦灼的魔力气息，利刃破空声与咆哮不绝于耳，战斗仍",
+        "action": "两人继续发起连续多轮进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 8,
+        "summary": "你攥紧铁剑，嘶吼着冲向那只元素史莱姆。剑刃破空，裹挟着风声劈入其凝胶状核心，但它的外壳猛地弹开，将你的剑震向一侧。你旋即旋身调整重心，重斩再落，割裂水银般的流体，溅起冰凉碎屑——它猛然膨胀，溃散的躯体",
+        "action": "继续进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 8,
+        "summary": "你握紧铁剑，低吼一声，朝那只扑来的Umbra Lupus挥出重击。剑刃破风，擦过它的皮毛，激起一溜暗色火花。它侧身避开要害，利爪反扫你的护甲，发出刺耳的金属摩擦声。你顺势旋身，用盾面格挡，借势再斩，空",
+        "action": "继续进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 8,
+        "summary": "你高举铁剑，怒吼着冲向那只元素史莱姆。剑刃划破空气，劈入史莱姆果冻般的身体，溅起一片冰凉的粘液。史莱姆嘶叫着弹起，试图裹住你的手臂，你及时后撤，用盾牌格挡住它的冲击。脚下的地面因魔法波动而微微震颤，另",
+        "action": "继续进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 8,
+        "summary": "你握紧铁剑，发出战吼，冲向那只元素史莱姆。剑刃劈入它的核心，发出刺耳的嘶鸣，但它表面泛起一阵魔法波动，试图将你的剑推挤出来。你感到剑身传来一股反震力，脚下的地面微微震颤，仿佛有什么东西在回应这场战斗。",
+        "action": "继续进攻",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 9,
+        "summary": "你举起铁剑，低吼一声，连续向面前的暗影狼劈去。第一剑切开了它左肩的暗色毛发，溅出几滴墨绿色的血液；它龇牙反扑，你侧身闪过，借势用剑柄重击它的头骨；第三轮交锋中，它跃起扑向你的咽喉，你以盾牌格挡，剑锋从",
+        "action": "继续进攻，连续攻击3轮",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 9,
+        "summary": "你拧开恢复药水的瓶盖，一股苦涩的草药味弥漫开来。仰头一饮而尽，温热感顺着喉咙流淌，仿佛有细小的魔力丝线修补着你的肌体。伤口边缘的血肉微微蠕动，疼痛渐渐减轻，但体内仍传来阵阵虚弱的信号——这瓶药水的效力",
+        "action": "yount使用恢复药水",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 9,
+        "summary": "你迅速从腰间拔出恢复药水，仰头饮下，温热的感觉沿着喉咙蔓延而下，修补着身上撕裂的伤口。你握紧铁剑冲向那只低吼的元素史莱姆，重击劈进它半透明的核心，金属与结晶碰撞摩擦出刺耳的声响。史莱姆爆裂开来，酸液溅",
+        "action": "焕灵使用恢复药水，yount解决怪物",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 9,
+        "summary": "你拔开木塞，将恢复药水一饮而尽。温热的液体滑入喉咙，一股淡淡的暖意从胃部扩散开来，刺痛感逐渐消退，伤口边缘的肌肉开始缓慢地蠕动愈合。但你发现药水的效果远不如预期——或许是劣质品，又或许是你的体质产生了",
+        "action": "焕灵使用恢复药水",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 9,
+        "summary": "你的剑与同伴的武器几乎同时落在元素史莱姆身上，铁剑切开水状的表皮，激起一阵冰凉的飞溅。怪物核心剧烈闪烁，企图向一侧弹跳躲避，但你的战吼让它短暂僵直。空气中弥漫着魔力焦灼的气味，史莱姆的表层开始重新凝结",
+        "action": "两人攻击怪物",
+        "outcome": "combat_success"
+      },
+      {
+        "chapter": 10,
+        "summary": "你靠着石壁坐下，铁剑横在膝上。伤口在魔力微弱的光晕中缓缓闭合，血色重新爬上濒死苍白的肌肤。周围只剩夜风穿过断壁的呜咽声。你闭上眼，短暂地陷入浅眠，直到一声尖锐的破碎声从远处传来——像是玻璃碎裂，又像是",
+        "action": "两人休息等状态全部恢复",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 10,
+        "summary": "你在一棵古树的根隙间坐下，铁剑横放膝上。伤口渗着血，但至少能有一刻喘息。远处传来踏碎的枯枝声，像是有什么东西正在靠近，但暂时看不真切。",
+        "action": "焕灵休息恢复状态",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 10,
+        "summary": "你沿小径绕到村庄北坡，发现一个被魔法荆棘半掩的岩缝。拨开枝叶，里面是个塌陷的废墟入口，石板上有暗红色符文微微发光。一只 Umbra Lupus 的幼崽伏在角落，低吼着，但似乎更害怕你。风从入口深处涌出",
+        "action": "到village北边那个小山坡后面",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 10,
+        "summary": "你在一棵银叶古树下坐定，微风拂过Silvamagica的林间。闭上眼，铁剑的嗡鸣与战斗残留的紧张感缓缓褪去，肌肉的酸痛如潮水般消散。当你再次睁开眼，视野恢复清明，体内仿佛注入了新的活力。远处传来一声低",
+        "action": "焕灵休息恢复状态",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 10,
+        "summary": "你从背包中取出那件秘银甲，入手冰凉，比想象中更沉。当它贴合胸口时，一道微弱的银色光芒沿着甲胄的纹路流遍全身，仿佛活物在呼吸。你试着活动手臂，重量分布比预想中均匀，但关节处还略有些僵硬。远处传来一声沉重",
+        "action": "焕灵装备秘银甲",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 11,
+        "summary": "你与同伴返回了Primus Arcus边缘的临时营地。营火旁的几位法师学徒正在分享一天的战报，空气中弥漫着草药汤的气味。你找到旅店老板，用几枚金币换了两份热气腾腾的炖肉和麦酒，食物很快填补了战斗后的空",
+        "action": "两人回村子恢复状态",
+        "outcome": "rest"
+      },
+      {
+        "chapter": 11,
+        "summary": "你走向广场边缘，发现几个同样戴着蓝色标记的玩家正围着篝火低声交谈。其中一个矮个子盗贼抬头看见你，警惕地握紧了匕首，但旁边的法师却向你招手，示意你坐下。‘新来的？’法师压低声音，‘我们正在讨论怎么绕过第",
+        "action": "找找有没有同样被困住的游戏玩家聊天",
+        "outcome": "social_response"
+      },
+      {
+        "chapter": 11,
+        "summary": "你走向一群正在休息的玩家，询问关于这座塔的攻略。为首的战士打量了你一下，低声说道：‘第一层的关键是别急着冲，那些元素史莱姆会分裂，用魔法打本体才有效。’旁边的法师补充：‘再往上走有暗影狼群，它们怕火，",
+        "action": "向他们了解一下有没有什么攻略",
+        "outcome": "social_response"
+      },
+      {
+        "chapter": 11,
+        "summary": "铁匠铺的热气扑面而来，锤击声震耳欲聋。老铁匠瞥了你一眼，目光扫过你的秘银甲，瓮声道：‘想换武器？看你这一身，怕是刚从新手村出来。我这有几把趁手的家伙，不过好的货色可都不便宜。’他指了指墙上挂着的几件武",
+        "action": "焕灵到铁匠铺看一看武器",
+        "outcome": "discovery"
+      },
+      {
+        "chapter": 11,
+        "summary": "你凝聚魔力，手掌泛起柔和的绿光，轻按在伤口上。温暖的能量如涓涓细流渗入血肉，撕裂的肌理缓慢愈合，疼痛如同退潮般消散。四周的寂静中，只有心跳与魔力流动的低鸣。然而，在光芒消散的瞬间，远处的灌木丛传来了低",
+        "action": "yount使用治愈术",
+        "outcome": "rest"
       }
     ],
     "pending_action": null,
@@ -663,21 +856,25 @@
   "death_cause": null,
   "play_time_days": 1,
   "start_time": "2026-07-31T13:40:38.674173",
-  "kill_count": 7,
+  "kill_count": 20,
   "created_at": "2026-07-31T13:40:38.674179",
   "shared_inventory": [
     {
-      "name": "精制弓",
-      "type": "weapon",
-      "rarity": "uncommon",
-      "rarity_name": "优秀",
-      "color": "#3fb950",
-      "bonus": 5,
+      "name": "布衣",
+      "type": "outfit",
+      "subtype": null,
+      "slot": "outfit",
+      "damage_type": "defense",
+      "rarity": "common",
+      "rarity_name": "普通",
+      "color": "#9ca3af",
+      "bonus": 4,
       "stat_bonus": {
-        "strength": 1
+        "vitality": 1
       },
-      "level_req": 1,
-      "sell_price": 21
+      "weight": 3,
+      "level_req": 6,
+      "sell_price": 28
     }
   ],
   "user_character": {
@@ -685,42 +882,77 @@
     "class_id": "warrior",
     "class_name": "战士",
     "class_icon": "⚔️",
-    "level": 5,
-    "hp": 104,
-    "max_hp": 270,
-    "mp": 80,
-    "max_mp": 80,
+    "level": 10,
+    "hp": 42,
+    "max_hp": 420,
+    "mp": 91,
+    "max_mp": 155,
     "stats": {
       "strength": 15,
       "agility": 8,
       "intelligence": 5,
-      "vitality": 15,
+      "vitality": 16,
       "luck": 5
     },
     "skills": [
-      "重击",
-      "格挡",
-      "旋风斩",
-      "战吼"
+      "war_heavy_strike",
+      "war_block",
+      "war_whirlwind",
+      "war_battle_cry",
+      "war_shield_bash",
+      "war_berserker",
+      "cle_heal"
     ],
     "equipment": [
       {
-        "name": "锈蚀的短剑",
+        "name": "钢制长柄",
         "type": "weapon",
-        "rarity": "common",
-        "rarity_name": "普通",
-        "color": "#9ca3af",
-        "bonus": 2,
-        "stat_bonus": {},
-        "level_req": 1,
-        "sell_price": 8
+        "subtype": "two_handed",
+        "slot": "main_hand",
+        "damage_type": "physical",
+        "rarity": "uncommon",
+        "rarity_name": "优秀",
+        "color": "#3fb950",
+        "bonus": 8,
+        "stat_bonus": {
+          "strength": 2
+        },
+        "weight": 8,
+        "level_req": 3,
+        "sell_price": 34
+      },
+      {
+        "name": "秘银甲",
+        "type": "outfit",
+        "subtype": null,
+        "slot": "outfit",
+        "damage_type": "defense",
+        "rarity": "rare",
+        "rarity_name": "稀有",
+        "color": "#58a6ff",
+        "bonus": 11,
+        "stat_bonus": {
+          "strength": 2,
+          "agility": 1,
+          "vitality": 1,
+          "luck": 0
+        },
+        "weight": 3,
+        "level_req": 3,
+        "sell_price": 43
       }
     ],
-    "experience": 107,
-    "exp_to_next": 172,
+    "experience": 253,
+    "exp_to_next": 341,
     "gold": 0,
     "world_type": "fantasy",
-    "inventory": []
+    "inventory": [],
+    "stat_points": 44,
+    "_stat_backfilled": true,
+    "passive_effects": {
+      "max_hp_mult": 1.15,
+      "phys_damage_reduce": 0.1
+    }
   },
   "world_map": {
     "regions": {
@@ -1854,6 +2086,966 @@
         },
         "hp_change": 270,
         "mp_change": 80
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:40:51.034899",
+      "day": 1,
+      "data": {
+        "action": "yount坐下恢复HP",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你靠着墙缓缓坐下，冰冷的石地透过皮甲传来阵阵寒意。你闭上眼睛，试图平复战斗后急促的呼吸。你的全身肌肉逐渐放松，血液的搏动声在耳边渐渐缓和。伤口处传来微微的痒意，似乎正在以肉眼可见的速度愈合。你感到体力在慢慢回流，但在这片危机四伏的区域，片刻的安宁也显得弥足珍贵。远处的隧道深处，隐约传来低沉的嗡鸣声，似乎有什么东西正在接近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 54,
+        "mp_change": 24,
+        "user_hp_change": 30,
+        "user_mp_change": 24
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:41:12.449663",
+      "day": 1,
+      "data": {
+        "action": "yount坐下恢复HP",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你在一棵巨大的水晶橡树下坐下，背靠着粗糙的树干，缓缓吐出一口浊气。四周的魔法萤火虫在微光中飘动，空气中残留着刚才战斗的焦灼气息。你闭上眼睛，感受着体内的魔力流动逐渐平稳，肌肉的酸痛感也在慢慢消退。然而，远处的灌木丛里似乎传来一阵轻微的沙沙声——不像风声，更像是某种生物在悄悄靠近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 54,
+        "mp_change": 24,
+        "user_hp_change": 50,
+        "user_mp_change": 20
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:41:59.737923",
+      "day": 1,
+      "data": {
+        "action": "寻找1级史莱姆，两人进行进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你们在Primus Arcus边缘的草地发现了两只绿色史莱姆，它们正懒洋洋地晒着日光。你和同伴交换眼神，同时举起武器冲上前。你的铁剑劈开第一只史莱姆的凝胶状身体，但它迅速重新凝聚；同伴的剑紧随其后斩下，史莱姆发出一声黏腻的嘶鸣。第二只史莱姆趁机弹射而起，直扑你的面门。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes招架失败，破绽被抓住，伤害加重，造成9点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成4点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成11点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:44:01.906805",
+      "day": 1,
+      "data": {
+        "action": "两人继续发起连续多轮进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你与同伴交替掩护推进，长剑与魔法交织成密集的火力网。怪物的防御被层层撕开，它的反击愈发狂暴，但你们凭借战吼与格挡稳住阵脚，将战线一步步前压。空气中弥漫着焦灼的魔力气息，利刃破空声与咆哮不绝于耳，战斗仍在激烈拉锯。但就在这时，怪物的核心突然爆发出刺目的光芒，周围的元素开始疯狂汇聚，仿佛在酝酿某种全新的、前所未有的攻击。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成9点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成4点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成12点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:45:18.873807",
+      "day": 1,
+      "data": {
+        "action": "继续进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你攥紧铁剑，嘶吼着冲向那只元素史莱姆。剑刃破空，裹挟着风声劈入其凝胶状核心，但它的外壳猛地弹开，将你的剑震向一侧。你旋即旋身调整重心，重斩再落，割裂水银般的流体，溅起冰凉碎屑——它猛然膨胀，溃散的躯体从下方反扑你持剑的手腕。战场上传来远处队友的模糊呼喊，而你眼角余光瞥见丛林深处闪过一对幽绿的光点。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成7点伤害 → Aerodrakes；yountAerodrakes精准招架，yount门户大开，未造成伤害 → Aerodrakes；Aerodrakesyount闪避判断失误，攻击命中，造成12点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:45:48.809511",
+      "day": 1,
+      "data": {
+        "action": "继续进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧铁剑，低吼一声，朝那只扑来的Umbra Lupus挥出重击。剑刃破风，擦过它的皮毛，激起一溜暗色火花。它侧身避开要害，利爪反扫你的护甲，发出刺耳的金属摩擦声。你顺势旋身，用盾面格挡，借势再斩，空气中弥漫着魔力的焦灼气息。那狼的双眼幽光更盛，开始低伏蓄势，显然在酝酿更狠的一击。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes毫无防备，直接承受攻击，造成10点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成4点伤害 → Aerodrakes；Aerodrakes焕灵格挡，减免部分伤害，造成7点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:46:06.422500",
+      "day": 1,
+      "data": {
+        "action": "继续进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你高举铁剑，怒吼着冲向那只元素史莱姆。剑刃划破空气，劈入史莱姆果冻般的身体，溅起一片冰凉的粘液。史莱姆嘶叫着弹起，试图裹住你的手臂，你及时后撤，用盾牌格挡住它的冲击。脚下的地面因魔法波动而微微震颤，另一只深绿色的史莱姆正从侧面缓慢逼近。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成8点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成4点伤害 → Aerodrakes；Aerodrakesyount闪避判断失误，攻击命中，造成13点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:46:23.545326",
+      "day": 1,
+      "data": {
+        "action": "继续进攻",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你握紧铁剑，发出战吼，冲向那只元素史莱姆。剑刃劈入它的核心，发出刺耳的嘶鸣，但它表面泛起一阵魔法波动，试图将你的剑推挤出来。你感到剑身传来一股反震力，脚下的地面微微震颤，仿佛有什么东西在回应这场战斗。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes毫无防备，直接承受攻击，造成8点伤害 → Aerodrakes；yountAerodrakes毫无防备，直接承受攻击，造成6点伤害 → Aerodrakes；Aerodrakes焕灵格挡，减免部分伤害，造成6点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-07-31T20:46:48.201976",
+      "day": 1,
+      "data": {
+        "action": "继续进攻，连续攻击3轮",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你举起铁剑，低吼一声，连续向面前的暗影狼劈去。第一剑切开了它左肩的暗色毛发，溅出几滴墨绿色的血液；它龇牙反扑，你侧身闪过，借势用剑柄重击它的头骨；第三轮交锋中，它跃起扑向你的咽喉，你以盾牌格挡，剑锋从下而上划过它的腹部，一股腥臭的液体洒落地面。暗影狼踉跄后退，低伏着身子，眼中幽光闪烁，似乎并未放弃。它身后的灌木丛中传来窸窣声响，不知是援兵还是陷阱。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes格挡，减免部分伤害，造成6点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成4点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成12点伤害 → 焕灵"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T08:49:48.603937",
+      "day": 1,
+      "data": {
+        "action": "一口气解决掉怪物",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "三回合内，两头Aerodrakes在焕灵与yount的夹击下接连倒地，粗制弓从尸体旁滚落，沾着未干的鳞血。yount左臂被尾钩划出两道浅伤，所幸无碍——两人总共吃了十九点伤害，尚算体面。金币和经验的入账让这次扫荡物有所值，但粗制弓的成色显然只适合卖给行商。远处林间传来翅膀扑打声，或许是它们更狡猾的同类闻风而至。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第3回合：击杀Aerodrakes",
+            "⚡ 扫荡完成 — 3回合"
+          ],
+          "rounds": 3,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33,
+        "leveled_up": true,
+        "new_level": 6,
+        "drops": [
+          {
+            "name": "粗制弓",
+            "type": "weapon",
+            "rarity": "common",
+            "rarity_name": "普通",
+            "color": "#9ca3af",
+            "bonus": 3,
+            "stat_bonus": {},
+            "level_req": 3,
+            "sell_price": 19
+          }
+        ]
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T08:55:34.526687",
+      "day": 1,
+      "data": {
+        "action": "扫荡低等级怪物，赚经验和金币",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 扫荡开始 — Feral Crystals",
+            "第2回合：[第1轮] 焕灵焕灵的攻击落空 → Feral Crystals；yountyount的攻击落空 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成20点伤害 → 焕灵",
+            "第7回合：[第1轮] 焕灵Feral Crystals招架失败，破绽被抓住，伤害加重，造成3点伤害 → Feral Crystals；yountFeral Crystals闪避判断失误，攻击命中，造成1点伤害 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成16点伤害 → 焕灵",
+            "第13回合：[第1轮] 焕灵暴击！Feral Crystals毫无防备，直接承受攻击，造成7点伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成2点伤害 → Feral Crystals；Feral Crystals焕灵格挡，减免部分伤害，造成10点伤害 → 焕灵",
+            "第22回合：[第1轮] 焕灵Feral Crystals精准招架，焕灵门户大开，未造成伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成2点伤害 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成20点伤害 → 焕灵",
+            "第23回合：[第1轮] 焕灵Feral Crystals招架失败，破绽被抓住，伤害加重，造成4点伤害 → Feral Crystals；yountFeral Crystals闪避判断失误，攻击命中，造成2点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成36点伤害 → yount",
+            "第27回合：[第1轮] 焕灵Feral Crystals格挡，减免部分伤害，造成2点伤害 → Feral Crystals；yountFeral Crystals格挡，减免部分伤害，造成1点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成34点伤害 → yount",
+            "⚡ 扫荡结束 — 共30回合"
+          ],
+          "rounds": 30,
+          "is_sweep": true
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T08:56:29.593425",
+      "day": 1,
+      "data": {
+        "action": "yount使用恢复药水",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你拧开恢复药水的瓶盖，一股苦涩的草药味弥漫开来。仰头一饮而尽，温热感顺着喉咙流淌，仿佛有细小的魔力丝线修补着你的肌体。伤口边缘的血肉微微蠕动，疼痛渐渐减轻，但体内仍传来阵阵虚弱的信号——这瓶药水的效力似乎不足以让你完全恢复。你听到林间深处传来窸窣声响，带着金属般的摩擦声，究竟是什么在靠近？",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Feral Crystals精准招架，焕灵门户大开，未造成伤害 → Feral Crystals；yountyount的攻击落空 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成16点伤害 → 焕灵"
+          ]
+        },
+        "user_hp_change": 120
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:04:37.753332",
+      "day": 1,
+      "data": {
+        "action": "焕灵使用恢复药水，yount解决怪物",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你迅速从腰间拔出恢复药水，仰头饮下，温热的感觉沿着喉咙蔓延而下，修补着身上撕裂的伤口。你握紧铁剑冲向那只低吼的元素史莱姆，重击劈进它半透明的核心，金属与结晶碰撞摩擦出刺耳的声响。史莱姆爆裂开来，酸液溅射在你的护甲上嘶嘶作响，但它并没有倒下，反而重新聚集起来，发出更加尖锐的鸣叫。你喘着粗气，剑尖微微颤抖，注视着它膨胀的形态，不知它下次攻击会从哪个方向袭来。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵焕灵的攻击落空 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成20点伤害 → 焕灵"
+          ]
+        },
+        "user_hp_change": 50
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:05:11.633039",
+      "day": 1,
+      "data": {
+        "action": "焕灵使用恢复药水",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你拔开木塞，将恢复药水一饮而尽。温热的液体滑入喉咙，一股淡淡的暖意从胃部扩散开来，刺痛感逐渐消退，伤口边缘的肌肉开始缓慢地蠕动愈合。但你发现药水的效果远不如预期——或许是劣质品，又或许是你的体质产生了耐药性。远处传来狼嚎，它们可能嗅到了你身上的血腥味。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Feral Crystals毫无防备，直接承受攻击，造成3点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成34点伤害 → yount"
+          ]
+        },
+        "hp_change": 30
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:05:47.167083",
+      "day": 1,
+      "data": {
+        "action": "两人攻击怪物",
+        "action_type": "free",
+        "outcome": "combat_success",
+        "narrative": "你的剑与同伴的武器几乎同时落在元素史莱姆身上，铁剑切开水状的表皮，激起一阵冰凉的飞溅。怪物核心剧烈闪烁，企图向一侧弹跳躲避，但你的战吼让它短暂僵直。空气中弥漫着魔力焦灼的气味，史莱姆的表层开始重新凝结，似乎在酝酿反击。你瞥见不远处的草丛里有暗影蠕动，不知是另一只怪物还是其他玩家的身影。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Feral Crystals格挡，减免部分伤害，造成2点伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成2点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成30点伤害 → yount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:06:44.507816",
+      "day": 1,
+      "data": {
+        "action": "两人一口气解决怪物",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "四人队伍在晶簇群落中完成了第四轮扫荡，焕灵的暴击与yount的协同最终击碎了Feral Crystals的核心，但代价是两人共承受38点伤害，全员如今带着102/300的残血状态脱离战场。战利品虽不丰厚——些许金币和经验，但至少扫清了前路。血痕未干，下一片野区的光芒已从裂隙中渗出，休整或是继续推进，得尽快决定了。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Feral Crystals"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Feral Crystals",
+            "第2回合：[第1轮] 焕灵暴击！Feral Crystals格挡，减免部分伤害，造成3点伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成1点伤害 → Feral Crystals；Feral Crystals焕灵格挡，减免部分伤害，造成10点伤害 → 焕灵",
+            "第4回合：[第1轮] 焕灵暴击！Feral Crystals毫无防备，直接承受攻击，造成5点伤害 → Feral Crystals；yountyount的攻击落空 → Feral Crystals",
+            "第4回合：击杀Feral Crystals",
+            "⚡ 扫荡结束 — 共4回合"
+          ],
+          "rounds": 4,
+          "is_sweep": true
+        },
+        "exp_gained": 75,
+        "gold_gained": 37
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:13:01.244117",
+      "day": 1,
+      "data": {
+        "action": "两人休息等状态全部恢复",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你靠着石壁坐下，铁剑横在膝上。伤口在魔力微弱的光晕中缓缓闭合，血色重新爬上濒死苍白的肌肤。周围只剩夜风穿过断壁的呜咽声。你闭上眼，短暂地陷入浅眠，直到一声尖锐的破碎声从远处传来——像是玻璃碎裂，又像是金属断裂。你猛地睁开眼，握紧剑柄，身体状态已近乎全盛。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 60,
+        "mp_change": 28,
+        "user_hp_change": 198,
+        "user_mp_change": 28
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:14:16.204199",
+      "day": 1,
+      "data": {
+        "action": "焕灵休息恢复状态",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你在一棵古树的根隙间坐下，铁剑横放膝上。伤口渗着血，但至少能有一刻喘息。远处传来踏碎的枯枝声，像是有什么东西正在靠近，但暂时看不真切。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 50,
+        "mp_change": 15,
+        "user_hp_change": 60,
+        "user_mp_change": 28
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:19:49.824244",
+      "day": 1,
+      "data": {
+        "action": "到village北边那个小山坡后面",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你沿小径绕到村庄北坡，发现一个被魔法荆棘半掩的岩缝。拨开枝叶，里面是个塌陷的废墟入口，石板上有暗红色符文微微发光。一只 Umbra Lupus 的幼崽伏在角落，低吼着，但似乎更害怕你。风从入口深处涌出，带着铁锈和腐土的气味。",
+        "gold_gained": 80
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:31:26.970622",
+      "day": 1,
+      "data": {
+        "action": "焕灵休息恢复状态",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你在一棵银叶古树下坐定，微风拂过Silvamagica的林间。闭上眼，铁剑的嗡鸣与战斗残留的紧张感缓缓褪去，肌肉的酸痛如潮水般消散。当你再次睁开眼，视野恢复清明，体内仿佛注入了新的活力。远处传来一声低沉的野兽嚎叫，空气微微震颤——这片森林并不打算让你安宁太久。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "hp_change": 28,
+        "mp_change": 28,
+        "user_hp_change": 60,
+        "user_mp_change": 28
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T09:59:27.675961",
+      "day": 1,
+      "data": {
+        "action": "看看附近有没有低等级小怪",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "风压骤歇，三只翼龙嘶鸣着坠地，碎裂的鳞片在尘土中泛着微光。焕灵和yount背靠背收刃，仅衣角被划出一道口子，战利品沉甸甸挂上腰间——那枚鳞片在暗处竟流转着奥术光泽。而更远的峡谷深处，似乎传来更沉重的振翅声，那不是翼龙该有的频率。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第3回合：击杀Aerodrakes",
+            "⚡ 扫荡完成 — 3回合"
+          ],
+          "rounds": 3,
+          "is_sweep": true
+        },
+        "exp_gained": 39,
+        "gold_gained": 19,
+        "leveled_up": true,
+        "new_level": 7
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:46:15.820071",
+      "day": 1,
+      "data": {
+        "action": "继续扫荡3级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "伤痕累累的焕灵和yount劈开最后一只史莱姆的核心，十一轮拉锯后，这场黏腻的扫荡终于画上句号。两人肋骨间都渗着血，但口袋里多了33枚金币和一点聊胜于无的经验。远处洞穴深处传来低沉的咕噜声——那声音比刚清掉的软泥深沉得多，像是有什么东西在暗处等着他们。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Elemental Slimes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Elemental Slimes",
+            "第3回合：[第1轮] 焕灵Elemental Slimes招架失败，破绽被抓住，伤害加重，造成9点伤害 → Elemental Slimes；yountElemental Slimes招架失败，破绽被抓住，伤害加重，造成7点伤害 → Elemental Slimes；Elemental Slimes暴击！yount闪避判断失误，攻击命中，造成19点伤害 → yount",
+            "第6回合：[第1轮] 焕灵暴击！Elemental Slimes毫无防备，直接承受攻击，造成14点伤害 → Elemental Slimes；yountyount的攻击落空 → Elemental Slimes；Elemental Slimesyount闪避判断失误，攻击命中，造成13点伤害 → yount",
+            "第11回合：击杀Elemental Slimes",
+            "⚡ 扫荡结束 — 共11回合"
+          ],
+          "rounds": 11,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:47:18.694153",
+      "day": 1,
+      "data": {
+        "action": "继续扫荡3级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "野晶簇炸裂成碎尘时，战靴下的裂纹还残留着微光——六轮交锋，两人以刀锋撕开再生层，焕灵一记重击精准凿穿核心，yount的补刀紧随其后。肩甲上的裂痕渗出血丝，但战利品袋里多出二十八枚金币和一段未鉴定的晶簇髓核，足够换几瓶好的伤药。营地灯火在雾气中若隐若现，那里或许有新的委托，或是更锋利的敌人。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Feral Crystals"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Feral Crystals",
+            "第2回合：[第1轮] 焕灵暴击！Feral Crystals毫无防备，直接承受攻击，造成21点伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成10点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成14点伤害 → yount",
+            "第6回合：击杀Feral Crystals",
+            "⚡ 扫荡结束 — 共6回合"
+          ],
+          "rounds": 6,
+          "is_sweep": true
+        },
+        "exp_gained": 57,
+        "gold_gained": 28
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:47:35.692558",
+      "day": 1,
+      "data": {
+        "action": "继续扫荡3级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "钢翼撕裂长空，污血溅落碎石——焕灵的长柄武器在第6回合贯入Aerodrakes的侧肋，一击暴击终结了这场缠斗。两处轻伤尚不足为虑，但战利品中的钢制长柄（优秀品质）却值得掂量。你们收剑回鞘，远处隐约传来更深邃的龙吼，显然，这只是更危险猎场的序曲。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第6回合：[第1轮] 焕灵暴击！Aerodrakes闪避判断失误，攻击命中，造成21点伤害 → Aerodrakes；yountyount的攻击落空 → Aerodrakes",
+            "第6回合：击杀Aerodrakes",
+            "⚡ 扫荡结束 — 共6回合"
+          ],
+          "rounds": 6,
+          "is_sweep": true
+        },
+        "exp_gained": 57,
+        "gold_gained": 28,
+        "leveled_up": true,
+        "new_level": 8,
+        "drops": [
+          {
+            "name": "钢制长柄",
+            "type": "weapon",
+            "subtype": "two_handed",
+            "slot": "main_hand",
+            "damage_type": "physical",
+            "rarity": "uncommon",
+            "rarity_name": "优秀",
+            "color": "#3fb950",
+            "bonus": 8,
+            "stat_bonus": {
+              "strength": 2
+            },
+            "weight": 8,
+            "level_req": 3,
+            "sell_price": 34
+          }
+        ]
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:50:24.245550",
+      "day": 1,
+      "data": {
+        "action": "扫荡4级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "战斗在第八回合落下帷幕，焕灵与yount配合默契，以精准的闪避假动作骗过Aerodrakes的防御，共倾泻110点伤害将其击毙。虽然敌人一度暴击撕开防线，但焕灵的格挡将伤势控制在可承受范围内（331/360）。战利品仅有一件普通布衣，不值一提。随着扫荡完成，两人喘息间望向深处——那里似乎传来更沉重的脚步与低吼，装备该换了。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第6回合：[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成9点伤害 → Aerodrakes；yountAerodrakes闪避判断失误，攻击命中，造成14点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成10点伤害 → 焕灵",
+            "第8回合：击杀Aerodrakes",
+            "⚡ 扫荡结束 — 共8回合"
+          ],
+          "rounds": 8,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33,
+        "drops": [
+          {
+            "name": "布衣",
+            "type": "outfit",
+            "subtype": null,
+            "slot": "outfit",
+            "damage_type": "defense",
+            "rarity": "common",
+            "rarity_name": "普通",
+            "color": "#9ca3af",
+            "bonus": 3,
+            "stat_bonus": {
+              "vitality": 1
+            },
+            "weight": 3,
+            "level_req": 4,
+            "sell_price": 21
+          }
+        ]
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:50:37.556859",
+      "day": 1,
+      "data": {
+        "action": "扫荡4级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "刀刃掠过鳞甲，Aerodrakes的闪避在焕灵的暴击下成了笑话——23点伤害撕开防御，yount紧随其后的斩击彻底封锁了退路。四轮缠斗，只留下95点总输出与12点轻伤，狩获28金币与57经验，但那只畜生没掉出像样的装备。伤口尚浅，血迹未干，前方还有更硬的骨头要啃。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第2回合：[第1轮] 焕灵暴击！Aerodrakes闪避判断失误，攻击命中，造成23点伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成10点伤害 → Aerodrakes；Aerodrakes焕灵格挡，减免部分伤害，造成4点伤害 → 焕灵",
+            "第4回合：击杀Aerodrakes",
+            "⚡ 扫荡结束 — 共4回合"
+          ],
+          "rounds": 4,
+          "is_sweep": true
+        },
+        "exp_gained": 57,
+        "gold_gained": 28
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:51:00.085327",
+      "day": 1,
+      "data": {
+        "action": "扫荡4级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "潮汐鬼影在第七声剑鸣中溃散成泡沫。焕灵与你背靠背收刃，铠甲上残留着海盐与暗蓝色血渍——五十点伤痕换一百一十点输出，这笔买卖划算。金币坠袋叮当，经验沉入纹章，而礁石深处浮起的暗流，正拖拽着另一群猎物的影子。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Tidal Wraiths"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Tidal Wraiths",
+            "第7回合：击杀Tidal Wraiths",
+            "⚡ 扫荡结束 — 共7回合"
+          ],
+          "rounds": 7,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33,
+        "leveled_up": true,
+        "new_level": 9
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:55:49.892295",
+      "day": 1,
+      "data": {
+        "action": "扫荡4级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "六轮缠斗，Aerodrakes的鳞翼在利刃下撕裂，焕灵与yount交替压制，最终一击贯穿其心脏，结束了这场消耗战。两人仅受轻伤，衣甲沾血却无大碍，从尸体上搜出33枚金币和些许经验。短暂的喘息过后，更深处的洞穴传来低沉的咆哮——新的猎物，已经在等着他们了。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第6回合：[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成7点伤害 → Aerodrakes；yount暴击！Aerodrakes格挡，减免部分伤害，造成13点伤害 → Aerodrakes",
+            "第6回合：击杀Aerodrakes",
+            "⚡ 扫荡结束 — 共6回合"
+          ],
+          "rounds": 6,
+          "is_sweep": true
+        },
+        "exp_gained": 66,
+        "gold_gained": 33
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:55:59.731462",
+      "day": 1,
+      "data": {
+        "action": "扫荡4级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 扫荡开始 — Feral Crystals",
+            "第2回合：[第1轮] 焕灵Feral Crystals格挡，减免部分伤害，未造成伤害 → Feral Crystals；yountFeral Crystals毫无防备，直接承受攻击，造成4点伤害 → Feral Crystals；Feral Crystals暴击！焕灵格挡，减免部分伤害，造成22点伤害 → 焕灵",
+            "第4回合：[第1轮] 焕灵暴击！Feral Crystals闪避判断失误，攻击命中，造成1点伤害 → Feral Crystals；yountFeral Crystals格挡，减免部分伤害，造成2点伤害 → Feral Crystals；Feral CrystalsFeral Crystals的攻击落空 → 焕灵",
+            "第6回合：[第1轮] 焕灵Feral Crystals格挡，减免部分伤害，未造成伤害 → Feral Crystals；yountFeral Crystals招架失败，破绽被抓住，伤害加重，造成4点伤害 → Feral Crystals；Feral Crystals暴击！yount闪避判断失误，攻击命中，造成34点伤害 → yount",
+            "第8回合：[第1轮] 焕灵Feral Crystals闪避判断失误，攻击命中，造成1点伤害 → Feral Crystals；yount暴击！Feral Crystals闪避判断失误，攻击命中，造成9点伤害 → Feral Crystals；Feral Crystalsyount闪避判断失误，攻击命中，造成21点伤害 → yount",
+            "第9回合：[第1轮] 焕灵Feral Crystals招架失败，破绽被抓住，伤害加重，造成1点伤害 → Feral Crystals；yount暴击！Feral Crystals闪避判断失误，攻击命中，造成9点伤害 → Feral Crystals；Feral Crystalsyount闪避了攻击，未造成伤害 → yount",
+            "第13回合：[第1轮] 焕灵暴击！Feral Crystals毫无防备，直接承受攻击，造成1点伤害 → Feral Crystals；yountFeral Crystals闪避判断失误，攻击命中，造成4点伤害 → Feral Crystals；Feral Crystals焕灵格挡，减免部分伤害，造成11点伤害 → 焕灵",
+            "⚡ 扫荡结束 — 共30回合"
+          ],
+          "rounds": 30,
+          "is_sweep": true
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T10:56:54.291040",
+      "day": 1,
+      "data": {
+        "action": "伏击",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "刀刃划过晶簇的脆响转瞬即逝——第一回合便斩碎了最后一块fragments，两人配合默契得甚至没让尖刺沾到衣角。但焕灵的手腕微不可察地一颤，旧伤在发力时嘶鸣，提醒着这具身体已在返程路上耗损过半。收起零落的晶核与几枚闪光的碎片，远处洞穴深处传来更沉重的矿石心跳，那是下一批猎物的脉搏。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Feral Crystals"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Feral Crystals",
+            "第1回合：击杀Feral Crystals",
+            "⚡ 扫荡完成 — 1回合"
+          ],
+          "rounds": 1,
+          "is_sweep": true
+        },
+        "exp_gained": 84,
+        "gold_gained": 42,
+        "leveled_up": true,
+        "new_level": 10
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T11:22:29.691771",
+      "day": 1,
+      "data": {
+        "action": "扫荡5级的史莱姆",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "阴影之狼的嚎叫消散在林地边缘，十三回合的缠斗以125点伤害将其撕碎，但换来的是你我身上深浅不一的伤口——105点伤害的代价，足以让每一次呼吸都带着铁锈味。秘银甲从它破碎的躯干上滑落，稀有金属的光泽在夜色中格外刺眼。休整片刻，前方暗林深处似乎传来更沉重的脚步声。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Umbra Lupus"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Umbra Lupus",
+            "第3回合：[第1轮] 焕灵暴击！Umbra Lupus格挡，减免部分伤害，造成4点伤害 → Umbra Lupus；yountUmbra Lupus招架失败，破绽被抓住，伤害加重，造成10点伤害 → Umbra Lupus；Umbra Lupusyount闪避判断失误，攻击命中，造成18点伤害 → yount",
+            "第4回合：[第1轮] 焕灵Umbra Lupus闪避判断失误，攻击命中，造成3点伤害 → Umbra Lupus；yount暴击！Umbra Lupus格挡，减免部分伤害，造成6点伤害 → Umbra Lupus；Umbra LupusUmbra Lupus的攻击落空 → yount",
+            "第7回合：[第1轮] 焕灵Umbra Lupus格挡，减免部分伤害，造成2点伤害 → Umbra Lupus；yountUmbra Lupus毫无防备，直接承受攻击，造成9点伤害 → Umbra Lupus；Umbra Lupus暴击！yount闪避判断失误，攻击命中，造成34点伤害 → yount",
+            "第11回合：[第1轮] 焕灵Umbra Lupus闪避判断失误，攻击命中，造成3点伤害 → Umbra Lupus；yountUmbra Lupus闪避判断失误，攻击命中，造成8点伤害 → Umbra Lupus；Umbra Lupus暴击！焕灵格挡，减免部分伤害，造成16点伤害 → 焕灵",
+            "第12回合：[第1轮] 焕灵Umbra Lupus格挡，减免部分伤害，造成1点伤害 → Umbra Lupus；yountUmbra Lupus闪避判断失误，攻击命中，造成7点伤害 → Umbra Lupus；Umbra Lupus暴击！yount闪避了攻击，未造成伤害 → yount",
+            "第13回合：击杀Umbra Lupus",
+            "⚡ 扫荡结束 — 共13回合"
+          ],
+          "rounds": 13,
+          "is_sweep": true
+        },
+        "exp_gained": 75,
+        "gold_gained": 37,
+        "drops": [
+          {
+            "name": "秘银甲",
+            "type": "outfit",
+            "subtype": null,
+            "slot": "outfit",
+            "damage_type": "defense",
+            "rarity": "rare",
+            "rarity_name": "稀有",
+            "color": "#58a6ff",
+            "bonus": 11,
+            "stat_bonus": {
+              "strength": 2,
+              "agility": 1,
+              "vitality": 1,
+              "luck": 0
+            },
+            "weight": 3,
+            "level_req": 3,
+            "sell_price": 43
+          }
+        ]
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T11:23:30.321303",
+      "day": 1,
+      "data": {
+        "action": "焕灵装备秘银甲",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "你从背包中取出那件秘银甲，入手冰凉，比想象中更沉。当它贴合胸口时，一道微弱的银色光芒沿着甲胄的纹路流遍全身，仿佛活物在呼吸。你试着活动手臂，重量分布比预想中均匀，但关节处还略有些僵硬。远处传来一声沉重的轰鸣，地面微微震颤，像是某种大型生物正在靠近。你的手按上剑柄，目光扫向声音来源的方向，那层秘银下的心跳声清晰可闻。",
+        "gold_gained": 76
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T13:10:10.695725",
+      "day": 1,
+      "data": {
+        "action": "两人回村子恢复状态",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你与同伴返回了Primus Arcus边缘的临时营地。营火旁的几位法师学徒正在分享一天的战报，空气中弥漫着草药汤的气味。你找到旅店老板，用几枚金币换了两份热气腾腾的炖肉和麦酒，食物很快填补了战斗后的空虚感。身体暖意渐升，但耳畔总能听到远处传来的狼嚎声，提醒着你们安全的时光总是短暂的。黑暗中，似乎有影子在营地边缘一闪而过。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": []
+        },
+        "gold_spent": 40,
+        "hp_change": 84,
+        "mp_change": 46,
+        "user_hp_change": 80,
+        "user_mp_change": 40
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T13:14:16.453855",
+      "day": 1,
+      "data": {
+        "action": "找找有没有同样被困住的游戏玩家聊天",
+        "action_type": "free",
+        "outcome": "social_response",
+        "narrative": "你走向广场边缘，发现几个同样戴着蓝色标记的玩家正围着篝火低声交谈。其中一个矮个子盗贼抬头看见你，警惕地握紧了匕首，但旁边的法师却向你招手，示意你坐下。‘新来的？’法师压低声音，‘我们正在讨论怎么绕过第三层的封锁区。’他们的脸上带着疲惫，但眼神里闪着求生的光。篝火噼啪作响，周围的其他玩家也纷纷侧耳倾听。"
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T13:15:21.583134",
+      "day": 1,
+      "data": {
+        "action": "向他们了解一下有没有什么攻略",
+        "action_type": "free",
+        "outcome": "social_response",
+        "narrative": "你走向一群正在休息的玩家，询问关于这座塔的攻略。为首的战士打量了你一下，低声说道：‘第一层的关键是别急着冲，那些元素史莱姆会分裂，用魔法打本体才有效。’旁边的法师补充：‘再往上走有暗影狼群，它们怕火，但小心别被包围。’说完，他们转身离去，留下你消化这些情报。"
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T14:53:01.182999",
+      "day": 1,
+      "data": {
+        "action": "焕灵到铁匠铺看一看武器",
+        "action_type": "free",
+        "outcome": "discovery",
+        "narrative": "铁匠铺的热气扑面而来，锤击声震耳欲聋。老铁匠瞥了你一眼，目光扫过你的秘银甲，瓮声道：‘想换武器？看你这一身，怕是刚从新手村出来。我这有几把趁手的家伙，不过好的货色可都不便宜。’他指了指墙上挂着的几件武器，一把泛着蓝光的战斧和一把刻有符文的阔剑吸引了你的注意。你走近细看，价格牌上的数字让你倒吸一口凉气。就在这时，店铺角落传来一阵骚动，一个蒙面人正悄悄将一瓶药剂塞进怀里。",
+        "gold_gained": 84
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T18:45:14.970513",
+      "day": 1,
+      "data": {
+        "action": "两人出村子进行探索刷怪",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第5回合：[第1轮] 焕灵暴击！Aerodrakes格挡，减免部分伤害，未造成伤害 → Aerodrakes；yountAerodrakes招架失败，破绽被抓住，伤害加重，造成2点伤害 → Aerodrakes；Aerodrakes暴击！yount闪避判断失误，攻击命中，造成28点伤害 → yount",
+            "第11回合：[第1轮] 焕灵Aerodrakes精准招架，焕灵门户大开，未造成伤害 → Aerodrakes；yountAerodrakes格挡，减免部分伤害，造成1点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成9点伤害 → 焕灵",
+            "第17回合：[第1轮] 焕灵Aerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；yount暴击！Aerodrakes格挡，减免部分伤害，未造成伤害 → Aerodrakes；Aerodrakes焕灵格挡，减免部分伤害，造成6点伤害 → 焕灵",
+            "第19回合：[第1轮] 焕灵Aerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；yountAerodrakes招架失败，破绽被抓住，伤害加重，造成2点伤害 → Aerodrakes；Aerodrakes暴击！yount闪避判断失误，攻击命中，造成27点伤害 → yount",
+            "第20回合：[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成1点伤害 → Aerodrakes；yountAerodrakes精准招架，yount门户大开，未造成伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成9点伤害 → 焕灵",
+            "第22回合：[第1轮] 焕灵暴击！Aerodrakes招架失败，破绽被抓住，伤害加重，造成1点伤害 → Aerodrakes；yountAerodrakes招架失败，破绽被抓住，伤害加重，造成1点伤害 → Aerodrakes；Aerodrakesyount闪避判断失误，攻击命中，造成13点伤害 → yount",
+            "⚡ 扫荡结束 — 共30回合"
+          ],
+          "rounds": 30,
+          "is_sweep": true
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T18:47:56.783172",
+      "day": 1,
+      "data": {
+        "action": "伏击",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第1回合：[第1轮] 焕灵Aerodrakes闪避判断失误，攻击命中，造成1点伤害 → Aerodrakes；yountAerodrakes闪避判断失误，攻击命中，造成1点伤害 → Aerodrakes；Aerodrakes暴击！yount闪避判断失误，攻击命中，造成23点伤害 → yount",
+            "第9回合：[第1轮] 焕灵暴击！Aerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；yountAerodrakes毫无防备，直接承受攻击，造成2点伤害 → Aerodrakes；Aerodrakesyount闪避判断失误，攻击命中，造成14点伤害 → yount",
+            "第21回合：[第1轮] 焕灵Aerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；yount暴击！Aerodrakes招架失败，破绽被抓住，伤害加重，造成1点伤害 → Aerodrakes；Aerodrakesyount闪避判断失误，攻击命中，造成13点伤害 → yount",
+            "第22回合：[第1轮] 焕灵暴击！Aerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；yountAerodrakes招架失败，破绽被抓住，伤害加重，造成1点伤害 → Aerodrakes；Aerodrakes暴击！焕灵格挡，减免部分伤害，造成10点伤害 → 焕灵",
+            "第24回合：[第1轮] 焕灵Aerodrakes招架失败，破绽被抓住，伤害加重，造成1点伤害 → Aerodrakes；yountAerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；Aerodrakes暴击！yount闪避判断失误，攻击命中，造成27点伤害 → yount",
+            "⚡ 扫荡结束 — 共30回合"
+          ],
+          "rounds": 30,
+          "is_sweep": true
+        }
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T19:37:11.636881",
+      "day": 1,
+      "data": {
+        "action": "yount使用治愈术",
+        "action_type": "free",
+        "outcome": "rest",
+        "narrative": "你凝聚魔力，手掌泛起柔和的绿光，轻按在伤口上。温暖的能量如涓涓细流渗入血肉，撕裂的肌理缓慢愈合，疼痛如同退潮般消散。四周的寂静中，只有心跳与魔力流动的低鸣。然而，在光芒消散的瞬间，远处的灌木丛传来了低沉的嘶吼声——有什么东西被你的魔力波动吸引了。",
+        "combat": {
+          "victory": false,
+          "enemy_names": [],
+          "combat_log": [
+            "[第1轮] 焕灵Aerodrakes招架失败，破绽被抓住，伤害加重，造成7点伤害 → Aerodrakes；yountAerodrakes毫无防备，直接承受攻击，造成1点伤害 → Aerodrakes；Aerodrakes暴击！yount闪避判断失误，攻击命中，造成17点伤害 → yount"
+          ]
+        },
+        "user_mp_change": -15
+      }
+    },
+    {
+      "type": "action",
+      "time": "2026-08-01T19:57:09.215076",
+      "day": 1,
+      "data": {
+        "action": "侧翼包抄",
+        "action_type": "free",
+        "outcome": "combat_sweep",
+        "narrative": "三回合内，两头Aerodrakes在焕灵与yount的夹击下轰然倒地，利爪与尾击只留下几道浅伤，几乎无损。翻检残骸时找到一件磨损的布衣，聊胜于无。经验与金币入账清脆，但这片空域远未平静——更深的巢穴里，振翅声正逐渐密集。",
+        "combat": {
+          "victory": true,
+          "enemy_names": [
+            "Aerodrakes"
+          ],
+          "combat_log": [
+            "⚡ 扫荡开始 — Aerodrakes",
+            "第3回合：击杀Aerodrakes",
+            "⚡ 扫荡完成 — 3回合"
+          ],
+          "rounds": 3,
+          "is_sweep": true
+        },
+        "exp_gained": 93,
+        "gold_gained": 46,
+        "drops": [
+          {
+            "name": "布衣",
+            "type": "outfit",
+            "subtype": null,
+            "slot": "outfit",
+            "damage_type": "defense",
+            "rarity": "common",
+            "rarity_name": "普通",
+            "color": "#9ca3af",
+            "bonus": 4,
+            "stat_bonus": {
+              "vitality": 1
+            },
+            "weight": 3,
+            "level_req": 6,
+            "sell_price": 28
+          }
+        ]
       }
     }
   ]

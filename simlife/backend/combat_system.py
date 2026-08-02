@@ -213,7 +213,14 @@ class CombatSystem:
     def _get_stats(entity) -> Dict:
         if isinstance(entity, CombatEntity):
             return entity.current_stats
-        return entity.get("stats", {})
+        # Dict实体：基础属性 + 装备属性加成
+        base = dict(entity.get("stats", {}))
+        for eq in entity.get("equipment", []):
+            if eq.get("stat_bonus"):
+                for k, v in eq["stat_bonus"].items():
+                    if k in base:
+                        base[k] += v
+        return base
 
     @staticmethod
     def _get_passive(entity) -> Dict:

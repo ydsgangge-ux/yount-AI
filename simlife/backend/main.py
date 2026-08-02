@@ -1841,6 +1841,7 @@ def api_death_mode_allocate_stats(data: dict):
 @app.get("/api/death-mode/passive-skill")
 def api_death_mode_passive_skill(who: str = "ai"):
     """获取角色职业被动技能"""
+    from simlife.backend.death_mode import DeathModeEngine
     from simlife.backend.skill_system import SkillSystem
 
     engine = DeathModeEngine()
@@ -1863,6 +1864,18 @@ def api_death_mode_passive_skill(who: str = "ai"):
     if not passive:
         return {"name": "", "description": ""}
     return passive
+
+
+@app.get("/api/death-mode/skill-info")
+def api_death_mode_skill_info(skill_id: str = ""):
+    """获取技能信息 by ID"""
+    from simlife.backend.skill_system import SkillSystem
+    if not skill_id:
+        return {"error": "no_skill_id"}
+    skill = SkillSystem.get_skill(skill_id)
+    if not skill:
+        return {"error": "skill_not_found"}
+    return skill.to_dict()
 
 
 @app.get("/api/death-mode/awakening-skills")
