@@ -19,41 +19,150 @@ class StoryAgent:
         self.llm = llm_client
 
     def _build_world_context(self, state: Dict) -> str:
-        """构建世界观约束"""
+        """构建世界观约束 — 区域驱动：
+        先注入全局核心设定（力量体系、世界背景），再注入玩家当前所在区域的
+        完整本地设定（地理/气候/地点/危险/驻留势力与NPC），让叙事严格贴合世界。
+        """
         ws = state.get("world_setting", {})
         if not ws or not isinstance(ws, dict):
             return ""
 
+        # ── 1. 确定玩家当前所在区域 ──
+        current_region = self._resolve_current_region(state, ws)
+
+        # ── 2. 全局核心设定（精简但保留运作规则，token 预算 ~350字）──
         parts = []
-        parts.append(f"世界：{ws.get('world_name', '未知')}")
-        parts.append(f"类型：{ws.get('world_type', '未知')}")
+        parts.append(f"世界：{ws.get('world_name', '未知')}（{ws.get('world_type', '未知')}）")
+
+        geo_overview = ws.get("geography", {}).get("overview", "")
+        if geo_overview:
+            parts.append(f"【世界地理】{geo_overview[:200]}")
 
         ps = ws.get("power_system", {})
         if ps and isinstance(ps, dict):
-            parts.append(f"力量体系：{ps.get('name', '未知')}")
+            ps_desc = ps.get("description", "")
+            # 力量体系：运作规则优先
+            if ps_desc:
+                parts.append(f"【力量体系·{ps.get('name','未知')}】{ps_desc[:220]}")
+            else:
+                parts.append(f"【力量体系】{ps.get('name','未知')}")
 
-        factions = ws.get("factions", [])
-        if factions and isinstance(factions, list):
-            faction_names = [f.get("name", "") for f in factions[:4] if isinstance(f, dict)]
-            parts.append(f"主要势力：{'、'.join(faction_names)}")
-
-        dangers = ws.get("dangers", {})
-        monster_types = dangers.get("monster_types", [])
-        if monster_types:
-            mt_names = []
-            for m in monster_types[:5]:
-                if isinstance(m, dict):
-                    mt_names.append(m.get("name", str(m)))
-                else:
-                    mt_names.append(str(m))
-            parts.append(f"常见威胁：{'、'.join(mt_names)}")
-
-        regions = ws.get("geography", {}).get("regions", [])
-        if regions and isinstance(regions, list):
-            region_names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
-            parts.append(f"区域：{'、'.join(region_names)}")
+        # ── 3. 当前区域的完整本地设定 ──
+        if current_region:
+            parts.append(self._build_region_context(current_region, ws))
+        else:
+            # 无明确区域时，列出所有区域名供参考
+            regions = ws.get("geography", {}).get("regions", [])
+            if regions:
+                names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
+                parts.append(f"已知区域：{'、'.join(names)}")
 
         return "\n".join(parts)
+
+    def _resolve_current_region(self, state: Dict, ws: Dict):
+        """根据当前状态解析玩家所在区域对象（优先匹配区域名）"""
+        regions = ws.get("geography", {}).get("regions", [])
+        if not regions or not isinstance(regions, list):
+            return None
+        regions = [r for r in regions if isinstance(r, dict)]
+
+        # 候选：当前地点名、区域id、地图当前区域名
+        candidates = []
+        cur_loc = state.get("story", {}).get("current_location", "")
+        region_id = state.get("world_map", {}).get("current_region_id", "")
+        cur_region_name = state.get("world_map", {}).get("current_region", "")
+
+        for c in (cur_loc, cur_region_name, region_id):
+            if c:
+                candidates.append(str(c).strip())
+
+        # 精确匹配区域名
+        for name in candidates:
+            for r in regions:
+                if r.get("name") and r.get("name").lower() == name.lower():
+                    return r
+        # 模糊匹配（区域名含在地点里，或反之）
+        for name in candidates:
+            for r in regions:
+                rn = (r.get("name") or "").lower()
+                if rn and (rn in name.lower() or name.lower() in rn):
+                    return r
+        return None
+
+    def _build_region_context(self, region: Dict, ws: Dict) -> str:
+        """构建当前区域的完整本地设定（地理/气候/地点/危险/势力/NPC）"""
+        parts = []
+        rname = region.get("name", "未知区域")
+        parts.append(f"【当前区域：{rname}】")
+
+        desc = region.get("description", "")
+        climate = region.get("climate", "")
+        if desc:
+            parts.append(f"环境：{desc[:260]}")
+        if climate:
+            parts.append(f"气候：{climate[:100]}")
+
+        key_locs = region.get("key_locations", [])
+        if key_locs:
+            parts.append(f"关键地点：{'、'.join(key_locs[:5])}")
+
+        # 区域危险/怪物（带特性）
+        region_dangers = region.get("dangers", [])
+        monster_types = ws.get("dangers", {}).get("monster_types", [])
+        if region_dangers:
+            parts.append(f"本区危险：{'、'.join(region_dangers[:5])}")
+        elif monster_types:
+            names = [m.get("name", str(m)) for m in monster_types[:4] if isinstance(m, dict)]
+            parts.append(f"常见怪物：{'、'.join(names)}")
+
+        # ── 本区驻留势力（大势力跨区域，注入理念/领袖/立场）──
+        factions = ws.get("factions", [])
+        active_factions = []
+        if factions:
+            for f in factions[:3]:
+                if isinstance(f, dict):
+                    parts.append(
+                        f"势力『{f.get('name','?')}』：{str(f.get('ideology') or f.get('description') or '')[:120]}"
+                        f"{'，领袖：' + str(f.get('leader')) if f.get('leader') else ''}"
+                    )
+            active_factions = [f.get("name", "") for f in factions[:3] if isinstance(f, dict)]
+
+        # ── 本区可交互 NPC（由势力/区域派生，保证与世界观一致）──
+        npcs = self._derive_region_npcs(region, active_factions)
+        if npcs:
+            parts.append(f"本区人物：{'；'.join(npcs)}")
+
+        return "\n".join(parts)
+
+    def _derive_region_npcs(self, region: Dict, active_factions: list) -> list:
+        """基于区域和势力派生本区NPC（规则化，不额外调LLM）"""
+        rname = (region.get("name") or "").lower()
+        key_locs = region.get("key_locations", [])
+        locs_str = "，".join(key_locs[:3]) if key_locs else rname
+
+        npcs = []
+        # 取主要势力名（大势力在此区域的代表）
+        main_faction = active_factions[0] if active_factions else "当地势力"
+
+        # 通用但贴合区域的NPC类型
+        if "forest" in rname or "wood" in rname or "magic" in rname:
+            npcs.append(f"{main_faction}在此镇守的队长")
+            npcs.append(f"{locs_str}的本地猎人/药师")
+        elif "water" in rname or "lake" in rname or "river" in rname or "iron" in rname:
+            npcs.append(f"{main_faction}在港口/矿区的管事")
+            npcs.append(f"{locs_str}的船夫/矿工")
+        elif "high" in rname or "wind" in rname or "sky" in rname:
+            npcs.append(f"{main_faction}在高空据点的观察员")
+            npcs.append(f"{locs_str}的风向导航员")
+        elif "shadow" in rname or "dark" in rname or "tenebr" in rname:
+            npcs.append(f"{main_faction}潜伏在此的密探")
+            npcs.append(f"{locs_str}的守夜人")
+        else:
+            npcs.append(f"{locs_str}的{main_faction}联络人")
+            npcs.append(f"{locs_str}的本地旅店老板")
+
+        # 若区域有首领/守护者描述，补充
+        return npcs[:3]
 
     def _build_character_context(self, state: Dict) -> str:
         """构建角色状态"""
@@ -141,6 +250,7 @@ class StoryAgent:
 7. 严格贴合世界观，不出现世界观外的元素
 8. 场景可以是：探索、遭遇战、NPC互动、陷阱、休息点、宝箱等
 9. 【地点连续性·最重要】新场景必须承接上一段行动的结果。如果上一段行动在某个地点发生，新场景必须在同一地点或合理延伸的相邻地点。绝不能凭空跳转到与上一段行动无关的地点。
+9a.【区域一致性·最重要】玩家当前区域已在【世界观】的"【当前区域】"列出。所有场景必须在当前区域的真实设定范围内发生：只能使用该区域的【关键地点】【本区危险】【本区人物】【驻留势力】，绝不能凭空发明该区域不存在的地点、势力或生物。
 10. 如果故事背景中显示角色刚到达某处，新场景应描述该处的环境，而非其他地方
 11. 如果地图信息中有NPC，场景中可以包含与NPC互动的选项
 12. 如果地图信息中有怪物，场景中可以包含战斗或躲避的选项
@@ -275,6 +385,8 @@ class StoryAgent:
 9. 如果行动涉及移动（如"前往XX"、"探索XX"），叙事应描述到达该处或移动过程，并在new_location中填写新地点
 10. 如果行动不涉及移动，new_location填null（保持原地）
 11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
+12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力），new_location 填新地点。
+13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
