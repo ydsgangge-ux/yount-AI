@@ -72,16 +72,31 @@ class StoryAgent:
         return "\n".join(parts)
 
     def _build_story_context(self, state: Dict) -> str:
-        """构建故事上下文（最近3段）"""
+        """构建故事上下文（最近5段，含行动和结果 + 未解决的剧情钩子）"""
         history = state.get("story", {}).get("history", [])
         if not history:
             return "（故事刚刚开始）"
 
-        recent = history[-3:]
+        recent = history[-5:]
         parts = []
         for h in recent:
-            parts.append(f"[第{h.get('chapter',1)}章] {h.get('summary', '')}")
-        return "\n".join(parts)
+            chapter = h.get('chapter', 1)
+            action = h.get('action', '')
+            summary = h.get('summary', '')
+            outcome = h.get('outcome', '')
+            if action:
+                parts.append(f"[第{chapter}章] 行动：{action}\n结果：{summary}（{outcome}）")
+            else:
+                parts.append(f"[第{chapter}章] {summary}")
+        text = "\n".join(parts)
+
+        # 附加未解决的剧情钩子（LLM 上一段返回的，必须承接）
+        hooks = state.get("story", {}).get("unresolved_hooks", [])
+        if hooks:
+            text += "\n\n【必须承接的剧情钩子】（叙事必须呼应这些未解决的悬念）"
+            for hook in hooks[-4:]:  # 最近 4 个钩子
+                text += f"\n- {hook}"
+        return text
 
     def generate_scene(self, state: Dict, map_context: str = "") -> Dict:
         """
@@ -108,7 +123,7 @@ class StoryAgent:
 【角色状态】
 {char_ctx}
 
-【故事背景】
+【故事背景】（最近行动记录）
 {story_ctx}
 当前：第{chapter}章 · 第{day}天
 当前地点：{current_location or '未知（刚开始冒险）'}
@@ -125,16 +140,17 @@ class StoryAgent:
 6. 不要透露选项背后的具体数值后果，保持信息不对称
 7. 严格贴合世界观，不出现世界观外的元素
 8. 场景可以是：探索、遭遇战、NPC互动、陷阱、休息点、宝箱等
-9. 地点连续性：如果上一场景在某地，新场景应该与该地点有关联（同区域、相邻区域、或合理的移动）
-10. 如果地图信息中有NPC，场景中可以包含与NPC互动的选项
-11. 如果地图信息中有怪物，场景中可以包含战斗或躲避的选项
-12. 如果地图信息中有BOSS，高风险选项可以触发BOSS战
+9. 【地点连续性·最重要】新场景必须承接上一段行动的结果。如果上一段行动在某个地点发生，新场景必须在同一地点或合理延伸的相邻地点。绝不能凭空跳转到与上一段行动无关的地点。
+10. 如果故事背景中显示角色刚到达某处，新场景应描述该处的环境，而非其他地方
+11. 如果地图信息中有NPC，场景中可以包含与NPC互动的选项
+12. 如果地图信息中有怪物，场景中可以包含战斗或躲避的选项
+13. 如果地图信息中有BOSS，高风险选项可以触发BOSS战
 
 返回JSON格式：
 {{
   "scene_id": "scene_唯一英文id",
-  "location": "具体地点名称（如：暗影森林深处、废弃神殿入口、城镇集市等）",
-  "description": "场景描述（2-4句，沉浸式，必须包含地点信息）",
+  "location": "具体地点名称（必须与上一段行动的地点一致或相邻）",
+  "description": "场景描述（2-4句，沉浸式，必须包含地点信息，必须承接上一段行动的结果）",
   "choices": [
     {{"id": "A", "text": "选项描述", "risk": "low/medium/high", "type": "combat/explore/social/escape/rest/trade"}},
     {{"id": "B", "text": "选项描述", "risk": "low/medium/high", "type": "combat/explore/social/escape/rest/trade"}},
@@ -184,10 +200,26 @@ class StoryAgent:
         返回: {"narrative": "叙事文本", "outcome": "...", "combat_triggered": bool}
         """
         char = state.get("character", {})
+        user_char = state.get("user_character", {})
         world_ctx = self._build_world_context(state)
         char_ctx = self._build_character_context(state)
         current_scene = state.get("story", {}).get("scene_description", "")
+        current_location = state.get("story", {}).get("current_location", "")
         choices = state.get("story", {}).get("choices", [])
+
+        # ── 识别行动主角（用户可操作 AI 角色：当行动明确提到焕灵时，由焕灵执行）──
+        # 玩家通过输入"焕灵查看..."等指令，让 AI 系统角色代为行动
+        _ai_name = char.get("name", "焕灵")
+        _user_name = user_char.get("name", "你") if user_char.get("class_name") else ""
+        _action_lower = (action or "").strip()
+        # 默认主角：用户（叙事用"你"或用户名）
+        _subject = _user_name or "你"
+        _ai_mentioned = False
+        if _ai_name and _ai_name in _action_lower:
+            _ai_mentioned = True
+            _subject = _ai_name  # 明确提到焕灵 → 由焕灵执行
+        # 角色行动提示（告诉 LLM 谁是主角）
+        _subject_hint = f"【行动主角】本行动由『{_subject}』执行。叙事必须以此角色为主语（用其名字或对应称谓称呼它），不要写成其它角色。"
 
         # 如果是选择预设选项，找到对应的选项描述
         action_desc = action
@@ -196,6 +228,20 @@ class StoryAgent:
                 if c.get("id") == action:
                     action_desc = c.get("text", action)
                     break
+
+        # 任务系统上下文：当前进行中任务 + 已有委托 offer 数量
+        from simlife.backend.quest_system import QuestSystem
+        quest_summary = QuestSystem.get_active_quests_summary(state)
+        offers_count = len(QuestSystem.get_available_offers(state))
+        # 玩家等级影响难度
+        char_level = char.get("level", 1)
+        # 玩家最近是否在和 NPC 对话 / 看告示板 / 听传闻
+        action_lower = (action_desc or "").lower()
+        quest_trigger_hints = any(k in action_lower for k in [
+            "酒馆", "老板", "委托", "任务", "告示", "传闻", "打听", "聊天",
+            "对话", "问", "找", "见面", "商人", "铁匠", "村长", "长老",
+            "tavern", "quest", "notice", "talk", "ask", "chat", "rumor",
+        ])
 
         prompt = f"""你是死亡模式人生模拟器的叙事Agent。角色做出了行动，请生成结果叙事。
 
@@ -206,10 +252,16 @@ class StoryAgent:
 {char_ctx}
 
 【当前场景】
-{current_scene}
+当前地点：{current_location or '未知'}
+场景描述：{current_scene}
 
 【角色行动】
 {action_desc}
+
+{_subject_hint}
+
+{("【当前任务】" + chr(10) + quest_summary) if quest_summary else ""}
+【已有待接任务委托】{offers_count} 个
 
 【设计原则】
 1. 叙事要简短有力（3-5句话），描述行动的结果
@@ -219,17 +271,62 @@ class StoryAgent:
 5. 如果是社交行动，描述对方反应
 6. 保持紧张感，但不透露具体数值
 7. 结尾留下"接下来会发生什么"的悬念
+8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。除非玩家明确说"前往XX/离开这里/去XX"，否则 new_location 必须填 null，叙事地点不得改变。绝不可在玩家只说"查看/清掉/攻击"等原地行动时擅自切换地点。
+9. 如果行动涉及移动（如"前往XX"、"探索XX"），叙事应描述到达该处或移动过程，并在new_location中填写新地点
+10. 如果行动不涉及移动，new_location填null（保持原地）
+11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
+
+【任务系统联动·重要】
+当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
+- 与 NPC 对话（酒馆老板、村长、商人、铁匠、长老等）
+- 查看告示板、打听消息、听传闻
+- 探索时发现需要帮助的场景
+- 当前已有任务完成，NPC 提出后续委托
+
+任务难度根据角色等级（Lv.{char_level}）决定：
+- 简单 (easy)：单一目标，如"杀3只史莱姆"——适合低等级
+- 普通 (normal)：2-3个目标，如"杀怪+收集"——适合中等级
+- 困难 (hard)：系列任务，多个 offer 共享同一个 series_id，按 series_order 递增（1,2,3...）——适合高等级或剧情节点
+
+限制规则：
+- 当前若已有 {offers_count} 个待接委托，且 ≥ 3 个，则不要再生成新委托（填 null）
+- 任务目标关键词必须是游戏内可触发的：kill（击杀敌人）, collect（获得物品）, visit_location（进入地点）, talk_npc（对话NPC）
+- rewards 要合理：easy 给 exp 20-40 / gold 10-30；normal 给 exp 40-80 / gold 30-60；hard 给 exp 80-200 / gold 50-150
+- 系列任务时，series_id 用英文蛇形命名（如 "series_dark_guild_probe"），series_title 给中文名
 
 返回JSON格式：
 {{
   "narrative": "结果叙事（3-5句）",
   "outcome_type": "combat_success/combat_fail/discovery/social_response/trap/escape/rest/trade/nothing",
   "next_tension": "low/medium/high",
-  "items_gained": ["物品名1", "物品名2"] 或 null,  // 角色获得的物品（装备名、药水等）
-  "gold_spent": 0 或 null,   // 花费的金币（购买、贿赂等）
-  "gold_gained": 0 或 null,  // 获得的金币（出售、奖励等）
-  "hp_change": 0 或 null,    // HP变化（正数恢复，负数受伤，不含战斗伤害）
-  "mp_change": 0 或 null     // MP变化（正数恢复，负数消耗）
+  "new_location": "新地点名称" 或 null,
+  "items_gained": ["物品名1", "物品名2"] 或 null,
+  "gold_spent": 0 或 null,
+  "gold_gained": 0 或 null,
+  "hp_change": 0 或 null,
+  "mp_change": 0 或 null,
+  "quest_offers": [
+    {{
+      "title": "任务标题（中文）",
+      "description": "任务描述（NPC说的话或委托内容）",
+      "quest_giver": "委托人名（如：酒馆老板）",
+      "location_hint": "任务地点提示（可选）",
+      "difficulty": "easy/normal/hard",
+      "series_id": "系列ID（仅系列任务填，否则 null）",
+      "series_order": 1,
+      "series_title": "系列名（仅系列任务首条填）",
+      "series_description": "系列简介（仅系列任务首条填）",
+      "objectives": [
+        {{"type": "kill/collect/visit_location/talk_npc", "target_keyword": "英文关键词（如 slime）", "count": 3}}
+      ],
+      "rewards": {{"exp": 40, "gold": 25}},
+      "auto_complete": true
+    }}
+  ] 或 null,
+  "spotted_enemies": [
+    {{"name": "敌人名（英文，如 Elemental Slime）", "count": 3}}
+  ] 或 null,
+  "unresolved_hooks": ["本段叙事留下的悬念1（一句话）", "悬念2"] 或 null
 }}
 
 物品/金币规则：
@@ -239,10 +336,29 @@ class StoryAgent:
 - 战斗伤害不要填在hp_change里，战斗系统会自动处理
 - 如果没有任何物品/金币变动，对应字段填null
 
+任务生成规则：
+- 仅在角色行动合理触发时才生成 quest_offers，否则填 null
+- 一次可生成 1-3 个 offer（系列任务时多个）
+- 不要重复生成已存在的委托（参考"已有待接任务委托"数量）
+
+spotted_enemies 规则（关键！）：
+- 当叙事描述中出现了具体的敌人（如"三只史莱姆吸附在岩壁上"），必须在 spotted_enemies 里列出这些敌人
+- name 用英文（如 Elemental Slime, Goblin Scout, Tidal Wraith），与叙事描述对应
+- count 是叙事中提到的数量
+- 玩家下回合说"清掉这些怪/扫荡小怪"时，战斗系统会用这些敌人，不会随机生成
+- 如果叙事没有提到具体敌人，填 null
+
+unresolved_hooks 规则：
+- 这段叙事留下的悬念，例如"地精独眼闪烁危险光芒"、"身后传来非人呼吸声"
+- 一句话一条，简短描述
+- 最多 2 条
+- 后续叙事必须承接这些钩子，不能装作没看到
+- 如果叙事没有留下悬念，填 null
+
 只返回JSON，不要其他文字。"""
 
         try:
-            response = self.llm.generate(prompt, max_tokens=500, temperature=0.8, thinking=False)
+            response = self.llm.generate(prompt, max_tokens=700, temperature=0.8, thinking=False)
             response = response.strip()
             # 清理 LLM 输出：提取 JSON
             result = self._extract_json(response)
@@ -257,11 +373,17 @@ class StoryAgent:
                 "narrative": str(result.get("narrative", "行动执行完毕。")),
                 "outcome_type": str(result.get("outcome_type", "nothing")),
                 "next_tension": str(result.get("next_tension", "medium")),
+                "new_location": result.get("new_location"),
                 "items_gained": result.get("items_gained"),
                 "gold_spent": result.get("gold_spent"),
                 "gold_gained": result.get("gold_gained"),
                 "hp_change": result.get("hp_change"),
                 "mp_change": result.get("mp_change"),
+                "quest_offers": result.get("quest_offers"),
+                # 叙事中提到的敌人（玩家"清掉这些怪"时用这些，不再随机生成）
+                "spotted_enemies": result.get("spotted_enemies"),
+                # 这段叙事留下的未解决钩子（后续必须承接）
+                "unresolved_hooks": result.get("unresolved_hooks"),
             }
         except Exception as e:
             print(f"[DeathMode] 行动处理失败: {e}")
@@ -311,6 +433,9 @@ class StoryAgent:
 {char_name}（{char.get('class_name', '战士')} Lv.{char.get('level', 1)}）{f'、{user_name}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）' if user_name else ''}
 当前HP: {char.get('hp', 0)}/{char.get('max_hp', 0)}
 
+【战斗地点】（叙事必须围绕此地点，不得跳转）
+{state.get('story', {}).get('current_location', '未知地点')}
+
 【战斗数据】
 敌人：{'、'.join(enemies) if enemies else '无'}
 回合数：{rounds}
@@ -329,6 +454,7 @@ class StoryAgent:
 4. 如果有掉落好装备，提一句收获
 5. 结尾暗示接下来可能发生的事
 6. 不要过于冗长，这是扫荡总结，不是详细战斗叙事
+7. 【地点严格约束】叙事场景必须围绕上述战斗地点描述，绝不可跳转到无关场景（如矿脉中战斗不得出现"海岸/礁石/海浪"等无关元素）
 
 只返回叙事文本，不要JSON。"""
 
