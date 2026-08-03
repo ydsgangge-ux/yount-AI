@@ -586,6 +586,16 @@ class DeathModeEngine:
                 result["exp_gained"] = total_exp
                 state["kill_count"] += len(enemies)
 
+                # 任务进度：击杀敌人触发（扫荡也记录）
+                try:
+                    _defeated = sweep_result.get("enemies_defeated", [])
+                    if _defeated:
+                        progressed = QuestSystem.record_progress(state, "kill", enemy_names=_defeated)
+                        if progressed:
+                            result["quest_progress"] = progressed
+                except Exception:
+                    pass
+
                 char["world_type"] = state.get("world_type", "fantasy")
                 growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
                 if growth_result["leveled_up"]:
@@ -666,6 +676,16 @@ class DeathModeEngine:
                 result["gold_gained"] = total_gold
                 result["exp_gained"] = total_exp
                 state["kill_count"] += len(enemies_list)
+
+                # 任务进度：击杀敌人触发（扫荡也记录）
+                try:
+                    _defeated = sweep_result.get("enemies_defeated", [])
+                    if _defeated:
+                        progressed = QuestSystem.record_progress(state, "kill", enemy_names=_defeated)
+                        if progressed:
+                            result["quest_progress"] = progressed
+                except Exception:
+                    pass
 
                 char["world_type"] = state.get("world_type", "fantasy")
                 growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
@@ -923,6 +943,16 @@ class DeathModeEngine:
                         result["gold_gained"] = total_gold
                         result["exp_gained"] = total_exp
                         state["kill_count"] += len(enemies_list)
+
+                        # 任务进度：击杀敌人触发（扫荡也记录）
+                        try:
+                            _defeated = sweep_result.get("enemies_defeated", [])
+                            if _defeated:
+                                progressed = QuestSystem.record_progress(state, "kill", enemy_names=_defeated)
+                                if progressed:
+                                    result["quest_progress"] = progressed
+                        except Exception:
+                            pass
 
                         char["world_type"] = state.get("world_type", "fantasy")
                         growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
