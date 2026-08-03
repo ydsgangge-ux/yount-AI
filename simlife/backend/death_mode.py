@@ -24,6 +24,7 @@ from simlife.backend.generator import get_llm_client
 from simlife.backend.world_map import WorldMap, MapGenerator
 from simlife.backend.npc_system import NPCSystem, NPCGenerator
 from simlife.backend.equipment_system import EquipmentSystem
+from simlife.backend.dungeon_agent import DungeonAgent, Dungeon
 
 
 class DeathModeEngine:
@@ -58,6 +59,8 @@ class DeathModeEngine:
         self.state: Optional[Dict] = None
         self.world_map: Optional[WorldMap] = None
         self.npc_system: Optional[NPCSystem] = None
+        self.dungeon_agent: Optional[DungeonAgent] = None
+        self._current_dungeon: Optional[Dungeon] = None
 
     def _log_action(self, entry_type: str, data: Dict):
         """记录一条行动日志（网页端展示用）"""
@@ -385,6 +388,8 @@ class DeathModeEngine:
             "ai_character_dead": state.get("ai_character_dead", False),
             "user_character_dead": state.get("user_character_dead", False),
             "action_log": state.get("action_log", [])[-20:],  # 最近20条给A层用
+            "in_dungeon": state.get("in_dungeon", False),
+            "dungeon": self.get_dungeon_info().get("dungeon") if state.get("in_dungeon") else None,
         }
 
     # ── 场景推进 ──────────────────────────────────────────
@@ -595,6 +600,15 @@ class DeathModeEngine:
                 state["in_combat"] = False
                 state["enemies"] = []
                 result["in_combat"] = False
+
+                # ── 地下城：清除房间 ──
+                if state.get("in_dungeon"):
+                    clear_result = self.clear_dungeon_room()
+                    if clear_result.get("success"):
+                        result["dungeon_room_cleared"] = True
+                        result["dungeon_completed"] = clear_result.get("dungeon_completed", False)
+                        if clear_result.get("loot"):
+                            result["dungeon_loot"] = clear_result["loot"]
             else:
                 # 扫荡未完全胜利（可能有强敌存活）
                 result["in_combat"] = True
@@ -663,6 +677,15 @@ class DeathModeEngine:
                 state["in_combat"] = False
                 state["enemies"] = []
                 result["in_combat"] = False
+
+                # ── 地下城：清除房间 ──
+                if state.get("in_dungeon"):
+                    clear_result = self.clear_dungeon_room()
+                    if clear_result.get("success"):
+                        result["dungeon_room_cleared"] = True
+                        result["dungeon_completed"] = clear_result.get("dungeon_completed", False)
+                        if clear_result.get("loot"):
+                            result["dungeon_loot"] = clear_result["loot"]
             else:
                 result["in_combat"] = True
                 result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
@@ -793,6 +816,15 @@ class DeathModeEngine:
                     state["in_combat"] = False
                     state["enemies"] = []
                     result["in_combat"] = False
+
+                    # ── 地下城：清除房间 ──
+                    if state.get("in_dungeon"):
+                        clear_result = self.clear_dungeon_room()
+                        if clear_result.get("success"):
+                            result["dungeon_room_cleared"] = True
+                            result["dungeon_completed"] = clear_result.get("dungeon_completed", False)
+                            if clear_result.get("loot"):
+                                result["dungeon_loot"] = clear_result["loot"]
                 else:
                     # 战斗继续
                     state["in_combat"] = True
@@ -2252,6 +2284,28 @@ class DeathModeEngine:
         self.world_map.current_region_id = target_region_id
         target.explored = True
 
+        # ── 地下城区域：触发 DungeonAgent ──
+        if target.region_type == "dungeon":
+            dungeon_result = self._enter_dungeon_region(state, target)
+            if dungeon_result.get("success"):
+                result = {
+                    "success": True,
+                    "region_name": target.name,
+                    "description": target.description,
+                    "danger_level": target.danger_level,
+                    "region_type": "dungeon",
+                    "is_dungeon": True,
+                    "dungeon": dungeon_result.get("dungeon_display"),
+                }
+                # 相邻区域
+                adjacent = self.world_map.get_adjacent_regions()
+                result["adjacent"] = [{"id": r.region_id, "name": r.name, "explored": r.explored} for r in adjacent]
+                self._log_action("enter_dungeon", {
+                    "dungeon_name": dungeon_result.get("dungeon_display", {}).get("dungeon_name", target.name),
+                })
+                self._save()
+                return result
+
         # 更新故事位置
         state["story"]["current_location"] = target.name
         state["story"]["scene_description"] = target.description
@@ -2292,6 +2346,214 @@ class DeathModeEngine:
         self._save()
 
         return result
+
+    # ── 地下城探索 ──────────────────────────────────────
+
+    def _ensure_dungeon_agent(self):
+        """惰性初始化 DungeonAgent"""
+        if self.dungeon_agent is None:
+            self.dungeon_agent = DungeonAgent(self.llm)
+        return self.dungeon_agent
+
+    def _enter_dungeon_region(self, state: Dict, region) -> Dict:
+        """进入地下城区域（触发 DungeonAgent）"""
+        agent = self._ensure_dungeon_agent()
+        char = state.get("character", {})
+        char_level = char.get("level", 1)
+        world_setting = state.get("world_setting", {})
+        world_type = state.get("world_type", "fantasy")
+
+        dungeon = agent.enter_dungeon(
+            region_id=region.region_id,
+            region_name=region.name,
+            world_type=world_type,
+            world_setting=world_setting,
+            char_level=char_level,
+        )
+        self._current_dungeon = dungeon
+
+        # 记录到状态
+        state["in_dungeon"] = True
+        state["dungeon_id"] = dungeon.dungeon_id
+
+        display = agent.get_dungeon_display(dungeon)
+        return {"success": True, "dungeon_display": display}
+
+    def move_to_dungeon_room(self, target_room_id: str) -> Dict:
+        """在地下城内移动到相邻房间"""
+        state = self._load()
+        if not state or not state.get("is_alive"):
+            return {"error": "game_not_active"}
+        if not state.get("in_dungeon"):
+            return {"error": "not_in_dungeon"}
+        if state.get("in_combat"):
+            return {"error": "in_combat", "message": "战斗中无法移动"}
+
+        agent = self._ensure_dungeon_agent()
+        dungeon_id = state.get("dungeon_id")
+        if not dungeon_id:
+            return {"error": "no_dungeon_id"}
+
+        dungeon = DungeonAgent.load_dungeon(dungeon_id)
+        if not dungeon:
+            return {"error": "dungeon_not_found"}
+
+        self._current_dungeon = dungeon
+        char = state.get("character", {})
+        char_level = char.get("level", 1)
+        world_setting = state.get("world_setting", {})
+
+        result = agent.move_to_room(dungeon, target_room_id, char_level, world_setting)
+        if result.get("success"):
+            self._log_action("dungeon_move", {
+                "room_name": result.get("room_name", ""),
+                "is_boss": result.get("is_boss", False),
+            })
+
+            # 如果房间有敌人且未清除，触发战斗
+            if result.get("has_enemies"):
+                room = dungeon.get_current_room()
+                if room:
+                    enemies = self._generate_dungeon_enemies(state, room, char_level)
+                    state["enemies"] = enemies
+                    state["in_combat"] = True
+                    result["enemies"] = [{"name": e.get("name", "?"), "level": e.get("level", 1)} for e in enemies]
+                    result["in_combat"] = True
+            else:
+                result["in_combat"] = False
+
+            # 如果房间有陷阱，触发伤害
+            room = dungeon.get_current_room()
+            if room and room.hazards:
+                for hazard in room.hazards:
+                    if not hazard.get("triggered"):
+                        self._trigger_dungeon_hazard(state, hazard)
+                        hazard["triggered"] = True
+                        result["hazard_triggered"] = hazard
+                        agent.save_dungeon(dungeon)
+
+            self._save()
+            return result
+        return result
+
+    def _generate_dungeon_enemies(self, state: Dict, room, char_level: int) -> list:
+        """根据房间配置生成敌人"""
+        world_setting = state.get("world_setting", {})
+        enemies = []
+        for cfg in room.enemies:
+            enemy_level = cfg.get("level", char_level)
+            enemy_type = cfg.get("type", "normal")
+            enemy = CombatSystem.generate_enemy(enemy_level, world_setting, enemy_type)
+            enemy["name"] = cfg.get("name", enemy.get("name", "敌人"))
+            enemies.append(enemy)
+        return enemies
+
+    def _trigger_dungeon_hazard(self, state: Dict, hazard: Dict):
+        """触发地下城陷阱"""
+        damage = hazard.get("damage", 5)
+        char = state.get("character", {})
+        user_char = state.get("user_character", {})
+        # 陷阱伤害两边都扣
+        if char.get("hp", 0) > 0:
+            char["hp"] = max(0, char["hp"] - damage)
+        if user_char and user_char.get("hp", 0) > 0:
+            user_char["hp"] = max(0, user_char["hp"] - damage)
+        self._log_action("dungeon_hazard", {
+            "hazard_name": hazard.get("name", "陷阱"),
+            "damage": damage,
+        })
+
+    def clear_dungeon_room(self) -> Dict:
+        """清除当前房间敌人后调用"""
+        state = self._load()
+        if not state.get("in_dungeon"):
+            return {"error": "not_in_dungeon"}
+
+        agent = self._ensure_dungeon_agent()
+        dungeon_id = state.get("dungeon_id")
+        dungeon = DungeonAgent.load_dungeon(dungeon_id) if dungeon_id else None
+        if not dungeon:
+            return {"error": "dungeon_not_found"}
+
+        room_id = dungeon.current_room_id
+        if room_id:
+            agent.clear_room_enemies(dungeon, room_id)
+            self._current_dungeon = dungeon
+
+            # 发放战利品
+            room = dungeon.get_room(room_id)
+            loot_result = {"gold": 0, "items": []}
+            if room and room.loot:
+                for item in room.loot:
+                    if item.get("type") == "gold":
+                        gold = item.get("amount", 0)
+                        char = state.get("character", {})
+                        char["gold"] = char.get("gold", 0) + gold
+                        loot_result["gold"] += gold
+                    elif item.get("type") == "equipment":
+                        loot_result["items"].append(item.get("name", "装备"))
+                    elif item.get("type") == "consumable":
+                        loot_result["items"].append(item.get("name", "药水"))
+
+            # 检查是否通关
+            if dungeon.completed:
+                state["in_dungeon"] = False
+                state["dungeon_id"] = None
+                self._log_action("dungeon_complete", {
+                    "dungeon_name": dungeon.name,
+                    "loot": loot_result,
+                })
+            else:
+                self._log_action("dungeon_room_cleared", {
+                    "room_name": room.name if room else "",
+                    "loot": loot_result,
+                })
+
+            self._save()
+            return {
+                "success": True,
+                "room_cleared": True,
+                "dungeon_completed": dungeon.completed,
+                "loot": loot_result,
+                "dungeon_display": agent.get_dungeon_display(dungeon) if not dungeon.completed else None,
+            }
+        return {"error": "no_current_room"}
+
+    def exit_dungeon(self) -> Dict:
+        """退出地下城（返回区域地图）"""
+        state = self._load()
+        state["in_dungeon"] = False
+        state["dungeon_id"] = None
+        state["in_combat"] = False
+        state["enemies"] = []
+        self._current_dungeon = None
+        self._save()
+        return {"success": True, "message": "已退出地下城"}
+
+    def get_dungeon_info(self) -> Dict:
+        """获取当前地下城信息"""
+        state = self._load()
+        if not state or not state.get("in_dungeon"):
+            return {"in_dungeon": False}
+
+        agent = self._ensure_dungeon_agent()
+        dungeon_id = state.get("dungeon_id")
+        if not dungeon_id:
+            return {"in_dungeon": False}
+
+        dungeon = DungeonAgent.load_dungeon(dungeon_id)
+        if not dungeon:
+            return {"in_dungeon": False, "error": "dungeon_not_found"}
+
+        self._current_dungeon = dungeon
+        display = agent.get_dungeon_display(dungeon)
+
+        # 附加战斗状态
+        display["in_combat"] = state.get("in_combat", False)
+        if state.get("in_combat"):
+            display["enemies"] = state.get("enemies", [])
+
+        return {"in_dungeon": True, "dungeon": display}
 
     def get_map_info(self) -> Dict:
         """获取当前地图信息"""

@@ -1545,6 +1545,31 @@ def api_death_mode_move(data: dict):
     return engine.move_to_region(target_id)
 
 
+@app.post("/api/death-mode/dungeon-move")
+def api_death_mode_dungeon_move(data: dict):
+    """在地下城内移动到相邻房间"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    target_room_id = data.get("room_id", "")
+    return engine.move_to_dungeon_room(target_room_id)
+
+
+@app.post("/api/death-mode/dungeon-exit")
+def api_death_mode_dungeon_exit():
+    """退出地下城"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.exit_dungeon()
+
+
+@app.get("/api/death-mode/dungeon-info")
+def api_death_mode_dungeon_info():
+    """获取当前地下城信息"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.get_dungeon_info()
+
+
 @app.post("/api/death-mode/npc-interact")
 def api_death_mode_npc_interact(data: dict):
     """与NPC交互"""

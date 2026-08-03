@@ -467,7 +467,7 @@ const DeathModeUI = {
           ${state.story?.current_location ? `<div>📍 ${state.story.current_location}</div>` : ''}
         </div>
 
-        ${this._renderMap(state)}
+        ${state.in_dungeon && state.dungeon ? this._renderDungeon(state) : this._renderMap(state)}
 
         ${ucHtml}
       `;
@@ -1043,6 +1043,99 @@ const DeathModeUI = {
           ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}
         </div>
       </div>`;
+  },
+
+  // ── 地下城探索 UI ──────────────────────────────────
+
+  _renderDungeon(state) {
+    const dg = state.dungeon;
+    if (!dg) return '';
+    const room = dg.current_room;
+    if (!room) return '';
+
+    const adjacentHtml = (dg.adjacent_rooms || []).map(r => {
+      const icon = r.is_boss ? '👑' : (r.visited ? '🚪' : '❓');
+      const status = r.cleared ? '✅' : '';
+      const name = r.visited ? r.name : '未知房间';
+      return `<button onclick="DeathModeUI.moveToDungeonRoom('${r.room_id}')"
+        style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;color:#c9d1d9;font-size:9px;min-width:60px;flex:1;">
+        <span style="font-size:16px;">${icon}</span>
+        <span style="margin-top:2px;text-align:center;">${name}</span>
+        ${status}
+      </button>`;
+    }).join('');
+
+    const enemiesHtml = room.has_enemies ? `
+      <div style="margin-top:6px;padding:4px 6px;background:#2a1515;border-radius:4px;border:1px solid #f85149;">
+        <div style="font-size:9px;color:#f85149;">⚠️ ${room.enemy_count}个敌人</div>
+      </div>` : '';
+
+    const hazardsHtml = room.has_hazards ? `
+      <div style="margin-top:4px;padding:4px 6px;background:#2a2015;border-radius:4px;border:1px solid #d29922;">
+        <div style="font-size:9px;color:#d29922;">⚠️ 暗藏机关</div>
+      </div>` : '';
+
+    const lootHtml = room.has_loot ? `
+      <div style="margin-top:4px;padding:4px 6px;background:#15201a;border-radius:4px;border:1px solid #3fb950;">
+        <div style="font-size:9px;color:#3fb950;">💰 有战利品</div>
+      </div>` : '';
+
+    const bossBadge = room.is_boss ? '<span style="color:#f85149;font-size:9px;">👑 BOSS房</span>' : '';
+    const clearedBadge = dg.boss_defeated ? '<span style="color:#3fb950;font-size:9px;">✅ 已通关</span>' : '';
+
+    return `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #30363d;">
+        <div style="font-size:10px;color:#d29922;margin-bottom:4px;text-align:center;">🕳️ ${dg.dungeon_name || '地下城'}</div>
+        ${dg.lore ? `<div style="font-size:8px;color:#8b949e;text-align:center;margin-bottom:4px;font-style:italic;">${dg.lore}</div>` : ''}
+        <div style="font-size:8px;color:#484f58;text-align:center;margin-bottom:6px;">
+          已探索 ${dg.visited_count}/${dg.total_rooms} 个房间 ${clearedBadge}
+        </div>
+        <div style="padding:6px;background:#161b22;border-radius:6px;border:1px solid #30363d;">
+          <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:2px;">📍 ${room.name} ${bossBadge}</div>
+          <div style="font-size:8px;color:#8b949e;line-height:1.4;">${room.description || ''}</div>
+          ${enemiesHtml}
+          ${hazardsHtml}
+          ${lootHtml}
+        </div>
+        ${adjacentHtml ? `
+          <div style="margin-top:6px;">
+            <div style="font-size:8px;color:#484f58;margin-bottom:3px;">可达房间：</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">${adjacentHtml}</div>
+          </div>` : ''}
+        <div style="margin-top:6px;text-align:center;">
+          <button onclick="DeathModeUI.exitDungeon()"
+            style="padding:3px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;font-size:9px;">
+            ← 返回区域地图
+          </button>
+        </div>
+      </div>`;
+  },
+
+  async moveToDungeonRoom(roomId) {
+    try {
+      const resp = await fetch('/api/death-mode/dungeon-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId }),
+      });
+      const data = await resp.json();
+      if (data.error) {
+        alert(data.message || data.error);
+        return;
+      }
+      await this._renderStatusPanel();
+    } catch (e) {
+      console.error('dungeon move error:', e);
+    }
+  },
+
+  async exitDungeon() {
+    try {
+      await fetch('/api/death-mode/dungeon-exit', { method: 'POST' });
+      await this._renderStatusPanel();
+    } catch (e) {
+      console.error('dungeon exit error:', e);
+    }
   },
 
   // ── 技能管理 ──────────────────────────────────────
