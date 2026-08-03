@@ -20,44 +20,75 @@ class StoryAgent:
 
     def _build_world_context(self, state: Dict) -> str:
         """构建世界观约束 — 区域驱动：
-        先注入全局核心设定（力量体系、世界背景），再注入玩家当前所在区域的
-        完整本地设定（地理/气候/地点/危险/驻留势力与NPC），让叙事严格贴合世界。
+        先注入全局核心设定（世界背景），再注入玩家当前所在区域的完整本地设定。
+        数据源优先级：
+          1) world_manager 的区域独立文件（<world_id>/regions/<region>.json）
+          2) 跨区域关系文件（<world_id>/relations.json）
+          3) 兼容旧结构（world_setting.geography.regions 内嵌）
         """
         ws = state.get("world_setting", {})
         if not ws or not isinstance(ws, dict):
             return ""
 
-        # ── 1. 确定玩家当前所在区域 ──
-        current_region = self._resolve_current_region(state, ws)
-
-        # ── 2. 全局核心设定（精简但保留运作规则，token 预算 ~350字）──
         parts = []
         parts.append(f"世界：{ws.get('world_name', '未知')}（{ws.get('world_type', '未知')}）")
 
+        # ── 1. 尝试从区域文件加载（新架构优先）──
+        region_ctx, relations_ctx = "", ""
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = ws.get("world_id", "")
+            if world_id:
+                # 确定当前区域
+                region_name = self._get_current_region_name(state, ws)
+                if region_name:
+                    region = wm.load_region(world_id, region_name)
+                    if region:
+                        region_ctx = wm.build_region_context(region, ws)
+                        # 注入跨区域关系
+                        relations = wm.load_relations(world_id)
+                        cur_rid = region.get("id", "")
+                        relations_ctx = wm.build_relations_context(relations, cur_rid)
+        except Exception:
+            region_ctx, relations_ctx = "", ""
+
+        # ── 2. 区域文件未命中时，回退到内嵌 regions ──
+        if not region_ctx:
+            current_region = self._resolve_current_region(state, ws)
+            if current_region:
+                region_ctx = self._build_region_context(current_region, ws)
+            else:
+                regions = ws.get("geography", {}).get("regions", [])
+                if regions:
+                    names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
+                    region_ctx = f"已知区域：{'、'.join(names)}"
+
+        # ── 3. 世界地理概述 ──
         geo_overview = ws.get("geography", {}).get("overview", "")
         if geo_overview:
             parts.append(f"【世界地理】{geo_overview[:200]}")
 
-        ps = ws.get("power_system", {})
-        if ps and isinstance(ps, dict):
-            ps_desc = ps.get("description", "")
-            # 力量体系：运作规则优先
-            if ps_desc:
-                parts.append(f"【力量体系·{ps.get('name','未知')}】{ps_desc[:220]}")
-            else:
-                parts.append(f"【力量体系】{ps.get('name','未知')}")
-
-        # ── 3. 当前区域的完整本地设定 ──
-        if current_region:
-            parts.append(self._build_region_context(current_region, ws))
-        else:
-            # 无明确区域时，列出所有区域名供参考
-            regions = ws.get("geography", {}).get("regions", [])
-            if regions:
-                names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
-                parts.append(f"已知区域：{'、'.join(names)}")
+        # ── 4. 当前区域本地设定 + 跨区域关系 ──
+        if region_ctx:
+            parts.append(region_ctx)
+        if relations_ctx:
+            parts.append(relations_ctx)
 
         return "\n".join(parts)
+
+    def _get_current_region_name(self, state: Dict, ws: Dict) -> str:
+        """获取当前所在区域名（候选：地点名/区域id/地图当前区域）"""
+        candidates = [
+            state.get("story", {}).get("current_location", ""),
+            state.get("world_map", {}).get("current_region", ""),
+            state.get("world_map", {}).get("current_region_id", ""),
+        ]
+        for c in candidates:
+            if c:
+                c = str(c).strip()
+                if c:
+                    return c
+        return ""
 
     def _resolve_current_region(self, state: Dict, ws: Dict):
         """根据当前状态解析玩家所在区域对象（优先匹配区域名）"""

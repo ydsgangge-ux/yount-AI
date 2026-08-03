@@ -276,3 +276,357 @@ def build_event_guide(world_setting: Dict) -> str:
     hints.append("日常探索、修炼、社交、经商等")
 
     return f"\n\n【世界观事件引导】角色生活在「{name}」中。{'; '.join(hints)}。事件要符合世界观，不要出现现代元素。"
+
+
+# ============================================================
+# 区域文件化存储（每个区域一个独立 JSON + 跨区域关系文件）
+# ============================================================
+# 目录结构：
+#   simlife/data/worlds/<world_id>/
+#   ├── world_setting.json     # 核心世界观（元信息 + 全局概述）
+#   ├── relations.json         # 跨区域关系（势力据点/跨区域剧情/人物行踪）
+#   └── regions/
+#       ├── <region_id>.json   # 每个区域独立设定（地理/气候/地点/怪物/NPC/势力据点）
+#       └── ...
+
+
+def get_region_dir(world_id: str) -> Path:
+    """获取某世界的区域数据目录"""
+    region_dir = get_worlds_dir() / world_id / "regions"
+    region_dir.mkdir(parents=True, exist_ok=True)
+    return region_dir
+
+
+def _slugify(name: str) -> str:
+    """将区域名转为安全的文件 id（英文小写下划线）"""
+    import re
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", (name or "").strip().lower()).strip("_")
+    return s or "region"
+
+
+def load_region(world_id: str, region_id: str) -> Optional[Dict]:
+    """加载单个区域的设定。region_id 可为区域名或文件 id，自动匹配。"""
+    if not region_id:
+        return None
+    region_dir = get_region_dir(world_id)
+    # 优先按 id 直接匹配
+    candidates = [
+        region_dir / f"{region_id}.json",
+        region_dir / f"{_slugify(region_id)}.json",
+    ]
+    # 再按名称模糊匹配
+    if not any(c.exists() for c in candidates):
+        slug = _slugify(region_id)
+        for f in region_dir.glob("*.json"):
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    r = json.load(fh)
+                if (r.get("id") or _slugify(r.get("name", ""))) == slug or \
+                   (r.get("name", "").lower() == (region_id or "").lower()):
+                    return r
+            except Exception:
+                continue
+        return None
+    file = next((c for c in candidates if c.exists()), None)
+    if not file:
+        return None
+    try:
+        with open(file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_region(world_id: str, region: Dict) -> str:
+    """保存区域设定到独立 JSON 文件，返回区域文件 id"""
+    if not region:
+        return ""
+    region_id = region.get("id") or _slugify(region.get("name", ""))
+    region["id"] = region_id
+    region_dir = get_region_dir(world_id)
+    with open(region_dir / f"{region_id}.json", "w", encoding="utf-8") as f:
+        json.dump(region, f, ensure_ascii=False, indent=2)
+    return region_id
+
+
+def list_regions(world_id: str) -> list:
+    """列出某世界的所有区域（含每个区域的基础信息）"""
+    region_dir = get_worlds_dir() / world_id / "regions"
+    if not region_dir.exists():
+        return []
+    out = []
+    for f in sorted(region_dir.glob("*.json")):
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                r = json.load(fh)
+            out.append({
+                "id": r.get("id", f.stem),
+                "name": r.get("name", f.stem),
+                "description": r.get("description", ""),
+                "climate": r.get("climate", ""),
+            })
+        except Exception:
+            continue
+    return out
+
+
+def get_relations_path(world_id: str) -> Path:
+    """跨区域关系文件路径"""
+    return get_worlds_dir() / world_id / "relations.json"
+
+
+def load_relations(world_id: str) -> Dict:
+    """加载跨区域关系文件（势力据点/跨区域剧情/人物行踪）"""
+    path = get_relations_path(world_id)
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_relations(world_id: str, relations: Dict):
+    """保存跨区域关系文件"""
+    with open(get_relations_path(world_id), "w", encoding="utf-8") as f:
+        json.dump(relations, f, ensure_ascii=False, indent=2)
+
+
+def build_region_context(region: Dict, world_setting: Dict = None, relations: Dict = None) -> str:
+    """
+    将单个区域的完整设定压缩成一段 context 文本，用于 LLM 注入。
+    区域驱动：玩家到哪个区域就注入该区域文件里的完整本地设定。
+    """
+    if not region:
+        return ""
+    parts = []
+    rname = region.get("name", "未知区域")
+    parts.append(f"【当前区域：{rname}】")
+
+    desc = region.get("description", "")
+    climate = region.get("climate", "")
+    if desc:
+        parts.append(f"环境：{desc[:260]}")
+    if climate:
+        parts.append(f"气候：{climate[:100]}")
+
+    key_locs = region.get("key_locations", [])
+    if key_locs:
+        parts.append(f"关键地点：{'、'.join(key_locs[:5])}")
+
+    # 本区危险/怪物（含特性）
+    dangers = region.get("dangers", [])
+    if dangers:
+        names = []
+        for d in dangers[:4]:
+            if isinstance(d, dict):
+                names.append(d.get("name", str(d)))
+            else:
+                names.append(str(d))
+        parts.append(f"本区危险：{'、'.join(names)}")
+
+    # 本区 NPC（标准 NPC 卡；无则按区域特征动态派生）
+    npcs = region.get("npcs", [])
+    if npcs:
+        npc_desc = []
+        for n in npcs[:4]:
+            if isinstance(n, dict):
+                npc_desc.append(f"{n.get('name','?')}（{n.get('role', n.get('description',''))}）")
+            else:
+                npc_desc.append(str(n))
+        parts.append(f"本区人物：{'；'.join(npc_desc)}")
+    else:
+        derived = _derive_region_npcs(region, world_setting)
+        if derived:
+            parts.append(f"本区人物：{'；'.join(derived)}")
+
+    # 本区驻留势力（跨区域关系 + 势力理念）
+    region_faction_ids = region.get("factions", [])
+    if world_setting:
+        factions = world_setting.get("factions", [])
+        # 若区域未显式标势力，尝试从 relations 推断
+        if not region_faction_ids:
+            region_faction_ids = _infer_region_factions(region, world_setting)
+        for fid in region_faction_ids[:3]:
+            for f in factions:
+                if isinstance(f, dict) and (f.get("id") == fid or _slugify(f.get("name", "")) == fid):
+                    parts.append(
+                        f"势力『{f.get('name','?')}』：{str(f.get('ideology') or f.get('description') or '')[:120]}"
+                        f"{'，领袖：' + str(f.get('leader')) if f.get('leader') else ''}"
+                    )
+                    break
+
+    return "\n".join(parts)
+
+
+def _derive_region_npcs(region: Dict, world_setting: Dict = None) -> list:
+    """基于区域特征动态派生本区 NPC（不额外调 LLM，规则化生成）"""
+    rname = (region.get("name") or "").lower()
+    key_locs = region.get("key_locations", [])
+    locs_str = "，".join(key_locs[:3]) if key_locs else region.get("name", "此区域")
+
+    # 优先取一个势力作为本地驻军/联络人
+    main_faction = "当地势力"
+    if world_setting:
+        factions = world_setting.get("factions", [])
+        inferred = _infer_region_factions(region, world_setting)
+        for fid in inferred[:1]:
+            for f in factions:
+                if isinstance(f, dict) and (f.get("id") == fid or _slugify(f.get("name", "")) == fid):
+                    main_faction = f.get("name", "当地势力")
+                    break
+
+    npcs = []
+    if "forest" in rname or "wood" in rname or "magic" in rname or "vale" in rname:
+        npcs.append(f"{main_faction}在此镇守的队长")
+        npcs.append(f"{locs_str}的本地猎人/药师")
+    elif "water" in rname or "lake" in rname or "river" in rname or "iron" in rname or "coast" in rname:
+        npcs.append(f"{main_faction}在港口/矿区的管事")
+        npcs.append(f"{locs_str}的船夫/矿工")
+    elif "high" in rname or "wind" in rname or "sky" in rname or "peak" in rname or "mount" in rname:
+        npcs.append(f"{main_faction}在高地据点的观察员")
+        npcs.append(f"{locs_str}的山地向导")
+    elif "shadow" in rname or "dark" in rname or "waste" in rname or "glac" in rname:
+        npcs.append(f"{main_faction}潜伏在此的密探")
+        npcs.append(f"{locs_str}的守夜人")
+    elif "thorn" in rname or "wall" in rname:
+        npcs.append(f"{main_faction}在边陲的戍卫队长")
+        npcs.append(f"{locs_str}的巡逻兵")
+    else:
+        npcs.append(f"{locs_str}的{main_faction}联络人")
+        npcs.append(f"{locs_str}的本地旅店老板")
+
+    return npcs[:3]
+
+
+def _infer_region_factions(region: Dict, world_setting: Dict) -> list:
+    """从势力描述中推断该区域关联的势力 id（按区域名/地点名匹配）"""
+    if not world_setting:
+        return []
+    factions = world_setting.get("factions", [])
+    if not factions:
+        return []
+    region_text = (region.get("name") or "") + " " + " ".join(region.get("key_locations", []))
+    region_text = region_text.lower()
+    found = []
+    for f in factions:
+        if not isinstance(f, dict):
+            continue
+        desc = str(f.get("description", "")) + " " + str(f.get("ideology", ""))
+        # 势力描述里提到区域名 → 关联
+        if any(w in desc.lower() for w in [region.get("name", "").lower()] if w):
+            found.append(f.get("id") or _slugify(f.get("name", "")))
+            continue
+        # 势力的 base/location 字段直接指定区域
+        fbase = str(f.get("base_region", "") or f.get("location", "") or f.get("base", "")).lower()
+        if fbase and fbase in region_text or region.get("name", "").lower() in fbase:
+            found.append(f.get("id") or _slugify(f.get("name", "")))
+    return found[:3]
+
+
+def build_relations_context(relations: Dict, current_region_id: str = "") -> str:
+    """
+    构建跨区域关系 context（势力据点 / 跨区域剧情 / 人物行踪）。
+    只注入与当前区域相关 + 全局重要关联，避免超长。
+    """
+    if not relations:
+        return ""
+    parts = []
+
+    # 跨区域势力据点
+    faction_presence = relations.get("faction_presence", {})
+    if faction_presence:
+        items = []
+        for fid, regions in faction_presence.items():
+            if isinstance(regions, list) and regions:
+                items.append(f"{fid}在{'、'.join(regions[:3])}")
+        if items:
+            parts.append(f"跨区域势力：{'；'.join(items[:6])}")
+
+    # 跨区域剧情线
+    storylines = relations.get("storylines", [])
+    if storylines:
+        lines = []
+        for s in storylines[:3]:
+            if isinstance(s, dict):
+                if current_region_id and s.get("regions") and current_region_id not in s.get("regions", []):
+                    continue
+                lines.append(f"{s.get('name','')}：{str(s.get('description',''))[:100]}")
+        if lines:
+            parts.append(f"跨区域剧情：{'；'.join(lines)}")
+
+    # 跨区域人物行踪
+    characters = relations.get("characters", [])
+    if characters:
+        chars = []
+        for c in characters[:3]:
+            if isinstance(c, dict):
+                if current_region_id and c.get("current_region") and c["current_region"] != current_region_id:
+                    continue
+                chars.append(f"{c.get('name','?')}（{c.get('role', c.get('description',''))}）")
+        if chars:
+            parts.append(f"跨区域人物：{'；'.join(chars)}")
+
+    return "\n".join(parts)
+
+
+def migrate_world_to_region_files(world_id: str) -> dict:
+    """
+    将旧版单文件 world_setting.json 迁移为：
+      regions/<region_id>.json  每个区域独立文件
+      relations.json            跨区域关系文件（势力据点/跨区域剧情）
+    返回迁移统计。
+    """
+    result = {"regions_migrated": 0, "relations_built": False, "errors": []}
+    setting = load_world_setting(world_id)
+    if not setting:
+        result["errors"].append("world_setting.json 不存在或加载失败")
+        return result
+
+    geo = setting.get("geography", {})
+    regions = geo.get("regions", [])
+    if not regions:
+        result["errors"].append("world_setting 中没有 regions")
+        return result
+
+    # 1. 每个区域写独立文件
+    region_map = {}
+    for r in regions:
+        if not isinstance(r, dict):
+            continue
+        rid = save_region(world_id, r)
+        region_map[rid] = r.get("name", rid)
+        result["regions_migrated"] += 1
+
+    # 2. 生成跨区域关系文件
+    relations = {}
+    # 势力据点：根据已有 factions 推断（每个势力可能跨多区域，这里尽量从数据推断）
+    # 若 factions 有 presence/regions 字段则用之，否则留空由后续扩展填充
+    factions = setting.get("factions", [])
+    faction_presence = {}
+    for f in factions:
+        if not isinstance(f, dict):
+            continue
+        fname = f.get("name", "")
+        # 势力名转区域id关键词
+        fid = _slugify(fname)
+        # 尝试从势力描述推断活动区域（关键词匹配区域名）
+        desc = str(f.get("description", "")) + " " + str(f.get("ideology", ""))
+        linked = []
+        for rid, rname in region_map.items():
+            if rname.lower() in desc.lower():
+                linked.append(rid)
+        if linked:
+            faction_presence[fid] = linked
+    relations["faction_presence"] = faction_presence
+    relations["storylines"] = []
+    relations["characters"] = []
+    save_relations(world_id, relations)
+    result["relations_built"] = True
+
+    # 3. 更新 world_setting.json：保留全局概述，去掉已迁移的区域明细（避免冗余）
+    geo.pop("regions", None)
+    save_world_setting(world_id, setting)
+
+    return result
