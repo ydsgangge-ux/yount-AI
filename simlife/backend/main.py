@@ -2170,11 +2170,34 @@ def api_death_mode_turn_in_quest(data: dict):
     if not ok:
         raise HTTPException(400, msg)
 
-    # 发放经验（金币已在 turn_in_quest 内加到 character）
-    if rewards.get("exp", 0) > 0:
-        character["world_type"] = state.get("world_type", "fantasy")
-        growth_result = GrowthSystem.gain_exp(character, rewards["exp"],
-                                              state.get("growth_mode", "normal"))
+    # 任务奖励：经验/金币同时发放给两位同伴（焕灵 + yount），并肩作战共享战果
+    exp_gain = rewards.get("exp", 0)
+    gold_gain = rewards.get("gold", 0)
+    world_type = state.get("world_type", "fantasy")
+    growth_mode = state.get("growth_mode", "normal")
+
+    # 两位角色的经验都加（turn_in_quest 内金币只加到 character，这里补另一位角色金币）
+    both_chars = []
+    _ai = state.get("character", {})
+    _user = state.get("user_character", {})
+    if _ai and _ai.get("class_name"):
+        both_chars.append(_ai)
+    if _user and _user.get("class_name"):
+        both_chars.append(_user)
+
+    for c in both_chars:
+        c["world_type"] = world_type
+        # 经验
+        if exp_gain > 0:
+            GrowthSystem.gain_exp(c, exp_gain, growth_mode)
+        # 金币：turn_in_quest 已给传入的 character 加了金币，这里只给"另一位"补
+        # 为避免重复，记录已加过的
+    if gold_gain > 0:
+        # character 已在 turn_in_quest 内获得金币，补发给另一位同伴
+        for c in both_chars:
+            if c is character:
+                continue
+            c["gold"] = c.get("gold", 0) + gold_gain
 
     # 把物品奖励加到共享背包
     if rewards.get("items"):
@@ -2191,6 +2214,17 @@ def api_death_mode_turn_in_quest(data: dict):
                 "level_req": 1,
                 "sell_price": 10,
             })
+
+    # 经验奖励说明（用于前端展示两人都获得）
+    reward_names = []
+    if exp_gain > 0:
+        reward_names.append(f"经验+{exp_gain}×2")
+    if gold_gain > 0:
+        reward_names.append(f"金币+{gold_gain}")
+    if rewards.get("items"):
+        reward_names.append("物品")
+    if reward_names:
+        msg += f"（{'，'.join(reward_names)}）"
 
     engine._save()
     return {"success": True, "message": msg, "rewards": rewards}
