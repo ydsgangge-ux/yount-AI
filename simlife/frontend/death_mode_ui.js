@@ -1917,6 +1917,13 @@ const DeathModeUI = {
       alert('标记失败: ' + e.message);
     }
   },
+
+  // ── 刷新主界面 ──────────────────────────────────────
+
+  refresh() {
+    this._renderStatusPanel();
+    this._loadAndRenderLog();
+  },
 };
 
 // 暴露到全局
