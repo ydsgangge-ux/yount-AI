@@ -60,3 +60,11 @@ simlife/data/event_history.json
 simlife/data/scheduled_events.json
 simlife/data/weather_cache.json
 simlife/data/last_online.json
+simlife/data/death_mode_state.json
+simlife/data/user_profile.json
+simlife/data/simlife_config.json
+simlife/data/story_influence.json
+simlife/data/story_cast.json
+simlife/data/story_archive/
+simlife/data/dungeons/
+simlife/data/worlds/

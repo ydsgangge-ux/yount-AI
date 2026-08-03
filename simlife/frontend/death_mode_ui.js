@@ -474,7 +474,7 @@ const DeathModeUI = {
 
         ${state.in_dungeon && state.dungeon ? this._renderDungeon(state) : this._renderMap(state)}
 
-        ${state.party_members && state.party_members.length > 0 ? this._renderParty(state) : ''}
+        ${this._renderParty(state)}
 
         ${ucHtml}
       `;
@@ -1131,11 +1131,9 @@ const DeathModeUI = {
 
   _renderParty(state) {
     const members = state.party_members || [];
-    if (!members.length) return '';
     const memberHtml = members.map(m => {
       const hpPct = m.max_hp > 0 ? Math.round(m.hp / m.max_hp * 100) : 0;
       const hpColor = hpPct > 50 ? '#3fb950' : hpPct > 25 ? '#d29922' : '#f85149';
-      const mpPct = m.max_mp > 0 ? Math.round(m.mp / m.max_mp * 100) : 0;
       const alive = m.is_alive !== false;
       return `
         <div style="padding:4px 6px;background:#161b22;border-radius:4px;border:1px solid #30363d;${alive?'':'opacity:0.5;'}">
@@ -1150,10 +1148,10 @@ const DeathModeUI = {
     return `
       <div style="margin-top:8px;padding-top:6px;border-top:1px dashed #30363d;">
         <div style="font-size:9px;color:#3fb950;margin-bottom:4px;">👥 队友 (${members.length}/3)</div>
-        <div style="display:flex;flex-direction:column;gap:4px;">${memberHtml}</div>
-        <div style="margin-top:4px;text-align:center;">
+        ${members.length ? `<div style="display:flex;flex-direction:column;gap:4px;">${memberHtml}</div>` : '<div style="font-size:8px;color:#484f58;text-align:center;padding:4px;">暂无队友</div>'}
+        ${members.length < 3 ? `<div style="margin-top:4px;text-align:center;">
           <button onclick="DeathModeUI.showRecruitPanel()" style="padding:2px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:8px;">+ 招募队友</button>
-        </div>
+        </div>` : ''}
       </div>`;
   },
 
