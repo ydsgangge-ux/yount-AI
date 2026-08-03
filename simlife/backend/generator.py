@@ -164,6 +164,49 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
         if not setting.get("world_type"):
             setting["world_type"] = world_type
 
+        # ── 标准 schema 清洗 + 区域文件化落盘 ──
+        try:
+            from simlife.backend import world_schema
+            from simlife.worlds import world_manager as wm
+
+            world_id = setting.get("world_id", "world")
+            # 清洗势力为标准结构
+            factions = setting.get("factions", [])
+            if factions and isinstance(factions, list):
+                setting["factions"] = [world_schema.sanitize_faction(f) for f in factions if isinstance(f, dict)]
+
+            # 拆分区域到独立文件（标准 schema 清洗后落盘）
+            regions = setting.get("geography", {}).get("regions", [])
+            region_name_map = {}
+            if regions and isinstance(regions, list):
+                for r in regions:
+                    if not isinstance(r, dict):
+                        continue
+                    # 补充标准字段：NPC、势力关联在后续由用户/扩展填充，这里先落盘基础
+                    rid = wm.save_region(world_id, r)
+                    region_name_map[rid] = r.get("name", rid)
+                # 从核心设定中移除已落盘的 regions 明细，避免重复
+                setting.get("geography", {}).pop("regions", None)
+                setting["geography"]["region_ids"] = list(region_name_map.keys())
+
+            # 生成/清洗跨区域关系文件（势力据点自动推断）
+            relations = wm.load_relations(world_id) or {}
+            if not relations.get("faction_presence"):
+                presence = {}
+                for f in setting.get("factions", []):
+                    fid = f.get("id", "")
+                    rids = f.get("regions", []) or []
+                    if fid and rids:
+                        presence[fid] = rids
+                relations["faction_presence"] = presence
+            if not relations.get("storylines"):
+                relations["storylines"] = []
+            if not relations.get("characters"):
+                relations["characters"] = []
+            wm.save_relations(world_id, relations)
+        except Exception as e:
+            print(f"[SimLife] 世界观标准化落盘失败: {e}")
+
         return setting
     except Exception as e:
         print(f"[SimLife] 世界观生成失败: {e}")

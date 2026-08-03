@@ -338,9 +338,14 @@ def load_region(world_id: str, region_id: str) -> Optional[Dict]:
 
 
 def save_region(world_id: str, region: Dict) -> str:
-    """保存区域设定到独立 JSON 文件，返回区域文件 id"""
+    """保存区域设定到独立 JSON 文件，返回区域文件 id（自动用标准 schema 清洗）"""
     if not region:
         return ""
+    try:
+        from simlife.backend import world_schema
+        region = world_schema.sanitize_region(region)
+    except Exception:
+        pass
     region_id = region.get("id") or _slugify(region.get("name", ""))
     region["id"] = region_id
     region_dir = get_region_dir(world_id)
@@ -388,7 +393,12 @@ def load_relations(world_id: str) -> Dict:
 
 
 def save_relations(world_id: str, relations: Dict):
-    """保存跨区域关系文件"""
+    """保存跨区域关系文件（自动用标准 schema 清洗）"""
+    try:
+        from simlife.backend import world_schema
+        relations = world_schema.sanitize_relations(relations)
+    except Exception:
+        pass
     with open(get_relations_path(world_id), "w", encoding="utf-8") as f:
         json.dump(relations, f, ensure_ascii=False, indent=2)
 
