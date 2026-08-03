@@ -449,6 +449,11 @@ const DeathModeUI = {
           <button onclick="DeathModeUI.showSkillPanel('ai')" style="width:100%;padding:6px;background:#1a3a1a;border:1px solid #3fb950;border-radius:6px;color:#3fb950;cursor:pointer;font-size:11px;">⚔️ 技能管理（AI）</button>
         </div>
 
+        <div style="display:flex;gap:4px;margin-bottom:8px;">
+          <button onclick="DeathModeUI.showQuestPanel()" id="dm-quest-btn" style="flex:1;padding:6px;background:#2d1a3a;border:1px solid #a371f7;border-radius:6px;color:#a371f7;cursor:pointer;font-size:11px;">📜 任务</button>
+          <button onclick="DeathModeUI.showNewsPanel()" id="dm-news-btn" style="flex:1;padding:6px;background:#3a2d1a;border:1px solid #d29922;border-radius:6px;color:#d29922;cursor:pointer;font-size:11px;">📰 酒馆新闻</button>
+        </div>
+
         <div style="margin-bottom:8px;">
           <div style="font-size:10px;color:#58a6ff;margin-bottom:3px;">装备</div>
           ${eqHtml}
@@ -468,6 +473,8 @@ const DeathModeUI = {
         </div>
 
         ${state.in_dungeon && state.dungeon ? this._renderDungeon(state) : this._renderMap(state)}
+
+        ${state.party_members && state.party_members.length > 0 ? this._renderParty(state) : ''}
 
         ${ucHtml}
       `;
@@ -1056,9 +1063,9 @@ const DeathModeUI = {
     const adjacentHtml = (dg.adjacent_rooms || []).map(r => {
       const icon = r.is_boss ? '👑' : (r.visited ? '🚪' : '❓');
       const status = r.cleared ? '✅' : '';
-      const name = r.visited ? r.name : '未知房间';
+      const name = r.visited ? r.name : '未知';
       return `<button onclick="DeathModeUI.moveToDungeonRoom('${r.room_id}')"
-        style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;color:#c9d1d9;font-size:9px;min-width:60px;flex:1;">
+        style="display:flex;flex-direction:column;align-items:center;padding:6px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;color:#c9d1d9;font-size:9px;min-width:60px;flex:1;">
         <span style="font-size:16px;">${icon}</span>
         <span style="margin-top:2px;text-align:center;">${name}</span>
         ${status}
@@ -1069,33 +1076,26 @@ const DeathModeUI = {
       <div style="margin-top:6px;padding:4px 6px;background:#2a1515;border-radius:4px;border:1px solid #f85149;">
         <div style="font-size:9px;color:#f85149;">⚠️ ${room.enemy_count}个敌人</div>
       </div>` : '';
-
     const hazardsHtml = room.has_hazards ? `
       <div style="margin-top:4px;padding:4px 6px;background:#2a2015;border-radius:4px;border:1px solid #d29922;">
         <div style="font-size:9px;color:#d29922;">⚠️ 暗藏机关</div>
       </div>` : '';
-
     const lootHtml = room.has_loot ? `
       <div style="margin-top:4px;padding:4px 6px;background:#15201a;border-radius:4px;border:1px solid #3fb950;">
         <div style="font-size:9px;color:#3fb950;">💰 有战利品</div>
       </div>` : '';
-
-    const bossBadge = room.is_boss ? '<span style="color:#f85149;font-size:9px;">👑 BOSS房</span>' : '';
-    const clearedBadge = dg.boss_defeated ? '<span style="color:#3fb950;font-size:9px;">✅ 已通关</span>' : '';
+    const bossBadge = room.is_boss ? '<span style="color:#f85149;font-size:9px;">👑 BOSS</span>' : '';
+    const clearedBadge = dg.boss_defeated ? '<span style="color:#3fb950;font-size:9px;">✅ 通关</span>' : '';
 
     return `
       <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #30363d;">
         <div style="font-size:10px;color:#d29922;margin-bottom:4px;text-align:center;">🕳️ ${dg.dungeon_name || '地下城'}</div>
-        ${dg.lore ? `<div style="font-size:8px;color:#8b949e;text-align:center;margin-bottom:4px;font-style:italic;">${dg.lore}</div>` : ''}
-        <div style="font-size:8px;color:#484f58;text-align:center;margin-bottom:6px;">
-          已探索 ${dg.visited_count}/${dg.total_rooms} 个房间 ${clearedBadge}
-        </div>
+        ${dg.faction_ecology ? `<div style="font-size:8px;color:#8b949e;text-align:center;margin-bottom:4px;font-style:italic;">${dg.faction_ecology}</div>` : ''}
+        <div style="font-size:8px;color:#484f58;text-align:center;margin-bottom:6px;">已探索 ${dg.visited_count}/${dg.total_rooms} ${clearedBadge}</div>
         <div style="padding:6px;background:#161b22;border-radius:6px;border:1px solid #30363d;">
           <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:2px;">📍 ${room.name} ${bossBadge}</div>
           <div style="font-size:8px;color:#8b949e;line-height:1.4;">${room.description || ''}</div>
-          ${enemiesHtml}
-          ${hazardsHtml}
-          ${lootHtml}
+          ${enemiesHtml}${hazardsHtml}${lootHtml}
         </div>
         ${adjacentHtml ? `
           <div style="margin-top:6px;">
@@ -1103,10 +1103,7 @@ const DeathModeUI = {
             <div style="display:flex;gap:4px;flex-wrap:wrap;">${adjacentHtml}</div>
           </div>` : ''}
         <div style="margin-top:6px;text-align:center;">
-          <button onclick="DeathModeUI.exitDungeon()"
-            style="padding:3px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;font-size:9px;">
-            ← 返回区域地图
-          </button>
+          <button onclick="DeathModeUI.exitDungeon()" style="padding:3px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;font-size:9px;">← 返回地图</button>
         </div>
       </div>`;
   },
@@ -1114,28 +1111,100 @@ const DeathModeUI = {
   async moveToDungeonRoom(roomId) {
     try {
       const resp = await fetch('/api/death-mode/dungeon-move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_id: roomId }),
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({room_id: roomId}),
       });
       const data = await resp.json();
-      if (data.error) {
-        alert(data.message || data.error);
-        return;
-      }
+      if (data.error) { alert(data.message || data.error); return; }
       await this._renderStatusPanel();
-    } catch (e) {
-      console.error('dungeon move error:', e);
-    }
+    } catch(e) { console.error('dungeon move:', e); }
   },
 
   async exitDungeon() {
     try {
-      await fetch('/api/death-mode/dungeon-exit', { method: 'POST' });
+      await fetch('/api/death-mode/dungeon-exit', {method:'POST'});
       await this._renderStatusPanel();
-    } catch (e) {
-      console.error('dungeon exit error:', e);
-    }
+    } catch(e) { console.error('dungeon exit:', e); }
+  },
+
+  // ── 队友 UI ──────────────────────────────────────
+
+  _renderParty(state) {
+    const members = state.party_members || [];
+    if (!members.length) return '';
+    const memberHtml = members.map(m => {
+      const hpPct = m.max_hp > 0 ? Math.round(m.hp / m.max_hp * 100) : 0;
+      const hpColor = hpPct > 50 ? '#3fb950' : hpPct > 25 ? '#d29922' : '#f85149';
+      const mpPct = m.max_mp > 0 ? Math.round(m.mp / m.max_mp * 100) : 0;
+      const alive = m.is_alive !== false;
+      return `
+        <div style="padding:4px 6px;background:#161b22;border-radius:4px;border:1px solid #30363d;${alive?'':'opacity:0.5;'}">
+          <div style="font-size:9px;color:#c9d1d9;">${m.class_icon||'🧑'} ${m.name} <span style="color:#8b949e;font-size:8px;">Lv${m.level} ${m.class_name}</span>${alive?'':' <span style="color:#f85149;">倒下</span>'}</div>
+          <div style="font-size:7px;color:${hpColor};">HP ${m.hp}/${m.max_hp} (${hpPct}%)</div>
+          <div style="height:3px;background:#0d1117;border-radius:2px;margin-top:1px;">
+            <div style="height:3px;background:${hpColor};border-radius:2px;width:${hpPct}%;"></div>
+          </div>
+          <div style="font-size:7px;color:#58a6ff;">MP ${m.mp}/${m.max_mp}</div>
+        </div>`;
+    }).join('');
+    return `
+      <div style="margin-top:8px;padding-top:6px;border-top:1px dashed #30363d;">
+        <div style="font-size:9px;color:#3fb950;margin-bottom:4px;">👥 队友 (${members.length}/3)</div>
+        <div style="display:flex;flex-direction:column;gap:4px;">${memberHtml}</div>
+        <div style="margin-top:4px;text-align:center;">
+          <button onclick="DeathModeUI.showRecruitPanel()" style="padding:2px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:8px;">+ 招募队友</button>
+        </div>
+      </div>`;
+  },
+
+  async showRecruitPanel() {
+    try {
+      const resp = await fetch('/api/death-mode/recruit-options');
+      const data = await resp.json();
+      if (data.error) { alert(data.message || data.error); return; }
+      const options = data.options || [];
+
+      const overlay = document.createElement('div');
+      overlay.id = 'recruit-panel';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      overlay.innerHTML = `
+        <div style="background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:480px;width:90%;color:#c9d1d9;">
+          <h3 style="margin:0 0 16px;color:#3fb950;font-size:18px;">招募队友 (${data.current_count}/${data.max_count})</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${options.map(o => `
+              <div class="recruit-card" data-id="${o.member_id}" style="display:flex;align-items:center;gap:10px;padding:10px;background:#161b22;border:2px solid #30363d;border-radius:8px;cursor:pointer;">
+                <span style="font-size:28px;">${o.class_icon||'🧑'}</span>
+                <div style="flex:1;">
+                  <div style="font-weight:bold;color:#c9d1d9;font-size:13px;">${o.name}</div>
+                  <div style="font-size:11px;color:#8b949e;">Lv${o.level} ${o.class_name}</div>
+                  <div style="font-size:10px;color:#58a6ff;">HP:${o.max_hp} MP:${o.max_mp}</div>
+                </div>
+                <button onclick="DeathModeUI.recruitMember('${o.member_id}')" style="padding:4px 12px;background:#238636;border:none;border-radius:6px;color:white;cursor:pointer;font-size:11px;">招募</button>
+              </div>
+            `).join('')}
+          </div>
+          <button onclick="document.getElementById('recruit-panel').remove()" style="width:100%;margin-top:12px;padding:8px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;cursor:pointer;">关闭</button>
+        </div>`;
+      document.body.appendChild(overlay);
+      // 缓存options供招募使用
+      this._recruitOptions = options;
+    } catch(e) { console.error('recruit panel:', e); }
+  },
+
+  async recruitMember(memberId) {
+    const option = (this._recruitOptions || []).find(o => o.member_id === memberId);
+    if (!option) return;
+    try {
+      const resp = await fetch('/api/death-mode/recruit', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({member: option}),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.message || data.error); return; }
+      const panel = document.getElementById('recruit-panel');
+      if (panel) panel.remove();
+      await this._renderStatusPanel();
+    } catch(e) { console.error('recruit:', e); }
   },
 
   // ── 技能管理 ──────────────────────────────────────
@@ -1211,9 +1280,11 @@ const DeathModeUI = {
       const skillCount = learnData.skill_count || 0;
       const maxSkills = learnData.max_skills || 10;
       const remainingSlots = learnData.remaining_slots || 0;
+      const skillPoints = learnData.skill_points || 0;
+      const allSkills = learnData.learnable_skills || [];
       const learnable = allSkills.filter(item => {
         // 只显示可学的（未学过的）
-        return !learnedSkills.includes(item.skill.id);
+        return item.skill && !learnedSkills.includes(item.skill.id);
       });
 
       // 觉醒技能
@@ -1241,6 +1312,10 @@ const DeathModeUI = {
           <div style="font-size:10px;color:#8b949e;margin-top:4px;">
             剩余可学 ${remainingSlots} 个 · 觉醒 ${totalAwakeningSlots} 个槽位
             <span style="font-size:9px;color:#484f58;margin-left:4px;">（可跨职业学习任意技能）</span>
+          </div>
+          <div style="font-size:11px;color:${skillPoints > 0 ? '#3fb950' : '#f85149'};margin-top:6px;font-weight:600;">
+            📚 技能学习点：${skillPoints}
+            <span style="font-size:9px;color:#8b949e;font-weight:normal;">（每升2级获得1个，学习技能时消耗1个）</span>
           </div>
         </div>
       `;
@@ -1317,15 +1392,19 @@ const DeathModeUI = {
 
       // ── 可学技能 ──
       if (remainingSlots > 0 && learnable.length > 0) {
+        const canLearn = skillPoints > 0;
         html += `<div style="margin-bottom:12px;">
-          <div style="font-size:12px;color:#d29922;margin-bottom:6px;font-weight:600;">📚 可学习技能（${learnable.length}个）</div>
+          <div style="font-size:12px;color:#d29922;margin-bottom:6px;font-weight:600;">📚 可学习技能（${learnable.length}个）${canLearn ? '' : '<span style="color:#f85149;font-size:10px;margin-left:8px;">⚠️ 技能点不足，升级获得</span>'}</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;">`;
         for (const item of learnable) {
           const skill = item.skill;
           const typeColor = skill.type === 'magic' ? '#d29922' : skill.type === 'heal' ? '#3fb950' : skill.type === 'buff' ? '#58a6ff' : '#c9d1d9';
           const hasReq = Object.keys(skill.req_stats || {}).length > 0;
           const reqText = hasReq ? Object.entries(skill.req_stats).map(([k,v]) => `${k}:${v}`).join(' ') : '';
-          html += `<div style="padding:6px;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:11px;">
+          const btnStyle = canLearn
+            ? `onclick="DeathModeUI._learnSkill('${skill.id}','${who}')" style="flex-shrink:0;padding:3px 8px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;margin-left:4px;"`
+            : `disabled style="flex-shrink:0;padding:3px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#484f58;cursor:not-allowed;font-size:10px;margin-left:4px;"`;
+          html += `<div style="padding:6px;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:11px;${canLearn ? '' : 'opacity:0.6;'}">
             <div style="display:flex;justify-content:space-between;align-items:start;">
               <div style="flex:1;min-width:0;">
                 <div style="font-weight:bold;color:#c9d1d9;">${item.class_icon} ${skill.name}</div>
@@ -1338,7 +1417,7 @@ const DeathModeUI = {
                 <div style="font-size:9px;color:#484f58;margin-top:1px;">${skill.description || ''}</div>
                 ${reqText ? `<div style="font-size:8px;color:#d29922;margin-top:1px;">需求: ${reqText}</div>` : ''}
               </div>
-              <button onclick="DeathModeUI._learnSkill('${skill.id}','${who}')" style="flex-shrink:0;padding:3px 8px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;margin-left:4px;">学习</button>
+              <button ${btnStyle}>${canLearn ? '学习' : '🔒'}</button>
             </div>
           </div>`;
         }
@@ -1359,12 +1438,21 @@ const DeathModeUI = {
         <div style="font-size:12px;color:#d29922;margin-bottom:6px;font-weight:600;">💡 觉醒技能（${totalAwakeningSlots}个槽位）</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;">`;
       for (const slot of awakeningSlots) {
+        const reqLevel = slot.req_level || 40;
+        const unlocked = slot.unlocked !== false;
         if (slot.is_empty) {
-          html += `<div style="padding:8px;background:#0d1117;border:1px dashed #30363d;border-radius:6px;text-align:center;">
-            <div style="font-size:10px;color:#484f58;">槽位 ${slot.slot_index + 1}</div>
-            <div style="font-size:9px;color:#484f58;margin:4px 0;">空</div>
-            <button onclick="DeathModeUI._showAwakeningForm(${slot.slot_index},'${who}')" style="padding:3px 8px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">创建</button>
-          </div>`;
+          if (unlocked) {
+            html += `<div style="padding:8px;background:#0d1117;border:1px dashed #30363d;border-radius:6px;text-align:center;">
+              <div style="font-size:10px;color:#484f58;">槽位 ${slot.slot_index + 1}</div>
+              <div style="font-size:9px;color:#484f58;margin:4px 0;">空</div>
+              <button onclick="DeathModeUI._showAwakeningForm(${slot.slot_index},'${who}')" style="padding:3px 8px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">创建</button>
+            </div>`;
+          } else {
+            html += `<div style="padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;text-align:center;opacity:0.6;">
+              <div style="font-size:10px;color:#484f58;">槽位 ${slot.slot_index + 1}</div>
+              <div style="font-size:9px;color:#f85149;margin:4px 0;">🔒 需Lv.${reqLevel}</div>
+            </div>`;
+          }
         } else {
           const sk = slot.skill;
           const typeColor = sk.type === 'magic' ? '#d29922' : sk.type === 'heal' ? '#3fb950' : sk.type === 'buff' ? '#58a6ff' : '#c9d1d9';
@@ -1428,7 +1516,8 @@ const DeathModeUI = {
         alert('学习失败: ' + (err.detail || err.message || '未知错误'));
         return;
       }
-      alert('技能学习成功！');
+      const data = await resp.json();
+      alert(`技能学习成功！\n剩余技能学习点：${data.skill_points}`);
       this._renderSkillContent(who);
     } catch (e) {
       alert('学习失败: ' + e.message);
@@ -1597,6 +1686,237 @@ const DeathModeUI = {
       this._renderSkillContent(who);
     } catch (e) {
       alert('保存失败: ' + e.message);
+    }
+  },
+
+  // ── 任务系统 ──────────────────────────────────────
+
+  async showQuestPanel() {
+    const old = document.getElementById('dm-quest-panel');
+    if (old) old.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-quest-panel';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #a371f7;border-radius:16px;padding:20px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <h3 style="margin:0;color:#a371f7;font-size:16px;">📜 任务面板</h3>
+          <button onclick="this.closest('#dm-quest-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
+        </div>
+        <div id="dm-quest-content" style="text-align:center;color:#8b949e;font-size:12px;">加载中...</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    try {
+      const [activeResp, availableResp, seriesResp] = await Promise.all([
+        fetch('/api/death-mode/quests/active'),
+        fetch('/api/death-mode/quests/available?who=ai'),
+        fetch('/api/death-mode/quests/series'),
+      ]);
+      const activeData = await activeResp.json();
+      const availableData = await availableResp.json();
+      const seriesData = await seriesResp.json();
+
+      const active = activeData.active_quests || [];
+      const available = availableData.available_quests || [];
+      const series = seriesData.series || [];
+      const completedIds = activeData.completed_ids || [];
+
+      let html = '';
+
+      // 系列任务总览
+      if (series.length > 0) {
+        html += `<div style="margin-bottom:14px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;">
+          <div style="font-size:12px;color:#a371f7;font-weight:600;margin-bottom:8px;">📖 系列任务</div>`;
+        for (const s of series) {
+          const pct = s.total_quests > 0 ? (s.completed_quests / s.total_quests * 100) : 0;
+          html += `<div style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#c9d1d9;">
+              <span>${s.title}</span>
+              <span style="color:#8b949e;">${s.completed_quests}/${s.total_quests}</span>
+            </div>
+            <div style="font-size:10px;color:#8b949e;margin:2px 0;">${s.description}</div>
+            <div style="height:3px;background:#21262d;border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:${pct}%;background:#a371f7;"></div>
+            </div>
+          </div>`;
+        }
+        html += `</div>`;
+      }
+
+      // 进行中任务
+      html += `<div style="margin-bottom:14px;">
+        <div style="font-size:12px;color:#3fb950;font-weight:600;margin-bottom:6px;">▶ 进行中任务（${active.length}）</div>`;
+      if (active.length === 0) {
+        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无进行中任务，去任务板接一个吧</div>`;
+      } else {
+        for (const q of active) {
+          const objectives = (q.objectives || []).map(o => {
+            const pct = o.count > 0 ? Math.min(100, o.progress / o.count * 100) : 0;
+            const done = o.progress >= o.count;
+            return `<div style="margin-top:4px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:${done ? '#3fb950' : '#c9d1d9'};">
+                <span>${o.type === 'kill' ? '击杀' : o.type === 'collect' ? '收集' : o.type === 'visit_location' ? '到达' : '对话'}: ${o.target_keyword}</span>
+                <span>${o.progress}/${o.count} ${done ? '✓' : ''}</span>
+              </div>
+              <div style="height:3px;background:#21262d;border-radius:2px;overflow:hidden;margin-top:2px;">
+                <div style="height:100%;width:${pct}%;background:${done ? '#3fb950' : '#58a6ff'};"></div>
+              </div>
+            </div>`;
+          }).join('');
+          const allDone = (q.objectives || []).every(o => o.progress >= o.count);
+          html += `<div style="padding:10px;background:#0d1117;border:1px solid ${allDone ? '#3fb950' : '#30363d'};border-radius:8px;margin-bottom:6px;">
+            <div style="font-size:12px;font-weight:bold;color:#c9d1d9;">${q.title}${allDone ? ' <span style="color:#3fb950;font-size:10px;">✓ 可交付</span>' : ''}</div>
+            <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
+            ${objectives}
+            <div style="font-size:9px;color:#d29922;margin-top:4px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}${(q.rewards||{}).items ? ' · 物品' : ''}</div>
+            ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="margin-top:6px;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
+          </div>`;
+        }
+      }
+      html += `</div>`;
+
+      // 可接任务
+      html += `<div style="margin-bottom:14px;">
+        <div style="font-size:12px;color:#d29922;font-weight:600;margin-bottom:6px;">📋 可接任务（${available.length}）</div>`;
+      if (available.length === 0) {
+        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无可接任务（继续探索世界，或关注酒馆新闻）</div>`;
+      } else {
+        for (const q of available) {
+          html += `<div style="padding:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:6px;">
+            <div style="display:flex;justify-content:space-between;align-items:start;">
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:12px;font-weight:bold;color:#c9d1d9;">${q.title}</div>
+                <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
+                <div style="font-size:9px;color:#58a6ff;">发布人：${q.quest_giver || '未知'} ${q.location_hint ? '· ' + q.location_hint : ''}</div>
+                <div style="font-size:9px;color:#d29922;margin-top:2px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}</div>
+              </div>
+              <button onclick="DeathModeUI._acceptQuest('${q.id}','ai')" style="flex-shrink:0;padding:4px 10px;background:#3a2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;margin-left:6px;">接受</button>
+            </div>
+          </div>`;
+        }
+      }
+      html += `</div>`;
+
+      if (completedIds.length > 0) {
+        html += `<div style="font-size:10px;color:#484f58;text-align:center;">已完成 ${completedIds.length} 个任务</div>`;
+      }
+
+      document.getElementById('dm-quest-content').innerHTML = html;
+    } catch (e) {
+      document.getElementById('dm-quest-content').innerHTML = `<div style="color:#f85149;font-size:12px;">加载失败: ${e.message}</div>`;
+    }
+  },
+
+  async _acceptQuest(questId, who) {
+    try {
+      const resp = await fetch('/api/death-mode/quests/accept', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quest_id: questId, who: who }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('接受失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+      const data = await resp.json();
+      alert(data.message);
+      this.showQuestPanel();
+      this.refresh();
+    } catch (e) {
+      alert('接受失败: ' + e.message);
+    }
+  },
+
+  async _turnInQuest(questId) {
+    try {
+      const resp = await fetch('/api/death-mode/quests/turn-in', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quest_id: questId, who: 'ai' }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('交付失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+      const data = await resp.json();
+      alert(data.message);
+      this.showQuestPanel();
+      this.refresh();
+    } catch (e) {
+      alert('交付失败: ' + e.message);
+    }
+  },
+
+  // ── 世界新闻 ──────────────────────────────────────
+
+  async showNewsPanel() {
+    const old = document.getElementById('dm-news-panel');
+    if (old) old.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-news-panel';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #d29922;border-radius:16px;padding:20px;max-width:650px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <h3 style="margin:0;color:#d29922;font-size:16px;">📰 冒险者酒馆 · 世界新闻</h3>
+          <button onclick="this.closest('#dm-news-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
+        </div>
+        <div id="dm-news-content" style="text-align:center;color:#8b949e;font-size:12px;">加载中...</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    try {
+      const resp = await fetch('/api/death-mode/world-news?limit=20');
+      const data = await resp.json();
+      const news = data.news || [];
+      const playDays = data.play_days || 1;
+
+      let html = `<div style="font-size:11px;color:#8b949e;margin-bottom:12px;padding:8px;background:#161b22;border-radius:8px;">
+        📅 当前世界日：第 <span style="color:#d29922;font-weight:bold;">${playDays}</span> 天
+        ${data.unread_count > 0 ? `<span style="color:#f85149;margin-left:8px;">${data.unread_count} 条未读</span>` : ''}
+        <button onclick="DeathModeUI._markAllNewsRead()" style="margin-left:8px;padding:2px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;cursor:pointer;font-size:10px;">全部已读</button>
+      </div>`;
+
+      if (news.length === 0) {
+        html += `<div style="padding:20px;text-align:center;color:#8b949e;font-size:12px;">
+          暂无新闻。世界仍在运转中...<br>
+          <span style="font-size:10px;color:#484f58;">每过7天会有新消息</span>
+        </div>`;
+      } else {
+        for (const n of news) {
+          const readFlag = n.read ? '' : '<span style="color:#f85149;font-size:9px;margin-left:4px;">●</span>';
+          html += `<div style="padding:10px;background:#161b22;border:1px solid ${n.read ? '#30363d' : '#d29922'};border-radius:8px;margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <span style="font-size:12px;color:#d29922;font-weight:600;">${n.title}${readFlag}</span>
+              <span style="font-size:9px;color:#8b949e;">第${n.day}天</span>
+            </div>
+            <div style="font-size:11px;color:#c9d1d9;line-height:1.5;">${n.news}</div>
+            ${n.unlock_quests && n.unlock_quests.length > 0 ? `<div style="font-size:9px;color:#a371f7;margin-top:4px;">🔓 解锁新任务</div>` : ''}
+          </div>`;
+        }
+      }
+
+      document.getElementById('dm-news-content').innerHTML = html;
+    } catch (e) {
+      document.getElementById('dm-news-content').innerHTML = `<div style="color:#f85149;font-size:12px;">加载失败: ${e.message}</div>`;
+    }
+  },
+
+  async _markAllNewsRead() {
+    try {
+      await fetch('/api/death-mode/world-news/mark-read', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      this.showNewsPanel();
+      this.refresh();
+    } catch (e) {
+      alert('标记失败: ' + e.message);
     }
   },
 };

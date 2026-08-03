@@ -24,7 +24,10 @@ from simlife.backend.generator import get_llm_client
 from simlife.backend.world_map import WorldMap, MapGenerator
 from simlife.backend.npc_system import NPCSystem, NPCGenerator
 from simlife.backend.equipment_system import EquipmentSystem
+from simlife.backend.quest_system import QuestSystem
+from simlife.backend.world_progress import WorldProgress
 from simlife.backend.dungeon_agent import DungeonAgent, Dungeon
+from simlife.backend.party_agent import PartyAgent, PartyMember
 
 
 class DeathModeEngine:
@@ -61,6 +64,7 @@ class DeathModeEngine:
         self.npc_system: Optional[NPCSystem] = None
         self.dungeon_agent: Optional[DungeonAgent] = None
         self._current_dungeon: Optional[Dungeon] = None
+        self.party_agent: Optional[PartyAgent] = None
 
     def _log_action(self, entry_type: str, data: Dict):
         """记录一条行动日志（网页端展示用）"""
@@ -390,6 +394,7 @@ class DeathModeEngine:
             "action_log": state.get("action_log", [])[-20:],  # 最近20条给A层用
             "in_dungeon": state.get("in_dungeon", False),
             "dungeon": self.get_dungeon_info().get("dungeon") if state.get("in_dungeon") else None,
+            "party_members": state.get("party_members", []),
         }
 
     # ── 场景推进 ──────────────────────────────────────────
@@ -623,7 +628,8 @@ class DeathModeEngine:
             # 根据角色等级推算敌人风险等级（扫荡默认低风险小怪）
             char = state["character"]
             risk_level = "low"  # 扫荡默认生成低风险小怪
-            enemies_list = self._generate_enemies(state, risk_level)
+            # 优先用叙事中提到的敌人（spotted_enemies），否则随机生成
+            enemies_list = self._generate_enemies_with_spotted(state, risk_level)
             state["enemies"] = enemies_list
             state["in_combat"] = True
 
@@ -699,6 +705,34 @@ class DeathModeEngine:
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
         next_tension = agent_result.get("next_tension", "medium")
+
+        # 地点连续性：如果行动涉及移动，更新当前地点
+        new_location = agent_result.get("new_location")
+        if new_location and isinstance(new_location, str) and new_location.strip():
+            state["story"]["current_location"] = new_location.strip()
+            # 任务进度：进入新地点触发
+            try:
+                QuestSystem.record_progress(state, "visit_location",
+                                             location=new_location.strip())
+            except Exception:
+                pass
+
+        # 叙事中提到的敌人 → 保存到 state，战斗时优先使用
+        spotted = agent_result.get("spotted_enemies")
+        if spotted and isinstance(spotted, list):
+            state["spotted_enemies"] = spotted
+        else:
+            state["spotted_enemies"] = []
+
+        # 未解决的剧情钩子 → 累积保存（最多 4 个）
+        hooks = agent_result.get("unresolved_hooks")
+        if hooks and isinstance(hooks, list):
+            existing = state.get("story", {}).get("unresolved_hooks", [])
+            for h in hooks:
+                if isinstance(h, str) and h.strip() and h.strip() not in existing:
+                    existing.append(h.strip())
+            # 只保留最近 4 个
+            state["story"]["unresolved_hooks"] = existing[-4:]
 
         # 休息关键词强制覆盖：确保"休息"相关指令可靠触发恢复逻辑
         if _is_rest_action:
@@ -797,6 +831,15 @@ class DeathModeEngine:
                     combat_result["exp_reward"] = total_exp
                     combat_result["gold_reward"] = total_gold
 
+                    # 任务进度：击杀敌人触发
+                    try:
+                        progressed = QuestSystem.record_progress(state, "kill",
+                                                                 enemy_names=combat_result["enemies_defeated"])
+                        if progressed:
+                            result["quest_progress"] = progressed
+                    except Exception:
+                        pass
+
                     char["world_type"] = state.get("world_type", "fantasy")
                     growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
                     if growth_result["leveled_up"]:
@@ -845,8 +888,8 @@ class DeathModeEngine:
 
             # 战斗触发（进入战斗状态）
             if action_type_value == "combat" or (outcome_type.startswith("combat") and action_type_value != "rest"):
-                # 生成敌人列表（支持一群怪）
-                enemies_list = self._generate_enemies(state, risk_level)
+                # 生成敌人列表：优先用叙事中提到的敌人（spotted_enemies），否则随机生成
+                enemies_list = self._generate_enemies_with_spotted(state, risk_level)
                 state["enemies"] = enemies_list
                 state["in_combat"] = True
 
@@ -944,6 +987,15 @@ class DeathModeEngine:
                     state["in_combat"] = False
                     state["enemies"] = []
                     result["in_combat"] = False
+
+                    # ── 地下城：清除房间 ──
+                    if state.get("in_dungeon"):
+                        clear_result = self.clear_dungeon_room()
+                        if clear_result.get("success"):
+                            result["dungeon_room_cleared"] = True
+                            result["dungeon_completed"] = clear_result.get("dungeon_completed", False)
+                            if clear_result.get("loot"):
+                                result["dungeon_loot"] = clear_result["loot"]
                 else:
                     result["in_combat"] = True
                     result["enemies"] = alive_enemies
@@ -1011,6 +1063,12 @@ class DeathModeEngine:
                     if eq_item:
                         shared_inv.append(eq_item)
                         result.setdefault("items_to_backpack", []).append(eq_item.get("name", item_name))
+                # 任务进度：收集物品触发
+                try:
+                    QuestSystem.record_progress(state, "collect",
+                                                 items=[{"name": n} for n in items_gained])
+                except Exception:
+                    pass
 
             # 花费金币
             gold_spent = agent_result.get("gold_spent")
@@ -1064,12 +1122,14 @@ class DeathModeEngine:
 
         # 3. 天数按实际时间计算（不在此处推进，get_game_state 中动态计算）
 
-        # 4. 记录故事历史
+        # 4. 记录故事历史（含完整行动和叙事，供下一段场景生成参考）
+        action_text = action if action_type == "free" else (choice_info.get("text", "") if choice_info else action)
         state["story"]["history"].append({
             "chapter": state["story"]["current_chapter"],
-            "summary": narrative[:100],
-            "action": action if action_type == "free" else (choice_info.get("text", "") if choice_info else action),
+            "summary": narrative[:200],
+            "action": action_text,
             "outcome": outcome_type,
+            "location": state["story"].get("current_location", ""),
         })
 
         # 章节按历史进度推进（每5条历史推进一章）
@@ -1084,6 +1144,24 @@ class DeathModeEngine:
             result["next_scene"] = True
         else:
             result["next_scene"] = False
+
+        # 任务系统：处理 LLM 生成的任务委托
+        try:
+            offers = agent_result.get("quest_offers")
+            if offers and isinstance(offers, list):
+                created_n, created_titles = QuestSystem.create_dynamic_quests(state, offers)
+                if created_n > 0:
+                    result["new_quest_offers"] = created_titles
+        except Exception as e:
+            print(f"[DeathMode] 任务委托解析失败: {e}")
+
+        # 世界推进：每次行动后检查是否触发新世界事件
+        try:
+            new_news = WorldProgress.check_and_advance(state)
+            if new_news:
+                result["world_news"] = new_news
+        except Exception:
+            pass
 
         self._save()
 
@@ -1196,6 +1274,48 @@ class DeathModeEngine:
         # 3. 装备池中不存在 → 拒绝生成，防止用户口令凭空变出
         return None
 
+    def _generate_enemies_with_spotted(self, state: Dict, risk_level: str) -> list:
+        """生成敌人：优先用叙事中提到的敌人（spotted_enemies），否则随机生成。
+        spotted_enemies 格式: [{"name": "Elemental Slime", "count": 3}, ...]
+        """
+        spotted = state.get("spotted_enemies", [])
+        if spotted and isinstance(spotted, list):
+            char = state["character"]
+            char_level = char.get("level", 1)
+            world_setting = state.get("world_setting", {})
+
+            enemies = []
+            for spot in spotted:
+                if not isinstance(spot, dict):
+                    continue
+                name = str(spot.get("name", "")).strip()
+                count = int(spot.get("count", 1))
+                if not name or count < 1:
+                    continue
+                count = min(count, 5)  # 上限防止过载
+                # 等级按 risk_level 决定，与原逻辑保持一致
+                if risk_level == "low":
+                    enemy_level = max(1, char_level - random.randint(2, 4))
+                    enemy_type = "normal"
+                elif risk_level == "medium":
+                    enemy_level = max(1, char_level - random.randint(0, 2))
+                    enemy_type = "normal"
+                else:
+                    enemy_level = char_level + random.randint(0, 1)
+                    enemy_type = "elite" if random.random() < 0.3 else "normal"
+                for i in range(count):
+                    enemy = CombatSystem.generate_enemy(enemy_level, world_setting, enemy_type)
+                    # 用叙事中提到的名字覆盖
+                    if name:
+                        enemy["name"] = name if count == 1 else f"{name}{i+1}"
+                    enemies.append(enemy)
+            if enemies:
+                # 清理 spotted_enemies（已实体化）
+                state["spotted_enemies"] = []
+                return enemies
+        # 没有 spotted → 走原逻辑
+        return self._generate_enemies(state, risk_level)
+
     def _generate_enemies(self, state: Dict, risk_level: str) -> list:
         """生成敌人列表（支持一群怪，优先使用地图区域的怪物）"""
         char = state["character"]
@@ -1264,6 +1384,14 @@ class DeathModeEngine:
         char["passive_effects"] = SkillSystem.get_passive_effects(char, world_type)
         if user_char and user_char.get("class_name"):
             user_char["passive_effects"] = SkillSystem.get_passive_effects(user_char, world_type)
+        # ── 队友参战 ──
+        party_members = state.get("party_members", [])
+        party_in_combat = []
+        for pm_dict in party_members:
+            if pm_dict.get("is_alive", True) and pm_dict.get("hp", 0) > 0:
+                pm = PartyMember.from_dict(pm_dict)
+                pm.passive_effects = SkillSystem.get_passive_effects(pm.to_combat_entity(), world_type)
+                party_in_combat.append(pm)
         user_in_combat = not ai_alone and user_char and user_char.get("hp", 0) > 0 and user_char.get("class_name")
         # 如果AI角色已死（用户继续冒险），AI不参战
         ai_in_combat = char.get("hp", 0) > 0 and not state.get("ai_character_dead", False)
@@ -1351,6 +1479,12 @@ class DeathModeEngine:
                 actors.append((ai_initiative, "ai", char))
             if user_in_combat:
                 actors.append((u_initiative, "user", user_char))
+            # 队友加入出手顺序
+            for pm in party_in_combat:
+                pm_agi = pm.stats.get("agility", 5)
+                pm_class = pm.class_name
+                pm_initiative = pm_agi + (5 if any(c in pm_class for c in range_classes) else 0)
+                actors.append((pm_initiative, f"party_{pm.member_id}", pm.to_combat_entity()))
             actors.sort(key=lambda x: x[0], reverse=True)
             names = [f"{a[2].get('name',a[1])}({a[0]})" for a in actors]
             combat_log.append(f"⚡ 出手顺序（自动）：{' → '.join(names)}")
@@ -1402,6 +1536,40 @@ class DeathModeEngine:
                     continue
                 if attacker.get("hp", 0) <= 0:
                     continue
+
+                # ── 队友由 PartyAgent 决策 ──
+                if role.startswith("party_"):
+                    member_id = role[6:]
+                    pm_obj = next((m for m in party_in_combat if m.member_id == member_id), None)
+                    if not pm_obj:
+                        continue
+                    # PartyAgent 决策
+                    decision = PartyAgent.decide_action(
+                        pm_obj, {}, enemies, [char, user_char], world_type
+                    )
+                    if decision.get("action") == "defend":
+                        round_log.append(f"{pm_obj.name}进入防御姿态")
+                        continue
+                    # 选目标
+                    target_idx = decision.get("target_index", 0)
+                    target = enemies[target_idx] if target_idx < len(enemies) else next((e for e in enemies if e.get("hp", 0) > 0), None)
+                    if not target:
+                        continue
+                    is_magic = decision.get("is_magic", False)
+                    skill_mult = decision.get("skill_mult", 1.0)
+                    # 消耗MP
+                    if decision.get("action") == "skill":
+                        sk_id = decision.get("skill_id", "")
+                        sk = SkillSystem.get_skill(sk_id) if sk_id else None
+                        if sk:
+                            pm_obj.mp -= sk.mp_cost
+                            attacker["mp"] = pm_obj.mp
+                    atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
+                                                     attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
+                    round_log.append(f"{pm_obj.name}{atk_result['description']} → {target.get('name', '?')}")
+                    _check_drop(target, attacker.get("stats", {}))
+                    continue
+
                 target = cmd.get(f"{role}_target") or next((e for e in enemies if e.get("hp", 0) > 0), None)
                 if not target:
                     continue
@@ -1431,6 +1599,10 @@ class DeathModeEngine:
                         candidates.append(("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)))
                     if user_in_combat and user_char.get("hp", 0) > 0:
                         candidates.append(("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)))
+                    # 队友也是候选目标
+                    for pm in party_in_combat:
+                        if pm.hp > 0:
+                            candidates.append((f"party_{pm.member_id}", pm.to_combat_entity(), DefenseAction.BLOCK))
                     if not candidates:
                         continue
                     pick = _rng.choice(candidates)
@@ -1482,8 +1654,13 @@ class DeathModeEngine:
 
         # 死亡返回优先
         if death_return:
+            # 同步队友状态到state
+            self._sync_party_state(state, party_in_combat)
             death_return["combat_log"] = total_combat_log + death_return.get("combat_log", [])
             return death_return
+
+        # 同步队友状态到state
+        self._sync_party_state(state, party_in_combat)
 
         return {
             "victory": victory,
@@ -2297,7 +2474,6 @@ class DeathModeEngine:
                     "is_dungeon": True,
                     "dungeon": dungeon_result.get("dungeon_display"),
                 }
-                # 相邻区域
                 adjacent = self.world_map.get_adjacent_regions()
                 result["adjacent"] = [{"id": r.region_id, "name": r.name, "explored": r.explored} for r in adjacent]
                 self._log_action("enter_dungeon", {
@@ -2349,11 +2525,28 @@ class DeathModeEngine:
 
     # ── 地下城探索 ──────────────────────────────────────
 
+    def _sync_party_state(self, state: Dict, party_in_combat: list):
+        """同步队友HP/MP到state（战斗后调用）"""
+        state_members = state.get("party_members", [])
+        for pm in party_in_combat:
+            for sm in state_members:
+                if sm.get("member_id") == pm.member_id:
+                    sm["hp"] = pm.hp
+                    sm["mp"] = pm.mp
+                    sm["is_alive"] = pm.hp > 0
+                    break
+
     def _ensure_dungeon_agent(self):
         """惰性初始化 DungeonAgent"""
         if self.dungeon_agent is None:
             self.dungeon_agent = DungeonAgent(self.llm)
         return self.dungeon_agent
+
+    def _ensure_party_agent(self):
+        """惰性初始化 PartyAgent"""
+        if self.party_agent is None:
+            self.party_agent = PartyAgent()
+        return self.party_agent
 
     def _enter_dungeon_region(self, state: Dict, region) -> Dict:
         """进入地下城区域（触发 DungeonAgent）"""
@@ -2372,7 +2565,6 @@ class DeathModeEngine:
         )
         self._current_dungeon = dungeon
 
-        # 记录到状态
         state["in_dungeon"] = True
         state["dungeon_id"] = dungeon.dungeon_id
 
@@ -2410,7 +2602,7 @@ class DeathModeEngine:
                 "is_boss": result.get("is_boss", False),
             })
 
-            # 如果房间有敌人且未清除，触发战斗
+            # 房间有敌人 → 触发战斗
             if result.get("has_enemies"):
                 room = dungeon.get_current_room()
                 if room:
@@ -2422,7 +2614,7 @@ class DeathModeEngine:
             else:
                 result["in_combat"] = False
 
-            # 如果房间有陷阱，触发伤害
+            # 房间有陷阱 → 触发伤害
             room = dungeon.get_current_room()
             if room and room.hazards:
                 for hazard in room.hazards:
@@ -2453,11 +2645,16 @@ class DeathModeEngine:
         damage = hazard.get("damage", 5)
         char = state.get("character", {})
         user_char = state.get("user_character", {})
-        # 陷阱伤害两边都扣
         if char.get("hp", 0) > 0:
             char["hp"] = max(0, char["hp"] - damage)
         if user_char and user_char.get("hp", 0) > 0:
             user_char["hp"] = max(0, user_char["hp"] - damage)
+        # 队友也受伤
+        for pm in state.get("party_members", []):
+            if pm.get("is_alive", True) and pm.get("hp", 0) > 0:
+                pm["hp"] = max(0, pm["hp"] - damage)
+                if pm["hp"] <= 0:
+                    pm["is_alive"] = False
         self._log_action("dungeon_hazard", {
             "hazard_name": hazard.get("name", "陷阱"),
             "damage": damage,
@@ -2495,7 +2692,6 @@ class DeathModeEngine:
                     elif item.get("type") == "consumable":
                         loot_result["items"].append(item.get("name", "药水"))
 
-            # 检查是否通关
             if dungeon.completed:
                 state["in_dungeon"] = False
                 state["dungeon_id"] = None
@@ -2547,13 +2743,65 @@ class DeathModeEngine:
 
         self._current_dungeon = dungeon
         display = agent.get_dungeon_display(dungeon)
-
-        # 附加战斗状态
         display["in_combat"] = state.get("in_combat", False)
         if state.get("in_combat"):
             display["enemies"] = state.get("enemies", [])
-
         return {"in_dungeon": True, "dungeon": display}
+
+    # ── 队友系统 ──────────────────────────────────────
+
+    def get_recruit_options(self) -> Dict:
+        """获取可招募的队友列表"""
+        state = self._load()
+        if not state or not state.get("is_alive"):
+            return {"error": "game_not_active"}
+
+        char = state.get("character", {})
+        char_level = char.get("level", 1)
+        world_type = state.get("world_type", "fantasy")
+
+        # 检查队伍是否已满
+        current_members = state.get("party_members", [])
+        if len(current_members) >= PartyAgent.MAX_PARTY_SIZE:
+            return {"error": "party_full", "message": f"队伍已满（最多{PartyAgent.MAX_PARTY_SIZE}人）"}
+
+        options = PartyAgent.generate_recruit_options(world_type, char_level, count=3)
+        return {"options": options, "current_count": len(current_members),
+                "max_count": PartyAgent.MAX_PARTY_SIZE}
+
+    def recruit_member(self, member_dict: Dict) -> Dict:
+        """招募一个队友"""
+        state = self._load()
+        if not state or not state.get("is_alive"):
+            return {"error": "game_not_active"}
+
+        current_members = state.get("party_members", [])
+        if len(current_members) >= PartyAgent.MAX_PARTY_SIZE:
+            return {"error": "party_full", "message": f"队伍已满"}
+
+        world_type = state.get("world_type", "fantasy")
+        member = PartyAgent.recruit_member(member_dict, world_type)
+
+        # 注入职业被动效果
+        from simlife.backend.skill_system import SkillSystem
+        member.passive_effects = SkillSystem.get_passive_effects(member.to_combat_entity(), world_type)
+
+        current_members.append(member.to_dict())
+        state["party_members"] = current_members
+
+        self._log_action("recruit", {"name": member.name, "class": member.class_name})
+        self._save()
+        return {"success": True, "member": member.to_dict(),
+                "party_members": current_members}
+
+    def dismiss_member(self, member_id: str) -> Dict:
+        """解散一个队友"""
+        state = self._load()
+        members = state.get("party_members", [])
+        state["party_members"] = [m for m in members if m.get("member_id") != member_id]
+        self._log_action("dismiss", {"member_id": member_id})
+        self._save()
+        return {"success": True, "party_members": state["party_members"]}
 
     def get_map_info(self) -> Dict:
         """获取当前地图信息"""

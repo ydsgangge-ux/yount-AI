@@ -1545,13 +1545,13 @@ def api_death_mode_move(data: dict):
     return engine.move_to_region(target_id)
 
 
+# ── 地下城API ──
 @app.post("/api/death-mode/dungeon-move")
 def api_death_mode_dungeon_move(data: dict):
     """在地下城内移动到相邻房间"""
     from simlife.backend.death_mode import DeathModeEngine
     engine = DeathModeEngine()
-    target_room_id = data.get("room_id", "")
-    return engine.move_to_dungeon_room(target_room_id)
+    return engine.move_to_dungeon_room(data.get("room_id", ""))
 
 
 @app.post("/api/death-mode/dungeon-exit")
@@ -1568,6 +1568,31 @@ def api_death_mode_dungeon_info():
     from simlife.backend.death_mode import DeathModeEngine
     engine = DeathModeEngine()
     return engine.get_dungeon_info()
+
+
+# ── 队友系统API ──
+@app.get("/api/death-mode/recruit-options")
+def api_death_mode_recruit_options():
+    """获取可招募的队友列表"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.get_recruit_options()
+
+
+@app.post("/api/death-mode/recruit")
+def api_death_mode_recruit(data: dict):
+    """招募一个队友"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.recruit_member(data.get("member", {}))
+
+
+@app.post("/api/death-mode/dismiss")
+def api_death_mode_dismiss(data: dict):
+    """解散一个队友"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    return engine.dismiss_member(data.get("member_id", ""))
 
 
 @app.post("/api/death-mode/npc-interact")
@@ -1757,6 +1782,7 @@ def api_death_mode_learnable_skills(who: str = "ai"):
         "skill_count": normal_skills_count,
         "max_skills": MAX_SKILLS,
         "remaining_slots": remaining_slots,
+        "skill_points": character.get("skill_points", 0),
     }
 
 
@@ -1803,6 +1829,11 @@ def api_death_mode_learn_skill(data: dict):
     if len(normal_skills) >= MAX_SKILLS:
         raise HTTPException(400, f"技能已达上限（{MAX_SKILLS}个）")
 
+    # 检查技能学习点（每升2级获得1个技能点）
+    skill_points = character.get("skill_points", 0)
+    if skill_points <= 0:
+        raise HTTPException(400, "技能学习点不足（每升2级获得1个技能点）")
+
     # 检查等级需求
     level = character.get("level", 1)
     if skill.req_level > level:
@@ -1814,8 +1845,9 @@ def api_death_mode_learn_skill(data: dict):
         if stats.get(stat, 0) < val:
             raise HTTPException(400, f"需要{stat}≥{val}，当前{stats.get(stat, 0)}")
 
-    # 学习技能
+    # 学习技能（消耗1个技能点）
     character.setdefault("skills", []).append(skill_id)
+    character["skill_points"] = skill_points - 1
     engine._save()
 
     return {
@@ -1824,6 +1856,7 @@ def api_death_mode_learn_skill(data: dict):
         "skill_id": skill_id,
         "skill_count": len([s for s in character.get("skills", []) if not s.startswith("awakening_")]),
         "max_skills": MAX_SKILLS,
+        "skill_points": character["skill_points"],
         "message": f"学习了技能「{skill.name}」",
     }
 
@@ -1931,10 +1964,13 @@ def api_death_mode_awakening_skills(who: str = "ai"):
                 "slot_index": s["slot_index"],
                 "is_empty": s["is_empty"],
                 "skill": s["skill"].to_dict() if s["skill"] else None,
+                "req_level": s["req_level"],
+                "unlocked": s["unlocked"],
             }
             for s in slots
         ],
         "total_slots": 3,
+        "char_level": character.get("level", 1),
     }
 
 
@@ -2029,6 +2065,192 @@ def _save_user_profile(profile: dict):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(USER_PROFILE_PATH, "w", encoding="utf-8") as f:
         json.dump(profile, f, ensure_ascii=False, indent=2)
+
+
+# ═══════════════════════════════════════════════════
+# 任务系统 API
+# ═══════════════════════════════════════════════════
+@app.get("/api/death-mode/quests/available")
+def api_death_mode_available_quests(who: str = "ai"):
+    """获取可接任务列表"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    who = who.strip().lower()
+    character = state.get("user_character", {}) if who == "user" else state.get("character", {})
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    available = QuestSystem.get_available_quests(state, character)
+    offers = QuestSystem.get_available_offers(state)
+    # 合并：动态 offers + 预定义任务
+    combined = list(offers) + list(available)
+    return {
+        "available_quests": combined,
+        "count": len(combined),
+        "dynamic_count": len(offers),
+        "predefined_count": len(available),
+    }
+
+
+@app.get("/api/death-mode/quests/active")
+def api_death_mode_active_quests():
+    """获取进行中任务"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    active = QuestSystem.get_active_quests(state)
+    turned_in = state.get("quests", {}).get("turned_in_ids", [])
+    return {
+        "active_quests": active,
+        "completed_ids": turned_in,
+        "count": len(active),
+    }
+
+
+@app.post("/api/death-mode/quests/accept")
+def api_death_mode_accept_quest(data: dict):
+    """接受任务 data: {"quest_id": "...", "who": "ai"}"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+
+    quest_id = data.get("quest_id", "").strip()
+    who = data.get("who", "ai").strip().lower()
+    if not quest_id:
+        raise HTTPException(400, "请指定任务ID")
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    character = state.get("user_character", {}) if who == "user" else state.get("character", {})
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    ok, msg = QuestSystem.accept_quest(state, quest_id, character)
+    if not ok:
+        raise HTTPException(400, msg)
+    engine._save()
+    return {"success": True, "message": msg}
+
+
+@app.post("/api/death-mode/quests/turn-in")
+def api_death_mode_turn_in_quest(data: dict):
+    """交付任务 data: {"quest_id": "...", "who": "ai"}"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+    from simlife.backend.growth_system import GrowthSystem
+
+    quest_id = data.get("quest_id", "").strip()
+    who = data.get("who", "ai").strip().lower()
+    if not quest_id:
+        raise HTTPException(400, "请指定任务ID")
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    character = state.get("user_character", {}) if who == "user" else state.get("character", {})
+    if not character or not character.get("class_name"):
+        raise HTTPException(400, "角色未初始化")
+
+    ok, msg, rewards = QuestSystem.turn_in_quest(state, quest_id, character)
+    if not ok:
+        raise HTTPException(400, msg)
+
+    # 发放经验（金币已在 turn_in_quest 内加到 character）
+    if rewards.get("exp", 0) > 0:
+        character["world_type"] = state.get("world_type", "fantasy")
+        growth_result = GrowthSystem.gain_exp(character, rewards["exp"],
+                                              state.get("growth_mode", "normal"))
+
+    # 把物品奖励加到共享背包
+    if rewards.get("items"):
+        shared_inv = state.setdefault("shared_inventory", [])
+        for item_def in rewards["items"]:
+            shared_inv.append({
+                "name": item_def.get("name", "未知物品"),
+                "rarity": item_def.get("rarity", "common"),
+                "rarity_name": {"common": "普通", "rare": "稀有",
+                                "epic": "史诗", "legendary": "传说"}.get(item_def.get("rarity", "common"), "普通"),
+                "type": "misc",
+                "bonus": 0,
+                "stat_bonus": {},
+                "level_req": 1,
+                "sell_price": 10,
+            })
+
+    engine._save()
+    return {"success": True, "message": msg, "rewards": rewards}
+
+
+@app.get("/api/death-mode/quests/series")
+def api_death_mode_quest_series():
+    """获取系列任务总览"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    world_type = state.get("world_type", "fantasy")
+    series = QuestSystem.get_series_overview(state, world_type)
+    return {"series": series, "count": len(series)}
+
+
+# ═══════════════════════════════════════════════════
+# 世界新闻 API
+# ═══════════════════════════════════════════════════
+@app.get("/api/death-mode/world-news")
+def api_death_mode_world_news(limit: int = 20):
+    """获取冒险者酒馆新闻列表"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.world_progress import WorldProgress
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    news = WorldProgress.get_recent_news(state, limit=limit)
+    unread = WorldProgress.get_unread_count(state)
+    play_days = state.get("play_time_days", 1)
+    return {
+        "news": news,
+        "unread_count": unread,
+        "play_days": play_days,
+    }
+
+
+@app.post("/api/death-mode/world-news/mark-read")
+def api_death_mode_mark_news_read(data: dict = None):
+    """标记新闻已读 data: {"news_id": "..."} 或 {} 全部已读"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.world_progress import WorldProgress
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    news_id = (data or {}).get("news_id")
+    count = WorldProgress.mark_news_read(state, news_id)
+    engine._save()
+    return {"success": True, "marked_count": count}
 
 
 @app.get("/api/user/profile")

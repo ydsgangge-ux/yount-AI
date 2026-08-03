@@ -90,6 +90,7 @@ class Dungeon:
         self.world_type = world_type
         self.name = name                  # 地下城名称
         self.lore = lore                  # 叙事身份（谁建的/为什么存在/历史锚点）
+        self.faction_ecology: str = ""    # 阵营/生态逻辑（谁占据、内部矛盾）
         self.rooms: Dict[str, DungeonRoom] = {}
         self.entrance_id: Optional[str] = None
         self.boss_room_id: Optional[str] = None
@@ -100,6 +101,9 @@ class Dungeon:
         self.current_room_id: Optional[str] = None
         self.visited_rooms: List[str] = []
         self.cleared_rooms: List[str] = []  # 怪物已清除的房间
+        # discovery_state: 按观察者分别维护发现状态
+        # {"player": {"trap_001": true}, "ai": {"trap_001": false}}
+        self.discovery_state: Dict[str, Dict[str, bool]] = {}
 
     def add_room(self, room: DungeonRoom):
         self.rooms[room.room_id] = room
@@ -136,6 +140,7 @@ class Dungeon:
             "world_type": self.world_type,
             "name": self.name,
             "lore": self.lore,
+            "faction_ecology": self.faction_ecology,
             "rooms": {rid: r.to_dict() for rid, r in self.rooms.items()},
             "entrance_id": self.entrance_id,
             "boss_room_id": self.boss_room_id,
@@ -144,6 +149,7 @@ class Dungeon:
             "current_room_id": self.current_room_id,
             "visited_rooms": self.visited_rooms,
             "cleared_rooms": self.cleared_rooms,
+            "discovery_state": self.discovery_state,
         }
 
     @classmethod
@@ -155,6 +161,7 @@ class Dungeon:
             name=d.get("name", ""),
             lore=d.get("lore", ""),
         )
+        dg.faction_ecology = d.get("faction_ecology", "")
         for rid, rdata in d.get("rooms", {}).items():
             dg.add_room(DungeonRoom.from_dict(rdata))
         dg.entrance_id = d.get("entrance_id")
@@ -164,7 +171,74 @@ class Dungeon:
         dg.current_room_id = d.get("current_room_id")
         dg.visited_rooms = d.get("visited_rooms", [])
         dg.cleared_rooms = d.get("cleared_rooms", [])
+        dg.discovery_state = d.get("discovery_state", {})
         return dg
+
+    # ── 观测视图（为 Party Agent 提供）──
+
+    def get_observation_view(self, observer_id: str = "player") -> Dict:
+        """获取指定观察者的观测视图（隐藏未发现的内容）
+
+        Party Agent 只能读这个视图，不能直接访问完整数据。
+        隐藏字段从数据层面就没有进入 Party Agent 的上下文。
+        """
+        observer_state = self.discovery_state.get(observer_id, {})
+
+        current = self.get_current_room()
+        current_view = None
+        if current:
+            # 当前房间：可以看到已生成的内容，但陷阱只显示已发现的
+            hazards_visible = []
+            for h in current.hazards:
+                hid = h.get("id", "")
+                if observer_state.get(hid, False):
+                    hazards_visible.append(h)  # 已发现：显示详情
+                # 未发现的陷阱不出现在观测视图中
+
+            current_view = {
+                "room_id": current.room_id,
+                "name": current.name,
+                "description": current.description,
+                "is_entrance": current.is_entrance,
+                "is_boss": current.is_boss,
+                "has_enemies": bool(current.enemies) and current.room_id not in self.cleared_rooms,
+                "enemy_count": len(current.enemies) if current.room_id not in self.cleared_rooms else 0,
+                "enemies": current.enemies if current.room_id not in self.cleared_rooms else [],
+                "hazards": hazards_visible,  # 只包含已发现的陷阱
+                "has_loot": bool(current.loot),
+            }
+
+        # 相邻房间：只显示已访问房间的名称，未访问的显示???
+        adjacent_view = []
+        for r in self.get_adjacent_rooms():
+            visited = r.room_id in self.visited_rooms
+            adjacent_view.append({
+                "room_id": r.room_id,
+                "name": r.name if visited else "???",
+                "visited": visited,
+                "is_boss": r.is_boss,
+                "cleared": r.room_id in self.cleared_rooms,
+            })
+
+        return {
+            "dungeon_id": self.dungeon_id,
+            "dungeon_name": self.name,
+            "lore": self.lore,
+            "faction_ecology": self.faction_ecology,
+            "current_room": current_view,
+            "adjacent_rooms": adjacent_view,
+            "visited_count": len(self.visited_rooms),
+            "total_rooms": len(self.rooms),
+            "boss_defeated": self.boss_defeated,
+            "completed": self.completed,
+            "observer_id": observer_id,
+        }
+
+    def mark_discovered(self, observer_id: str, item_id: str):
+        """标记某个观察者发现了某个物品/陷阱"""
+        if observer_id not in self.discovery_state:
+            self.discovery_state[observer_id] = {}
+        self.discovery_state[observer_id][item_id] = True
 
 
 # ============================================================
@@ -306,11 +380,13 @@ class DungeonAgent:
 3. 房间之间有连接关系，形成可探索的路径（入口→...→Boss房）
 4. 房间叙事角色参考：{rooms_hint}
 5. 给地下城一个叙事身份（谁建的/为什么存在/1-2个历史锚点）
+6. 描述阵营/生态逻辑：谁占据这里、内部是否有矛盾可利用（1句话）
 
 返回JSON格式：
 {{
   "name": "地下城名称",
   "lore": "2-3句话的叙事身份描述",
+  "faction_ecology": "1句话描述谁占据这里、内部矛盾",
   "rooms": [
     {{
       "id": "room_001",
@@ -343,6 +419,7 @@ class DungeonAgent:
             name=result.get("name", region_name),
             lore=result.get("lore", ""),
         )
+        dg.faction_ecology = result.get("faction_ecology", "")
 
         for rdata in result.get("rooms", []):
             room = DungeonRoom(
@@ -678,6 +755,7 @@ class DungeonAgent:
             "dungeon_id": dungeon.dungeon_id,
             "dungeon_name": dungeon.name,
             "lore": dungeon.lore,
+            "faction_ecology": dungeon.faction_ecology,
             "current_room": {
                 "room_id": current.room_id,
                 "name": current.name,
