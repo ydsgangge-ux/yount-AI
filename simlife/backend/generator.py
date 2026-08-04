@@ -38,8 +38,9 @@ def _repair_json(text: str) -> str:
     # 4. 保守补缺逗号：
     #    a) 值后紧跟下一个键：闭合括号/数字/布尔/null 后跟引号 → "a":1 "b" → "a":1, "b"
     s = _re_rj.sub(r'([}\]0-9truefalsenul])(\s*)("(?![:\s]))', r'\1,\2\3', s)
-    #    b) 相邻字符串：字符串值后紧跟另一个字符串键（非冒号前） → "a" "b" → "a", "b"
-    #       仅当前面不是 ":" 或 "," 之后才补，避免误伤
+    #    b) 对象/数组后跟对象/数组：} {、] [、} [、] { → 补逗号
+    s = _re_rj.sub(r'([}\]](?:\s*))([\[\{](?!\s*[,:\}]))', r'\1,\2', s)
+    #    c) 相邻字符串：字符串值后紧跟另一个字符串键（非冒号前） → "a" "b" → "a", "b"
     s = _repair_adjacent_strings(s)
     # 5. 提取第一个 JSON 对象/数组（若前后有杂文本）
     match = _re_rj.search(r'[\{\[][\s\S]*[\}\]]', s)
@@ -286,62 +287,59 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
     if setting is None:
         raise ValueError("世界观生成失败：多次尝试无法获得有效JSON")
 
-        # 确保 world_id 合法
-        if not setting.get("world_id") or setting["world_id"] == "modern":
-            import hashlib
-            setting["world_id"] = "world_" + hashlib.md5(core_theme.encode()).hexdigest()[:8]
+    # 确保 world_id 合法
+    if not setting.get("world_id") or setting["world_id"] == "modern":
+        import hashlib
+        setting["world_id"] = "world_" + hashlib.md5(core_theme.encode()).hexdigest()[:8]
 
-        # 确保 world_type
-        if not setting.get("world_type"):
-            setting["world_type"] = world_type
+    # 确保 world_type
+    if not setting.get("world_type"):
+        setting["world_type"] = world_type
 
-        # ── 标准 schema 清洗 + 区域文件化落盘 ──
-        try:
-            from simlife.backend import world_schema
-            from simlife.worlds import world_manager as wm
+    # ── 标准 schema 清洗 + 区域文件化落盘 ──
+    try:
+        from simlife.backend import world_schema
+        from simlife.worlds import world_manager as wm
 
-            world_id = setting.get("world_id", "world")
-            # 清洗势力为标准结构
-            factions = setting.get("factions", [])
-            if factions and isinstance(factions, list):
-                setting["factions"] = [world_schema.sanitize_faction(f) for f in factions if isinstance(f, dict)]
+        world_id = setting.get("world_id", "world")
+        # 清洗势力为标准结构
+        factions = setting.get("factions", [])
+        if factions and isinstance(factions, list):
+            setting["factions"] = [world_schema.sanitize_faction(f) for f in factions if isinstance(f, dict)]
 
-            # 拆分区域到独立文件（标准 schema 清洗后落盘）
-            regions = setting.get("geography", {}).get("regions", [])
-            region_name_map = {}
-            if regions and isinstance(regions, list):
-                for r in regions:
-                    if not isinstance(r, dict):
-                        continue
-                    # 补充标准字段：NPC、势力关联在后续由用户/扩展填充，这里先落盘基础
-                    rid = wm.save_region(world_id, r)
-                    region_name_map[rid] = r.get("name", rid)
-                # 从核心设定中移除已落盘的 regions 明细，避免重复
-                setting.get("geography", {}).pop("regions", None)
-                setting["geography"]["region_ids"] = list(region_name_map.keys())
+        # 拆分区域到独立文件（标准 schema 清洗后落盘）
+        regions = setting.get("geography", {}).get("regions", [])
+        region_name_map = {}
+        if regions and isinstance(regions, list):
+            for r in regions:
+                if not isinstance(r, dict):
+                    continue
+                # 补充标准字段：NPC、势力关联在后续由用户/扩展填充，这里先落盘基础
+                rid = wm.save_region(world_id, r)
+                region_name_map[rid] = r.get("name", rid)
+            # 从核心设定中移除已落盘的 regions 明细，避免重复
+            setting.get("geography", {}).pop("regions", None)
+            setting["geography"]["region_ids"] = list(region_name_map.keys())
 
-            # 生成/清洗跨区域关系文件（势力据点自动推断）
-            relations = wm.load_relations(world_id) or {}
-            if not relations.get("faction_presence"):
-                presence = {}
-                for f in setting.get("factions", []):
-                    fid = f.get("id", "")
-                    rids = f.get("regions", []) or []
-                    if fid and rids:
-                        presence[fid] = rids
-                relations["faction_presence"] = presence
-            if not relations.get("storylines"):
-                relations["storylines"] = []
-            if not relations.get("characters"):
-                relations["characters"] = []
-            wm.save_relations(world_id, relations)
-        except Exception as e:
-            print(f"[SimLife] 世界观标准化落盘失败: {e}")
-
-        return setting
+        # 生成/清洗跨区域关系文件（势力据点自动推断）
+        relations = wm.load_relations(world_id) or {}
+        if not relations.get("faction_presence"):
+            presence = {}
+            for f in setting.get("factions", []):
+                fid = f.get("id", "")
+                rids = f.get("regions", []) or []
+                if fid and rids:
+                    presence[fid] = rids
+            relations["faction_presence"] = presence
+        if not relations.get("storylines"):
+            relations["storylines"] = []
+        if not relations.get("characters"):
+            relations["characters"] = []
+        wm.save_relations(world_id, relations)
     except Exception as e:
-        print(f"[SimLife] 世界观生成失败: {e}")
-        return None
+        print(f"[SimLife] 世界观标准化落盘失败: {e}")
+
+    return setting
 
 
 def get_llm_client(config: dict = None):
