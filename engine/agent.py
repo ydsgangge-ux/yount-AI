@@ -1093,26 +1093,17 @@ class ConsciousnessAgent:
                 is_action = True
                 break
 
-        # ── 自主行动授权检测 ──
-        # 用户明确让 AI 系统角色自行行动时（"我们分开行动"、"你去看看"、"帮我行动"、
-        # "你负责去..."、"使用simlife_action"等），由 A层 自主决策并发起行动。
-        # 这不是普通聊天，需要真正执行 simlife_action。
-        autonomous_commands = [
-            "分开行动", "分头行动", "各自行动", "我们行动", "该行动了",
-            "你去", "你负责", "你去看看", "你去调查", "你去探索", "你行动",
-            "帮我行动", "帮我看看", "帮我去", "帮我探索", "你主动",
-            "自主行动", "自行行动", "你自己行动", "你来做",
-            "simlife_action", "使用行动工具", "行动工具", "工具行动",
-            "你先去", "你先探索", "你先调查", "你来行动", "你去办",
-            "我们分开", "分头", "我去这里你去", "你去那边", "你去看",
+        # ── 行动口令检测（simlife_action）──
+        # 只有聊天中出现 "simlife_action"（或其中文变体）时才视为行动口令，
+        # 由 A层 自主决策并发起行动。其余全部当作普通聊天，绝不误触发。
+        action_keywords = [
+            "simlife_action", "simlife action", "simlife行动", "simlife 行动",
+            "使用行动工具", "行动工具", "工具行动", "帮我行动",
+            "simlife_action工具", "simlife工具",
         ]
-        is_autonomous = False
-        for trigger in autonomous_commands:
-            if trigger in input_lower or trigger in user_input:
-                is_autonomous = True
-                break
+        is_autonomous = any(k in input_lower for k in action_keywords)
 
-        # 只有明确授权才触发自主行动，普通聊天绝不触发
+        # 只有出现行动口令才触发自主行动，普通聊天绝不触发
         if is_autonomous:
             return self._auto_explore_decision(user_input, dm_state)
 
@@ -1530,9 +1521,14 @@ class ConsciousnessAgent:
 
             prompt = f"""{state_info}
 
-用户对你说了：{user_input}
+【行动口令】用户消息中出现了 simlife_action 行动口令，这意味着用户要求你【真正执行一个行动】，而不是聊天。
 
-用户已经授权你【自主行动】——你是独立行动的一方，可以自己去探索、调查、与NPC对话、移动或休息。
+用户消息：{user_input}
+
+【解析规则】
+1. simlife_action 是行动口令本身，口令之后的内容（"我们分开行动""你去调查教堂"等）是用户希望发生的事。
+2. 如果口令后的内容里包含用户指派给你的明确任务（如"你去教堂看看"），你必须以自己为主角执行这个任务。
+3. 如果只是说"我们/大家"分头行动，你要自主决定一个符合当前场景的具体行动（探索/调查/对话/移动/休息）。
 
 基于你的人格（{self.personality.to_prompt_description()}）和当前处境，决定你此刻要做的【一个具体行动】。
 
@@ -1541,6 +1537,7 @@ class ConsciousnessAgent:
 
 要求：
 - action 必须是死亡模式支持的自由行动（探索/前往/调查/对话/搜索/休息等），用第一人称"我..."
+- 优先遵循用户口令后的明确指派；没有明确指派时才自主决定
 - 不要输出多个行动，只要一个
 - 行动要符合你的人格和当前处境"""
 
