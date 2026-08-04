@@ -339,7 +339,127 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
     except Exception as e:
         print(f"[SimLife] 世界观标准化落盘失败: {e}")
 
+    # ── 区域细化生成：为每个区域补充专属 NPC + 威胁怪物 + 势力据点 ──
+    try:
+        world_id = setting.get("world_id", "world")
+        _refine_region_details(setting, world_id)
+    except Exception as e:
+        print(f"[SimLife] 区域细化生成失败: {e}")
+
     return setting
+
+
+def _refine_region_details(world_setting: dict, world_id: str):
+    """区域细化生成：为世界里的每个区域独立调用 LLM，
+    生成该区域专属的 NPC、威胁怪物（含战斗数据）和势力据点。
+    结果清洗后写入 regions/<id>.json，并更新 relations.json 的势力据点。
+    """
+    import re
+    from simlife.backend import world_schema
+    from simlife.worlds import world_manager as wm
+
+    llm = get_llm_client()
+    regions = wm.list_regions(world_id)
+    if not regions:
+        print("[SimLife] 区域细化：无区域文件，跳过")
+        return
+
+    factions = world_setting.get("factions", []) or []
+    faction_names = "、".join(f.get("name", "") for f in factions[:4] if isinstance(f, dict))
+
+    # 世界概述（作为 LLM 生成时的一致约束）
+    geo = world_setting.get("geography", {}) or {}
+    world_overview = f"{world_setting.get('world_name','')}（{world_setting.get('world_type','')}）\n{str(geo.get('overview',''))[:200]}"
+
+    # 逐个区域细化
+    for rinfo in regions:
+        rid = rinfo["id"]
+        rname = rinfo["name"]
+        rdesc = str(rinfo.get("description", ""))[:150]
+        rclimate = str(rinfo.get("climate", ""))[:80]
+        key_locs = rinfo.get("key_locations") or []
+
+        prompt = f"""{world_overview}
+
+【当前区域】{rname}
+环境：{rdesc}
+气候：{rclimate}
+关键地点：{'、'.join(key_locs[:4])}
+
+这个世界的主要势力：{faction_names or '（无）'}
+
+请为该区域生成专属的【NPC】和【威胁怪物】，要求完全符合这个世界观和该区域的环境特色。
+
+输出 JSON：
+{{
+  "npcs": [
+    {{"name": "NPC名", "role": "身份（如：村长/铁匠/旅店老板）", "description": "性格/背景（一句话）", "faction_id": "所属势力英文id或空", "is_key": false}}
+  ],
+  "monsters": [
+    {{"name": "怪物名", "level": 等级, "hp": 生命值, "max_hp": 生命值, "attack_power": 攻击力, "defense_power": 防御力, "exp_reward": 经验, "gold_reward": 金币, "type": "normal/elite/boss", "behavior": "行为/攻击特性（供叙事用，一句话）", "skills": ["技能名"]}}
+  ],
+  "region_faction_ids": ["驻留本区域的势力英文id（从上方势力中选择，最多2个）"]
+}}
+
+要求：
+- 生成 2-3 个 NPC，1-3 个怪物
+- NPC 和怪物必须符合区域环境（如森林区就配森林生物，矿区配矿石生物）
+- 等级参考该区域强度（新手村低，深处高）
+- 不要输出任何其他文字，只输出JSON"""
+
+        try:
+            resp = llm.generate(prompt, max_tokens=1200, temperature=0.8)
+            json_match = re.search(r'\{[\s\S]*\}', resp)
+            if not json_match:
+                print(f"[SimLife] 区域 {rname} 细化生成：未提取到JSON，跳过")
+                continue
+            data = _safe_json_loads(json_match.group(0))
+            if not data:
+                continue
+
+            # 读取已有区域文件并补充 NPC/威胁/势力
+            region = wm.load_region(world_id, rid) or {"name": rname, "id": rid}
+
+            # NPC
+            npcs = data.get("npcs", [])
+            if npcs and isinstance(npcs, list):
+                region["npcs"] = world_schema.sanitize_region({"npcs": npcs}).get("npcs", [])
+
+            # 威胁怪物 → 存入区域 dangers（monster 数据）+ world_setting.dangers
+            monsters = data.get("monsters", [])
+            if monsters and isinstance(monsters, list):
+                region["monsters"] = monsters
+                # 同时更新 dangers.monster_types（供战斗系统引用）
+                dangers = world_setting.setdefault("dangers", {})
+                mt = dangers.setdefault("monster_types", [])
+                existing_names = {m.get("name") for m in mt if isinstance(m, dict)}
+                for m in monsters:
+                    if isinstance(m, dict) and m.get("name") and m["name"] not in existing_names:
+                        mt.append(m)
+                        existing_names.add(m["name"])
+
+            # 势力据点
+            region_factions = data.get("region_faction_ids", [])
+            if region_factions and isinstance(region_factions, list):
+                region["factions"] = [f for f in region_factions[:2] if isinstance(f, str)]
+
+            # 保存区域
+            wm.save_region(world_id, region)
+
+            # 更新 relations.json 势力据点
+            if region_factions and isinstance(region_factions, list):
+                relations = wm.load_relations(world_id)
+                presence = relations.setdefault("faction_presence", {})
+                for fid in region_factions[:2]:
+                    if isinstance(fid, str) and fid:
+                        rid_list = presence.setdefault(fid, [])
+                        if rid not in rid_list:
+                            rid_list.append(rid)
+                wm.save_relations(world_id, relations)
+
+            print(f"[SimLife] 区域 {rname} 细化完成：{len(npcs)} NPC, {len(monsters)} 怪物")
+        except Exception as e:
+            print(f"[SimLife] 区域 {rname} 细化失败: {e}")
 
 
 def get_llm_client(config: dict = None):

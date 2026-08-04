@@ -523,15 +523,21 @@ def _infer_region_factions(region: Dict, world_setting: Dict) -> list:
     for f in factions:
         if not isinstance(f, dict):
             continue
+        fname = f.get("name") or ""
+        if not fname:
+            continue  # 无名势力跳过
+        fid = f.get("id") or _slugify(fname)
+        if not fid or fid == "faction":
+            continue  # id 无效则跳过
         desc = str(f.get("description", "")) + " " + str(f.get("ideology", ""))
         # 势力描述里提到区域名 → 关联
         if any(w in desc.lower() for w in [region.get("name", "").lower()] if w):
-            found.append(f.get("id") or _slugify(f.get("name", "")))
+            found.append(fid)
             continue
         # 势力的 base/location 字段直接指定区域
         fbase = str(f.get("base_region", "") or f.get("location", "") or f.get("base", "")).lower()
-        if fbase and fbase in region_text or region.get("name", "").lower() in fbase:
-            found.append(f.get("id") or _slugify(f.get("name", "")))
+        if fbase and (fbase in region_text or region.get("name", "").lower() in fbase):
+            found.append(fid)
     return found[:3]
 
 
@@ -640,3 +646,78 @@ def migrate_world_to_region_files(world_id: str) -> dict:
     save_world_setting(world_id, setting)
 
     return result
+
+
+def repair_relations(world_id: str) -> dict:
+    """修复跨区域关系文件：
+    - 清理错误的据点 id（如 'region' 这种 slugify 默认值）
+    - 势力有 base_region/regions 字段时重建正确据点
+    """
+    result = {"removed_bad": [], "rebuilt": 0}
+    setting = load_world_setting(world_id)
+    relations = load_relations(world_id)
+
+    if not relations:
+        return result
+
+    # 1. 清理错误据点 id（非法值）
+    presence = relations.get("faction_presence", {})
+    bad_ids = ["region", "faction", "", None]
+    for fid in list(presence.keys()):
+        if fid in bad_ids or not isinstance(fid, str):
+            result["removed_bad"].append(fid)
+            presence.pop(fid, None)
+
+    # 2. 基于势力数据的 base_region_id/regions 重建据点
+    if setting:
+        factions = setting.get("factions", [])
+        regions = list_regions(world_id)
+        region_ids = {r["id"] for r in regions}
+        for f in factions:
+            if not isinstance(f, dict):
+                continue
+            fname = f.get("name") or ""
+            if not fname:
+                continue
+            fid = f.get("id") or _slugify(fname)
+            if fid in bad_ids:
+                continue
+            # 收集该势力的据点：regions 字段 > base_region_id > 描述匹配
+            linked = set(presence.get(fid, []) or [])
+            for r in (f.get("regions") or []):
+                if r in region_ids:
+                    linked.add(r)
+            base = f.get("base_region_id") or f.get("base_region") or f.get("location") or ""
+            if base and base in region_ids:
+                linked.add(base)
+            # 描述关键词匹配
+            desc = str(f.get("description", "")) + " " + str(f.get("ideology", ""))
+            for r in regions:
+                if r["name"].lower() and r["name"].lower() in desc.lower():
+                    linked.add(r["id"])
+            if linked:
+                presence[fid] = sorted(linked)
+                result["rebuilt"] += 1
+
+    relations["faction_presence"] = presence
+    save_relations(world_id, relations)
+    return result
+
+
+def refine_existing_regions(world_id: str) -> dict:
+    """为已有世界的所有区域生成专属 NPC + 威胁怪物 + 势力据点（调用 LLM）。
+    用于初次生成后的细化，或手动刷新已有世界。
+    """
+    try:
+        from simlife.backend.generator import _refine_region_details
+    except ImportError:
+        return {"error": "无法导入 generator._refine_region_details"}
+
+    setting = load_world_setting(world_id)
+    if not setting:
+        return {"error": "world_setting 不存在"}
+
+    _refine_region_details(setting, world_id)
+    # 重建 relations
+    repair_relations(world_id)
+    return {"refined": True, "regions": len(list_regions(world_id))}
