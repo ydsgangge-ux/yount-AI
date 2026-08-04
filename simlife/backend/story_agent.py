@@ -348,6 +348,27 @@ class StoryAgent:
         current_location = state.get("story", {}).get("current_location", "")
         choices = state.get("story", {}).get("choices", [])
 
+        # ── 构建最近行动历史（让LLM知道之前发生了什么）──
+        history = state.get("story", {}).get("history", [])
+        recent_history = history[-5:] if history else []  # 最近5条
+        history_ctx = ""
+        if recent_history:
+            history_lines = []
+            for h in recent_history:
+                _act = h.get("action", "")
+                _sum = h.get("summary", "")
+                _loc = h.get("location", "")
+                if _act and _sum:
+                    history_lines.append(f"  • 行动：{_act}\n    结果：{_sum[:120]}" + (f"（地点：{_loc}）" if _loc else ""))
+            if history_lines:
+                history_ctx = "【最近行动记录】（必须保持连续性，不能与以下内容矛盾）\n" + "\n".join(history_lines) + "\n"
+
+        # 未解决的剧情钩子
+        hooks = state.get("story", {}).get("unresolved_hooks", [])
+        hooks_ctx = ""
+        if hooks:
+            hooks_ctx = "【必须承接的剧情钩子】\n" + "\n".join(f"  - {h}" for h in hooks) + "\n"
+
         # ── 识别行动主角（用户可操作 AI 角色：当行动明确提到焕灵时，由焕灵执行）──
         # 玩家通过输入"焕灵查看..."等指令，让 AI 系统角色代为行动
         _ai_name = char.get("name", "焕灵")
@@ -392,9 +413,11 @@ class StoryAgent:
 【角色状态】
 {char_ctx}
 
+{history_ctx}
+{hooks_ctx}
 【当前场景】
 当前地点：{current_location or '未知'}
-场景描述：{current_scene}
+场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}
 
 【角色行动】
 {action_desc}
@@ -418,6 +441,7 @@ class StoryAgent:
 11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
 12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力），new_location 填新地点。
 13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。
+14. 【行动连续性·最重要】必须参考【最近行动记录】，当前行动是之前行动的延续。NPC名字、地点、对话内容必须与之前一致。如果之前在跟某个NPC对话，当前必须还是那个NPC。如果之前在某个地点，当前必须还在那个地点（除非行动明确涉及移动）。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：

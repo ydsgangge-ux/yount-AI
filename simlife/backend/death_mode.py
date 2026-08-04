@@ -156,10 +156,14 @@ class DeathModeEngine:
                     "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0}
         # 迁移旧存档：技能中文名 → ID
         if self.state:
+            _need_save = False
             for char_key in ("character", "user_character"):
                 char = self.state.get(char_key, {})
                 if char and char.get("skills"):
+                    old_skills = list(char["skills"])
                     char["skills"] = self._migrate_skill_names_to_ids(char["skills"])
+                    if char["skills"] != old_skills:
+                        _need_save = True
                 # 迁移旧存档：补发未分配的升级属性点
                 if char and char.get("level", 1) > 1:
                     old_sp = char.get("stat_points", 0)
@@ -167,7 +171,9 @@ class DeathModeEngine:
                                                self.state.get("growth_mode", "normal"))
                     # 如果补发了属性点，立即保存防止重复
                     if char.get("stat_points", 0) != old_sp:
-                        save_state(self.state)
+                        _need_save = True
+            if _need_save:
+                save_state(self.state)
         return self.state
 
     @staticmethod
@@ -1180,9 +1186,10 @@ class DeathModeEngine:
         if len(state["story"]["history"]) % 5 == 0:
             state["story"]["current_chapter"] += 1
 
-        # 5. 战斗中不清除场景；非战斗状态清除场景（需要生成新场景）
+        # 5. 战斗中不清除场景；非战斗状态保留叙事作为场景上下文（不再清空）
         if not state.get("in_combat", False):
-            state["story"]["scene_description"] = ""
+            # 保留当前叙事作为场景上下文，下次行动时 LLM 能看到之前发生了什么
+            state["story"]["scene_description"] = narrative[:300]
             state["story"]["choices"] = []
             state["story"]["pending_action"] = None
             result["next_scene"] = True
