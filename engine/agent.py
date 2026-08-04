@@ -1093,6 +1093,29 @@ class ConsciousnessAgent:
                 is_action = True
                 break
 
+        # ── 自主行动授权检测 ──
+        # 用户明确让 AI 系统角色自行行动时（"我们分开行动"、"你去看看"、"帮我行动"、
+        # "你负责去..."、"使用simlife_action"等），由 A层 自主决策并发起行动。
+        # 这不是普通聊天，需要真正执行 simlife_action。
+        autonomous_commands = [
+            "分开行动", "分头行动", "各自行动", "我们行动", "该行动了",
+            "你去", "你负责", "你去看看", "你去调查", "你去探索", "你行动",
+            "帮我行动", "帮我看看", "帮我去", "帮我探索", "你主动",
+            "自主行动", "自行行动", "你自己行动", "你来做",
+            "simlife_action", "使用行动工具", "行动工具", "工具行动",
+            "你先去", "你先探索", "你先调查", "你来行动", "你去办",
+            "我们分开", "分头", "我去这里你去", "你去那边", "你去看",
+        ]
+        is_autonomous = False
+        for trigger in autonomous_commands:
+            if trigger in input_lower or trigger in user_input:
+                is_autonomous = True
+                break
+
+        # 只有明确授权才触发自主行动，普通聊天绝不触发
+        if is_autonomous:
+            return self._auto_explore_decision(user_input, dm_state)
+
         if not is_action:
             return ""  # 普通对话，不触发行动
 
@@ -1484,6 +1507,62 @@ class ConsciousnessAgent:
             self._log("战斗决策", f"LLM决策失败: {e}，回退到攻击")
 
         return "攻击"
+
+    def _auto_explore_decision(self, user_input: str, dm_state: dict) -> str:
+        """自主行动决策：用户授权 A层 自行行动时，
+        让 LLM 基于当前状态、人格和用户意图，决定一个具体行动并执行 simlife_action。
+        """
+        try:
+            # 构造当前状态摘要
+            state_info = ""
+            if isinstance(dm_state, dict):
+                char = dm_state.get("character", {})
+                story = dm_state.get("story", {})
+                choices = story.get("choices", [])
+                state_info = f"当前状态：\n"
+                state_info += f"- 你：{char.get('name','?')}（{char.get('class_name','')} Lv.{char.get('level',1)}）HP {char.get('hp',0)}/{char.get('max_hp',0)}\n"
+                state_info += f"- 所在地：{story.get('current_location','未知')}\n"
+                scene = story.get("scene_description", "")
+                if scene:
+                    state_info += f"- 场景：{str(scene)[:150]}\n"
+                if choices:
+                    state_info += f"- 可选行动：{'; '.join(c.get('text','') for c in choices[:3])}\n"
+
+            prompt = f"""{state_info}
+
+用户对你说了：{user_input}
+
+用户已经授权你【自主行动】——你是独立行动的一方，可以自己去探索、调查、与NPC对话、移动或休息。
+
+基于你的人格（{self.personality.to_prompt_description()}）和当前处境，决定你此刻要做的【一个具体行动】。
+
+只输出一个JSON：
+{{"action": "你的具体行动指令（如：我前往教堂调查灰雾的传说 / 我去旅店向老板打听消息 / 我探索村庄外围 / 我休息恢复体力）", "reason": "你内心的一句话（为什么这么选）"}}
+
+要求：
+- action 必须是死亡模式支持的自由行动（探索/前往/调查/对话/搜索/休息等），用第一人称"我..."
+- 不要输出多个行动，只要一个
+- 行动要符合你的人格和当前处境"""
+
+            llm = self.b.llm if hasattr(self, 'b') and self.b else None
+            if llm is None:
+                self._log("自主行动", f"LLM不可用，回退默认行动")
+                return self._execute_death_mode_action(free_action="探索周围环境")
+
+            resp = llm.generate(prompt, max_tokens=300, temperature=0.9, thinking=False)
+            import re, json
+            json_match = re.search(r'\{[^}]+\}', resp)
+            if json_match:
+                data = json.loads(json_match.group())
+                action = data.get("action", "").strip()
+                reason = data.get("reason", "")
+                if action:
+                    self._log("自主行动", f"决策：{action} — {reason}")
+                    return self._execute_death_mode_action(free_action=action)
+        except Exception as e:
+            self._log("自主行动", f"自主决策失败: {e}，回退默认探索")
+
+        return self._execute_death_mode_action(free_action="探索周围环境")
 
     def _execute_death_mode_scene(self) -> str:
         """开始新场景"""
