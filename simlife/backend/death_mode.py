@@ -1710,12 +1710,20 @@ class DeathModeEngine:
                 # ── 多效果技能：处理额外效果（heal/buff/stun/dot等）──
                 if _used_skill_id and _sk_obj and len(_sk_obj.effects) > 1:
                     for _extra_eff in _sk_obj.effects[1:]:
-                        _e_type = getattr(_extra_eff, 'type', _extra_eff.get("type", "")) if isinstance(_extra_eff, object) else ""
-                        _e_target = getattr(_extra_eff, 'target', _extra_eff.get("target", "self")) if isinstance(_extra_eff, object) else "self"
-                        _e_value = getattr(_extra_eff, 'value', _extra_eff.get("value", 1.0)) if isinstance(_extra_eff, object) else 1.0
-                        _e_chance = getattr(_extra_eff, 'chance', _extra_eff.get("chance", 1.0)) if isinstance(_extra_eff, object) else 1.0
-                        _e_duration = getattr(_extra_eff, 'duration', _extra_eff.get("duration", 0)) if isinstance(_extra_eff, object) else 0
-                        _e_stat = getattr(_extra_eff, 'stat', _extra_eff.get("stat", None)) if isinstance(_extra_eff, object) else None
+                        if isinstance(_extra_eff, dict):
+                            _e_type = _extra_eff.get("type", "")
+                            _e_target = _extra_eff.get("target", "self")
+                            _e_value = _extra_eff.get("value", 1.0)
+                            _e_chance = _extra_eff.get("chance", 1.0)
+                            _e_duration = _extra_eff.get("duration", 0)
+                            _e_stat = _extra_eff.get("stat", None)
+                        else:
+                            _e_type = getattr(_extra_eff, 'type', "")
+                            _e_target = getattr(_extra_eff, 'target', "self")
+                            _e_value = getattr(_extra_eff, 'value', 1.0)
+                            _e_chance = getattr(_extra_eff, 'chance', 1.0)
+                            _e_duration = getattr(_extra_eff, 'duration', 0)
+                            _e_stat = getattr(_extra_eff, 'stat', None)
                         # 治疗效果
                         if _e_type in ("heal",) and _e_target in ("self", "single_ally", "all_allies"):
                             heal_targets = [attacker] if _e_target == "self" else [attacker, char]
