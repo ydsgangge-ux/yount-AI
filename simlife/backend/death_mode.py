@@ -1589,6 +1589,49 @@ class DeathModeEngine:
         total_combat_log = []
         victory = False
         death_return = None
+        # ── 远程先手攻击（远程职业/法术在战斗开始时先造成一轮伤害，敌人无防御）──
+        ranged_classes = ("法师", "术士", "弓手", "猎人", "游侠", "巫师", "贤者", "牧师")
+        preemptive_log = []
+        for role_name, role_char in [("ai", char), ("user", user_char)]:
+            if role_char.get("hp", 0) <= 0:
+                continue
+            if role_name == "user" and not user_in_combat:
+                continue
+            class_name = role_char.get("class_name", "")
+            if not any(c in class_name for c in ranged_classes):
+                continue
+            # 找一个存活的敌人
+            target_enemy = next((e for e in enemies if e.get("hp", 0) > 0), None)
+            if not target_enemy:
+                continue
+            # 使用攻击技能或普通攻击
+            learned = role_char.get("skills", [])
+            atk_skill = None
+            mp = role_char.get("mp", 0)
+            for sid in learned:
+                sk = SkillSystem.get_skill(sid)
+                if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+                    atk_skill = sk
+                    break
+            if atk_skill:
+                skill_mult = atk_skill.effects[0].value if atk_skill.effects else 1.0
+                is_magic = atk_skill.type == "magic"
+                role_char["mp"] = mp - atk_skill.mp_cost
+                skill_name = atk_skill.name
+            else:
+                skill_mult = 1.0
+                is_magic = False
+                skill_name = ""
+            # 先手攻击：敌人无防御
+            preemptive_result = CombatSystem.attack(role_char, target_enemy,
+                                                     defense_action=DefenseAction.NONE,
+                                                     attack_type="magic" if is_magic else "physical",
+                                                     skill_multiplier=skill_mult)
+            preemptive_log.append(f"{role_char.get('name','?')}{'【'+skill_name+'】' if skill_name else ''}先手突袭{preemptive_result['description']} → {target_enemy.get('name', '?')}")
+            _check_drop(target_enemy, role_char.get("stats", {}))
+        if preemptive_log:
+            combat_log.append("🏹 远程先手攻击：")
+            combat_log.extend(preemptive_log)
         for sub_round in range(1, max_sub_rounds + 1):
             # 检查存活敌人
             alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
@@ -1630,6 +1673,7 @@ class DeathModeEngine:
                         continue
                     is_magic = decision.get("is_magic", False)
                     skill_mult = decision.get("skill_mult", 1.0)
+                    _pm_skill_name = ""
                     # 消耗MP
                     if decision.get("action") == "skill":
                         sk_id = decision.get("skill_id", "")
@@ -1637,9 +1681,10 @@ class DeathModeEngine:
                         if sk:
                             pm_obj.mp -= sk.mp_cost
                             attacker["mp"] = pm_obj.mp
+                            _pm_skill_name = f"【{sk.name}】"
                     atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
                                                      attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
-                    round_log.append(f"{pm_obj.name}{atk_result['description']} → {target.get('name', '?')}")
+                    round_log.append(f"{pm_obj.name}{_pm_skill_name}{atk_result['description']} → {target.get('name', '?')}")
                     _check_drop(target, attacker.get("stats", {}))
                     continue
 
@@ -1648,38 +1693,140 @@ class DeathModeEngine:
                     continue
                 is_magic = cmd.get(f"{role}_is_magic", False)
                 skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
+                _used_skill_id = cmd.get(f"{role}_skill")
+                _used_skill_name = ""
+                if _used_skill_id:
+                    _sk_obj = SkillSystem.get_skill(_used_skill_id)
+                    if _sk_obj:
+                        _used_skill_name = f"【{_sk_obj.name}】"
                 atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
                                                  attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
                 # 战术加成
                 if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
                     atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
-                round_log.append(f"{attacker.get('name','?')}{atk_result['description']} → {target.get('name', '?')}")
+                round_log.append(f"{attacker.get('name','?')}{_used_skill_name}{atk_result['description']} → {target.get('name', '?')}")
                 _check_drop(target, attacker.get("stats", {}))
 
-            # ── 存活敌人反击 ──
+                # ── 多效果技能：处理额外效果（heal/buff/stun/dot等）──
+                if _used_skill_id and _sk_obj and len(_sk_obj.effects) > 1:
+                    for _extra_eff in _sk_obj.effects[1:]:
+                        _e_type = getattr(_extra_eff, 'type', _extra_eff.get("type", "")) if isinstance(_extra_eff, object) else ""
+                        _e_target = getattr(_extra_eff, 'target', _extra_eff.get("target", "self")) if isinstance(_extra_eff, object) else "self"
+                        _e_value = getattr(_extra_eff, 'value', _extra_eff.get("value", 1.0)) if isinstance(_extra_eff, object) else 1.0
+                        _e_chance = getattr(_extra_eff, 'chance', _extra_eff.get("chance", 1.0)) if isinstance(_extra_eff, object) else 1.0
+                        _e_duration = getattr(_extra_eff, 'duration', _extra_eff.get("duration", 0)) if isinstance(_extra_eff, object) else 0
+                        _e_stat = getattr(_extra_eff, 'stat', _extra_eff.get("stat", None)) if isinstance(_extra_eff, object) else None
+                        # 治疗效果
+                        if _e_type in ("heal",) and _e_target in ("self", "single_ally", "all_allies"):
+                            heal_targets = [attacker] if _e_target == "self" else [attacker, char]
+                            for _ht in heal_targets:
+                                if _ht.get("hp", 0) <= 0:
+                                    continue
+                                heal_amount = int(_ht.get("stats", {}).get("intelligence", 5) * 3 * _e_value)
+                                max_hp = _ht.get("max_hp", 50)
+                                _ht["hp"] = min(max_hp, _ht.get("hp", 0) + heal_amount)
+                                round_log.append(f"  💚 {_ht.get('name','?')}【{_sk_obj.name}】治疗{heal_amount}HP")
+                        # 控制效果（stun/freeze）
+                        if _e_type in ("stun", "freeze") and random.random() < _e_chance:
+                            eff_targets = [target] if _e_target in ("single_enemy", "self") else [e for e in enemies if e.get("hp", 0) > 0]
+                            for _et in eff_targets:
+                                _et["stagger_turns"] = max(_et.get("stagger_turns", 0), int(_e_value))
+                            round_log.append(f"  ⚡ {target.get('name','?')}被{_e_type}，持续{int(_e_value)}回合")
+                        # 持续伤害（dot）
+                        if _e_type in ("dot", "hot"):
+                            eff_targets = [target] if _e_target in ("single_enemy", "self") else [e for e in enemies if e.get("hp", 0) > 0]
+                            for _et in eff_targets:
+                                _et.setdefault("temp_dots", []).append({"type": _e_type, "value": _e_value, "remaining": _e_duration, "source": attacker.get("name", "?")})
+                            round_log.append(f"  🔥 {target.get('name','?')}受到{_e_type}效果，持续{_e_duration}回合")
+                        # 属性减益（debuff）
+                        if _e_type in ("debuff_stat", "slow") and _e_stat:
+                            eff_targets = [target] if _e_target in ("single_enemy", "self") else [e for e in enemies if e.get("hp", 0) > 0]
+                            for _et in eff_targets:
+                                _et.setdefault("temp_debuffs", {})[_e_stat] = _et.get("temp_debuffs", {}).get(_e_stat, 0) + int(_e_value)
+                            round_log.append(f"  📉 {target.get('name','?')}的{_e_stat}降低{abs(int(_e_value))}点，持续{_e_duration}回合")
+                        # 吸血（life_steal，在攻击后回血）
+                        if _e_type in ("life_steal",):
+                            ls_amount = int(atk_result.get("damage", 0) * _e_value)
+                            if ls_amount > 0:
+                                attack_max_hp = attacker.get("max_hp", 50)
+                                attacker["hp"] = min(attack_max_hp, attacker.get("hp", 0) + ls_amount)
+                                round_log.append(f"  ❤️‍🔥 {attacker.get('name','?')}吸血{ls_amount}HP")
+
+            # ── 存活敌人反击（智能承伤）──
             for enemy in enemies:
                 if enemy.get("hp", 0) <= 0:
                     continue
-                # 决定攻击目标
+                # 决定攻击目标：坦克优先 > HP健康者优先承伤 > 随机
+                # 1. 明确指定坦克
                 if tank_role == "ai" and char.get("hp", 0) > 0:
                     target_char, target_defense, target_name = char, cmd.get("ai_defense", DefenseAction.BLOCK), char.get("name", "你")
                 elif tank_role == "user" and user_in_combat and user_char.get("hp", 0) > 0:
                     target_char, target_defense, target_name = user_char, cmd.get("user_defense", DefenseAction.BLOCK), user_char.get("name", "用户")
                 else:
+                    # 2. 无明确坦克：构建候选列表，按HP比例加权选择
                     import random as _rng
                     candidates = []
-                    if char.get("hp", 0) > 0:
-                        candidates.append(("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)))
-                    if user_in_combat and user_char.get("hp", 0) > 0:
-                        candidates.append(("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)))
+                    # 近战职业自动当坦克（更高被攻击概率）
+                    melee_classes = ("战士", "骑士", "圣骑士", "武僧", "剑士", "狂战士")
+                    for r_name, r_char, r_def in [
+                        ("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)),
+                        ("user", user_char, cmd.get("user_defense", DefenseAction.DODGE)),
+                    ]:
+                        if r_char.get("hp", 0) <= 0:
+                            continue
+                        if r_name == "user" and not user_in_combat:
+                            continue
+                        hp_ratio = r_char.get("hp", 0) / max(1, r_char.get("max_hp", 1))
+                        r_class = r_char.get("class_name", "")
+                        is_melee = any(c in r_class for c in melee_classes)
+                        # 权重：近战职业权重高，HP越低权重越低（避免被集火致死）
+                        weight = 1.0
+                        if is_melee:
+                            weight = 3.0  # 近战更容易被攻击
+                        if hp_ratio < 0.3:
+                            weight *= 0.2  # 危险血量，大幅降低被攻击概率
+                        elif hp_ratio < 0.5:
+                            weight *= 0.5  # 低血量，降低被攻击概率
+                        candidates.append((r_name, r_char, r_def, weight))
                     # 队友也是候选目标
                     for pm in party_in_combat:
                         if pm.hp > 0:
-                            candidates.append((f"party_{pm.member_id}", pm.to_combat_entity(), DefenseAction.BLOCK))
+                            pm_entity = pm.to_combat_entity()
+                            hp_ratio = pm.hp / max(1, pm.max_hp)
+                            weight = 1.0
+                            pm_class = pm.class_name or ""
+                            if any(c in pm_class for c in melee_classes):
+                                weight = 3.0
+                            if hp_ratio < 0.3:
+                                weight *= 0.2
+                            elif hp_ratio < 0.5:
+                                weight *= 0.5
+                            candidates.append((f"party_{pm.member_id}", pm_entity, DefenseAction.BLOCK, weight))
                     if not candidates:
                         continue
-                    pick = _rng.choice(candidates)
+                    # 按权重随机选择
+                    total_weight = sum(c[3] for c in candidates)
+                    if total_weight <= 0:
+                        pick = _rng.choice(candidates)
+                    else:
+                        r_val = _rng.uniform(0, total_weight)
+                        cum = 0
+                        pick = candidates[0]
+                        for c in candidates:
+                            cum += c[3]
+                            if r_val <= cum:
+                                pick = c
+                                break
                     target_char, target_defense, target_name = pick[1], pick[2], pick[1].get("name", "?")
+                    # 如果被攻击者HP危险(<=30%)且有队友存活，有30%概率队友帮忙承伤
+                    target_hp_ratio = target_char.get("hp", 0) / max(1, target_char.get("max_hp", 1))
+                    if target_hp_ratio <= 0.3:
+                        other_allies = [c for c in candidates if c[1] is not target_char and c[1].get("hp", 0) > 0]
+                        if other_allies and _rng.random() < 0.3:
+                            # 队友帮忙承伤
+                            protector = _rng.choice(other_allies)
+                            target_char, target_defense, target_name = protector[1], protector[2], protector[1].get("name", "?")
+                            combat_log.append(f"🛡️ {target_name}挺身而出，为{pick[1].get('name','?')}挡下攻击！")
 
                 if target_char.get("stagger_turns", 0) > 0:
                     target_defense = DefenseAction.NONE
@@ -1710,6 +1857,13 @@ class DeathModeEngine:
                                         "combat_log": round_log, "drops": drops}
                         break
             if death_return:
+                break
+
+            # ── HP危险检查：子回合结束后，任一角色HP<20%则停止战斗 ──
+            ai_hp_ratio = char.get("hp", 0) / max(1, char.get("max_hp", 1))
+            user_hp_ratio = (user_char.get("hp", 0) / max(1, user_char.get("max_hp", 1))) if user_in_combat else 1.0
+            if ai_hp_ratio < 0.2 or user_hp_ratio < 0.2:
+                total_combat_log.append(f"⚠️ HP危险（焕灵{int(ai_hp_ratio*100)}%，yount{int(user_hp_ratio*100)}%），战斗中断")
                 break
 
             # ── 记录本子回合（带回合标记） ──
@@ -1800,6 +1954,53 @@ class DeathModeEngine:
         enemy_total_hp_start = sum(e.get("hp", e.get("max_hp", 0)) for e in enemies)
         enemy_half_target = enemy_total_hp_start * 0.5 if stop_condition == "half" else 0
 
+        # ── 扫荡开始前自动施放辅助技能（buff/shield/heal）──
+        support_log = []
+        for role_name, role_char in [("ai", char), ("user", user_char)]:
+            if role_char.get("hp", 0) <= 0:
+                continue
+            if role_name == "user" and not user_in_combat:
+                continue
+            learned = role_char.get("skills", [])
+            if not learned:
+                continue
+            mp = role_char.get("mp", 0)
+            for sid in learned:
+                sk = SkillSystem.get_skill(sid)
+                if not sk or sk.type not in ("buff", "heal"):
+                    continue
+                if sk.mp_cost > mp:
+                    continue
+                targets = {
+                    "self": [role_char],
+                    "single_enemy": [],
+                    "all_enemies": [],
+                    "single_ally": [role_char],
+                    "all_allies": [role_char],
+                }
+                if sk.type == "heal":
+                    allies = []
+                    if char.get("hp", 0) > 0:
+                        allies.append(char)
+                    if user_in_combat and user_char.get("hp", 0) > 0:
+                        allies.append(user_char)
+                    if not allies:
+                        continue
+                    lowest_hp_ally = min(allies, key=lambda a: a.get("hp", 0) / max(1, a.get("max_hp", 1)))
+                    if lowest_hp_ally.get("hp", 0) >= lowest_hp_ally.get("max_hp", 1) * 0.9:
+                        continue
+                    targets["single_ally"] = [lowest_hp_ally]
+                    targets["all_allies"] = allies
+                skill_result = SkillSystem.resolve_skill(sk, role_char, targets)
+                mp -= sk.mp_cost
+                role_char["mp"] = mp
+                if skill_result.get("log"):
+                    support_log.extend(skill_result["log"])
+        if support_log:
+            all_combat_logs.append("💫 扫荡开始前施放辅助技能：")
+            for log_line in support_log:
+                all_combat_logs.append(f"  {log_line}")
+
         # 用于兜底（当循环未执行时）
         combat_result = {"combat_log": [], "drops": [], "player_died": False, "user_died": False}
 
@@ -1808,6 +2009,15 @@ class DeathModeEngine:
             alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
             if not alive_enemies:
                 stopped_at = "enemies_defeated"
+                break
+
+            # ── HP阈值检查：任一角色HP<20%时自动停止扫荡，切换到逐回合模式 ──
+            ai_hp_ratio = char.get("hp", 0) / max(1, char.get("max_hp", 1))
+            user_hp_ratio = (user_char.get("hp", 0) / max(1, user_char.get("max_hp", 1))) if user_in_combat else 1.0
+            if ai_hp_ratio < 0.2 or user_hp_ratio < 0.2:
+                stopped_at = "low_hp"
+                key_events.append(f"角色HP危险（焕灵{int(ai_hp_ratio*100)}%/yount{int(user_hp_ratio*100)}%），自动停止扫荡")
+                all_combat_logs.append(f"⚠️ 角色HP危险，自动停止扫荡！焕灵{int(ai_hp_ratio*100)}%，yount{int(user_hp_ratio*100)}%")
                 break
 
             # 半血目标：敌人总HP已降到初始一半以下 → 停止
@@ -2247,6 +2457,34 @@ class DeathModeEngine:
                             result["user_target"] = e
                             break
                 break
+
+        # ── 自动选择技能（用户未指定技能时，自动使用已学技能）──
+        # 优先级：用户口令明确指定 > 自动选择已学技能 > 普通攻击
+        for role_name, role_char in [("ai", ai_char), ("user", user_char)]:
+            if result.get(f"{role_name}_skill"):  # 用户口令已指定技能，跳过
+                continue
+            if role_char.get("hp", 0) <= 0:
+                continue
+            learned = role_char.get("skills", [])
+            if not learned:
+                continue
+            mp = role_char.get("mp", 0)
+            # 筛选有MP可用的伤害技能
+            usable = []
+            for sid in learned:
+                sk = SkillSystem.get_skill(sid)
+                if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+                    usable.append(sk)
+            if not usable:
+                continue
+            # 随机选一个技能
+            sk = random.choice(usable)
+            is_magic = sk.type == "magic"
+            result[f"{role_name}_is_magic"] = is_magic
+            result[f"{role_name}_skill_mult"] = sk.effects[0].value if sk.effects else 1.0
+            result[f"{role_name}_skill"] = sk.id
+            # 消耗MP
+            role_char["mp"] = mp - sk.mp_cost
 
         return result
 

@@ -213,13 +213,21 @@ class CombatSystem:
     def _get_stats(entity) -> Dict:
         if isinstance(entity, CombatEntity):
             return entity.current_stats
-        # Dict实体：基础属性 + 装备属性加成
+        # Dict实体：基础属性 + 装备属性加成 + 临时buff/debuff
         base = dict(entity.get("stats", {}))
         for eq in entity.get("equipment", []):
             if eq.get("stat_bonus"):
                 for k, v in eq["stat_bonus"].items():
                     if k in base:
                         base[k] += v
+        # 临时buff（如祝福提升运气/体质）
+        for k, v in entity.get("temp_buffs", {}).items():
+            if k in base:
+                base[k] += v
+        # 临时debuff（如减速降低敏捷）
+        for k, v in entity.get("temp_debuffs", {}).items():
+            if k in base:
+                base[k] += v
         return base
 
     @staticmethod
@@ -449,6 +457,17 @@ class CombatSystem:
             final_damage = int(final_damage * (1 - def_passive["magic_damage_reduce"]))
         final_damage = max(0, final_damage)
 
+        # 护盾扣减（魔法护盾等shield效果优先吸收伤害）
+        shield_absorbed = 0
+        if isinstance(defender, dict) and defender.get("shield", 0) > 0 and final_damage > 0:
+            shield_val = defender["shield"]
+            shield_absorbed = min(shield_val, final_damage)
+            defender["shield"] = shield_val - shield_absorbed
+            final_damage -= shield_absorbed
+            if shield_absorbed > 0 and defender.get("shield", 0) == 0:
+                # 护盾被击破，移除字段
+                defender.pop("shield", None)
+
         # 扣血（兼容两种格式）
         if isinstance(defender, CombatEntity):
             defender.hp = max(0, defender.hp - final_damage)
@@ -467,10 +486,11 @@ class CombatSystem:
         # 构建描述
         crit_str = "暴击！" if is_crit else ""
         def_desc = defense_result["description"]
+        shield_str = f"🛡️护盾吸收{shield_absorbed}点，" if shield_absorbed > 0 else ""
         if final_damage > 0:
-            damage_str = f"造成{final_damage}点伤害"
+            damage_str = f"{shield_str}造成{final_damage}点伤害"
         else:
-            damage_str = "未造成伤害"
+            damage_str = f"{shield_str}未造成伤害" if shield_str else "未造成伤害"
 
         return {
             "hit": True,
@@ -479,6 +499,7 @@ class CombatSystem:
             "damage": final_damage,
             "raw_damage": damage,
             "defense_result": defense_result,
+            "shield_absorbed": shield_absorbed,
             "description": f"{crit_str}{def_desc}，{damage_str}",
         }
 
