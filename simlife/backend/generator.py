@@ -15,19 +15,139 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from engine.llm_client import create_client
 
 
-def _safe_json_loads(text: str):
-    """安全解析JSON：先清理控制字符再解析"""
+def _strip_controls_json(s: str) -> str:
+    """清理 JSON 中的控制字符（保持引号内语义）"""
     import re as _re_sj
-    def _strip_controls(s):
-        # 在JSON字符串值内部替换未转义的控制字符
-        def fix_string(m):
-            inner = m.group(1)
-            inner = inner.replace('\t', ' ').replace('\n', '\\n').replace('\r', '')
-            return '"' + inner + '"'
-        s = _re_sj.sub(r'"((?:[^"\\]|\\.)*)"', fix_string, s)
-        return s
-    cleaned = _strip_controls(text)
-    return json.loads(cleaned)
+    def fix_string(m):
+        inner = m.group(1)
+        inner = inner.replace('\t', ' ').replace('\n', '\\n').replace('\r', '')
+        return '"' + inner + '"'
+    return _re_sj.sub(r'"((?:[^"\\]|\\.)*)"', fix_string, s)
+
+
+def _repair_json(text: str) -> str:
+    """尽力修复 LLM 输出中的常见 JSON 语法错误（保守、不误伤）"""
+    import re as _re_rj
+    s = text
+    # 1. 去掉代码块围栏 ```json ... ```
+    s = _re_rj.sub(r'```(?:json)?', '', s)
+    # 2. 去掉尾随逗号（对象和数组内）
+    s = _re_rj.sub(r',(\s*[}\]])', r'\1', s)
+    # 3. 把单引号字符串转双引号（只处理简单无转义情况）
+    s = _re_rj.sub(r"(?<!\\)'([^'\\]*)'(?=\s*[,:}\]])", r'"\1"', s)
+    # 4. 保守补缺逗号：
+    #    a) 值后紧跟下一个键：闭合括号/数字/布尔/null 后跟引号 → "a":1 "b" → "a":1, "b"
+    s = _re_rj.sub(r'([}\]0-9truefalsenul])(\s*)("(?![:\s]))', r'\1,\2\3', s)
+    #    b) 相邻字符串：字符串值后紧跟另一个字符串键（非冒号前） → "a" "b" → "a", "b"
+    #       仅当前面不是 ":" 或 "," 之后才补，避免误伤
+    s = _repair_adjacent_strings(s)
+    # 5. 提取第一个 JSON 对象/数组（若前后有杂文本）
+    match = _re_rj.search(r'[\{\[][\s\S]*[\}\]]', s)
+    if match:
+        s = match.group(0)
+    return s
+
+
+def _repair_adjacent_strings(s: str) -> str:
+    """用字符扫描修复相邻字符串缺逗号：'值'后紧跟'"'(新键开头)时补逗号。
+    只处理成对匹配的字符串，避免误伤冒号/逗号后的正常结构。
+    """
+    out = []
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == '"':
+            # 找字符串结束
+            j = i + 1
+            while j < n:
+                if s[j] == '\\':
+                    j += 2
+                    continue
+                if s[j] == '"':
+                    break
+                j += 1
+            if j >= n:
+                # 未闭合，直接追加剩余
+                out.append(s[i:])
+                break
+            # 完整字符串 s[i:j+1]
+            out.append(s[i:j+1])
+            k = j + 1
+            # 跳过空白
+            while k < n and s[k] in ' \t\r\n':
+                k += 1
+            # 如果后面紧跟 '"'（新字符串），且前面不是 ':' 或 ','，则补逗号
+            if k < n and s[k] == '"':
+                # 检查这个字符串是否前面是冒号(即它是键) — 通过看 i 前面一个非空白字符判断
+                prev = _last_non_space(out)
+                if prev not in (':', ',', '[', '{'):
+                    out.append(',')
+            i = k
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
+def _last_non_space(parts: list) -> str:
+    """取已输出部分的最后一个非空白字符（用于判断上下文）"""
+    for p in reversed(parts):
+        if p is None:
+            continue
+        if isinstance(p, str):
+            for c in reversed(p):
+                if c not in ' \t\r\n':
+                    return c
+    return ''
+
+
+def _safe_json_loads(text: str):
+    """安全解析JSON：清理控制字符 + 修复常见语法错误 + 提取JSON块
+    依次尝试：直接解析 → 控制字符清理 → 语法修复 → 正则提取
+    """
+    import re as _re_sj
+    if not text or not isinstance(text, str):
+        raise ValueError("空或非字符串的JSON输入")
+
+    def _try_load(s):
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            return None
+
+    # 1. 直接解析
+    r = _try_load(text)
+    if r is not None:
+        return r
+
+    # 2. 清理控制字符后解析
+    cleaned = _strip_controls_json(text)
+    r = _try_load(cleaned)
+    if r is not None:
+        return r
+
+    # 3. 语法修复（尾随逗号/缺逗号/单引号/围栏/杂文本）
+    repaired = _repair_json(cleaned)
+    r = _try_load(repaired)
+    if r is not None:
+        return r
+
+    # 4. 修复后再清一次控制字符
+    r = _try_load(_strip_controls_json(repaired))
+    if r is not None:
+        return r
+
+    # 5. 正则提取 JSON 块
+    match = _re_sj.search(r'[\{\[][\s\S]*[\}\]]', text)
+    if match:
+        r = _try_load(match.group(0))
+        if r is not None:
+            return r
+        r = _try_load(_repair_json(match.group(0)))
+        if r is not None:
+            return r
+
+    raise json.JSONDecodeError("无法修复的JSON", text, 0)
 
 
 def _get_world_context() -> str:
@@ -145,15 +265,26 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
 
 只返回JSON，不要任何其他文字。确保JSON可以直接被解析。"""
 
-    try:
-        response = llm.generate(prompt, max_tokens=8000, temperature=0.8)
-        response = response.strip()
-        # 提取 JSON（可能被 markdown 代码块包裹）
-        json_match = re.search(r'\{[\s\S]*\}', response)
-        if json_match:
-            response = json_match.group(0)
+    setting = None
+    # 首次尝试 + 失败重试（解析失败时用更低 temperature 再试一次）
+    for attempt, temp in ((1, 0.8), (2, 0.4)):
+        try:
+            response = llm.generate(prompt, max_tokens=8000, temperature=temp)
+            response = response.strip()
+            # 提取 JSON（可能被 markdown 代码块包裹）
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                response = json_match.group(0)
 
-        setting = _safe_json_loads(response)
+            setting = _safe_json_loads(response)
+            if setting:
+                break
+        except Exception as e:
+            print(f"[SimLife] 世界观生成第{attempt}次解析失败: {e}")
+            setting = None
+
+    if setting is None:
+        raise ValueError("世界观生成失败：多次尝试无法获得有效JSON")
 
         # 确保 world_id 合法
         if not setting.get("world_id") or setting["world_id"] == "modern":
