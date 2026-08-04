@@ -16,6 +16,7 @@ from typing import Dict, Optional, List
 from simlife.backend.death_mode_state import (
     create_initial_state, save_state, load_state, clear_state,
     save_to_hall, load_hall, get_available_classes, CLASS_TEMPLATES,
+    STATE_FILE,
 )
 from simlife.backend.combat_system import CombatSystem, CombatEntity, DefenseAction
 from simlife.backend.growth_system import GrowthSystem
@@ -272,7 +273,20 @@ class DeathModeEngine:
         user_class_id: str = "",
         user_name: str = "",
     ) -> Dict:
-        """开始新游戏"""
+        """开始新游戏 — 完全清除旧世界数据"""
+        # 清除旧状态文件（包括 .json.dead 备份）
+        clear_state()
+        old_dead = STATE_FILE.with_suffix(".json.dead")
+        if old_dead.exists():
+            try:
+                old_dead.unlink()
+            except Exception:
+                pass
+
+        self.state = None
+        self.world_map = None
+        self.npc_system = None
+
         self.state = create_initial_state(
             character_name=character_name,
             class_id=class_id,
@@ -2931,6 +2945,11 @@ class DeathModeEngine:
                 "interaction": interaction_type,
                 "message": result.get("message", ""),
             })
+            # 任务进度：与NPC交谈触发
+            try:
+                QuestSystem.record_progress(state, "talk_npc", npc_name=npc_name)
+            except Exception:
+                pass
             self._save()
 
         return result

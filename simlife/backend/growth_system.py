@@ -6,7 +6,7 @@
 import random
 from typing import Dict, List, Tuple
 
-from simlife.backend.skill_system import SkillSystem
+from simlife.backend.skill_system import SkillSystem, MAX_LEVEL
 
 
 class GrowthSystem:
@@ -56,13 +56,20 @@ class GrowthSystem:
             "exp_gained": actual_exp,
             "new_level": character["level"],
             "stat_points_gained": 0,
+            "skill_points_gained": 0,
             "new_skills": [],
         }
 
-        # 检查升级
-        while character["experience"] >= character["exp_to_next"]:
+        # 检查升级（满级后不再升级）
+        while character["experience"] >= character["exp_to_next"] and character["level"] < MAX_LEVEL:
             character["experience"] -= character["exp_to_next"]
             character["level"] += 1
+
+            # 满级后清空经验
+            if character["level"] >= MAX_LEVEL:
+                character["experience"] = 0
+                character["exp_to_next"] = 0
+                result["max_level_reached"] = True
 
             # 更新升级经验需求
             character["exp_to_next"] = int(character["exp_to_next"] * config["exp_curve"])
@@ -78,7 +85,12 @@ class GrowthSystem:
             character["stat_points"] = character.get("stat_points", 0) + points
             result["stat_points_gained"] += points
 
-            # 检查新技能解锁（使用 SkillSystem）
+            # 技能学习点：每升2级获得1个技能点（用于手动学习新技能）
+            if character["level"] % 2 == 0:
+                character["skill_points"] = character.get("skill_points", 0) + 1
+                result["skill_points_gained"] = result.get("skill_points_gained", 0) + 1
+
+            # 检查新技能解锁提示（不自动学习，玩家需手动通过技能面板学习）
             class_id = character.get("class_id", "warrior")
             world_type = character.get("world_type", "fantasy")
             stats = character.get("stats", {})
@@ -88,8 +100,8 @@ class GrowthSystem:
             for item in available:
                 skill = item["skill"]
                 if skill.req_level <= character["level"] and skill.id not in known_skills:
-                    character["skills"].append(skill.id)
-                    result["new_skills"].append({"id": skill.id, "name": skill.name})
+                    # 只记录可学的新技能，不自动加入skills列表
+                    result["new_skills"].append({"id": skill.id, "name": skill.name, "manual_learn": True})
 
             result["leveled_up"] = True
             result["new_level"] = character["level"]

@@ -450,7 +450,19 @@ class EquipmentSystem:
 
     @staticmethod
     def get_item_slot(item: Dict) -> str:
-        """获取装备对应的槽位"""
+        """获取装备对应的槽位。
+        优先读已记录的 equipped_slot（已穿戴的装备），没有再按 subtype 推断（背包里的物品）。
+        这样双持时两把单手武器能区分 main_hand / off_hand。
+        """
+        # 已穿戴装备记录了实际槽位
+        recorded = item.get("equipped_slot")
+        if recorded:
+            return recorded
+        # 向后兼容：旧存档里可能存的是 "slot"
+        recorded = item.get("slot")
+        if recorded:
+            return recorded
+        # 背包里的物品：按 subtype 推断默认槽位
         eq_type = item.get("type", "weapon")
         if eq_type == "outfit":
             return "outfit"
@@ -593,17 +605,53 @@ class EquipmentSystem:
 
     @staticmethod
     def equip_item(character: Dict, item: Dict) -> Dict:
-        """穿戴装备，同槽位替换，旧装备进背包，双手武器占双槽"""
-        slot = EquipmentSystem.get_item_slot(item)
+        """穿戴装备，同槽位替换，旧装备进背包。
+        支持双持单手武器：主手已装单手武器时，第二把装到副手。
+        双手武器占主手+副手。
+        """
         equipment = character.get("equipment", [])
         inventory = character.get("inventory", [])
-        subtype = item.get("subtype")
+        subtype = item.get("subtype", "one_handed")
 
-        # 双手武器：占主手+副手，卸下主手和副手已有装备
-        occupied_slots = [slot]
+        # 找出当前主手/副手已装备的物品
+        main_hand_item = None
+        off_hand_item = None
+        for eq in equipment:
+            eq_slot = EquipmentSystem.get_item_slot(eq)
+            if eq_slot == "main_hand":
+                main_hand_item = eq
+            elif eq_slot == "off_hand":
+                off_hand_item = eq
+
+        # 决定本次装备的目标槽位
         if subtype == "two_handed":
-            occupied_slots.append("off_hand")
+            # 双手武器：占主手+副手
+            target_slot = "main_hand"
+            occupied_slots = ["main_hand", "off_hand"]
+        elif subtype == "one_handed":
+            # 单手武器：智能选择主手或副手
+            if main_hand_item is None:
+                # 主手空 → 装主手
+                target_slot = "main_hand"
+                occupied_slots = ["main_hand"]
+            elif main_hand_item.get("subtype") == "two_handed":
+                # 主手是双手武器 → 替换掉双手武器（同时清空副手）
+                target_slot = "main_hand"
+                occupied_slots = ["main_hand", "off_hand"]
+            elif off_hand_item is None:
+                # 主手已装单手武器 + 副手空 → 装副手（双持）
+                target_slot = "off_hand"
+                occupied_slots = ["off_hand"]
+            else:
+                # 主手+副手都满 → 替换副手（玩家意图双持）
+                target_slot = "off_hand"
+                occupied_slots = ["off_hand"]
+        else:
+            # 其他类型（盾/副手物品/远程/穿着）按默认槽位
+            target_slot = EquipmentSystem.get_item_slot(item)
+            occupied_slots = [target_slot]
 
+        # 收集被替换的旧装备
         old_items = []
         new_equipment = []
         for eq in equipment:
@@ -613,11 +661,22 @@ class EquipmentSystem:
             else:
                 new_equipment.append(eq)
 
+        # 给新装备打上 equipped_slot 标记（双持时区分主/副手）
+        # 同时更新 slot 字段，让前端无需改动
+        item = dict(item)
+        item["equipped_slot"] = target_slot
+        item["slot"] = target_slot
         new_equipment.append(item)
         character["equipment"] = new_equipment
 
+        # 旧装备进背包（清理槽位标记，恢复成"背包物品"状态）
         for old in old_items:
-            inventory.append(old)
+            old_clean = dict(old)
+            old_clean.pop("equipped_slot", None)
+            # 恢复 slot 为基于 subtype 的默认值（背包物品状态）
+            old_subtype = old_clean.get("subtype", "one_handed")
+            old_clean["slot"] = EquipmentSystem.SUBTYPE_SLOT_MAP.get(old_subtype, "main_hand")
+            inventory.append(old_clean)
             character["inventory"] = inventory
 
         replaced_names = [o["name"] for o in old_items] if old_items else None
@@ -625,7 +684,7 @@ class EquipmentSystem:
         return {
             "success": True,
             "equipped": item["name"],
-            "slot": EquipmentSystem.SLOT_NAMES.get(slot, slot),
+            "slot": EquipmentSystem.SLOT_NAMES.get(target_slot, target_slot),
             "replaced": replaced_names,
             "rarity": item.get("rarity_name", "普通"),
         }
@@ -654,10 +713,19 @@ class EquipmentSystem:
             new_equipment = [e for e in new_equipment if EquipmentSystem.get_item_slot(e) != "off_hand"]
 
         character["equipment"] = new_equipment
-        inventory.append(found)
+        # 卸下的装备恢复成"背包物品"状态（清理槽位标记）
+        found_clean = dict(found)
+        found_clean.pop("equipped_slot", None)
+        found_subtype = found_clean.get("subtype", "one_handed")
+        found_clean["slot"] = EquipmentSystem.SUBTYPE_SLOT_MAP.get(found_subtype, "main_hand")
+        inventory.append(found_clean)
         character["inventory"] = inventory
         for ri in related_items:
-            inventory.append(ri)
+            ri_clean = dict(ri)
+            ri_clean.pop("equipped_slot", None)
+            ri_subtype = ri_clean.get("subtype", "one_handed")
+            ri_clean["slot"] = EquipmentSystem.SUBTYPE_SLOT_MAP.get(ri_subtype, "main_hand")
+            inventory.append(ri_clean)
             character["inventory"] = inventory
 
         msg = f"卸下 {item_name}"

@@ -1412,10 +1412,11 @@ def api_death_mode_start(data: dict):
 
     # 同步用户角色能力设定（用户角色使用用户选择的职业）
     user_profile = _load_user_profile()
-    from simlife.backend.death_mode_state import get_class_template, _get_world_type_from_setting
+    from simlife.backend.death_mode_state import get_class_template, _get_world_type_from_setting, _convert_skill_names_to_ids
     world_type = _get_world_type_from_setting(world_setting)
     user_cls = get_class_template(world_type, user_class_id)
     if user_cls:
+        user_skill_ids = _convert_skill_names_to_ids(user_cls["starting_skills"], world_type, user_class_id)
         user_profile["class_id"] = user_class_id
         user_profile["class_name"] = user_cls["name"]
         user_profile["stats"] = dict(user_cls["base_stats"])
@@ -1424,7 +1425,7 @@ def api_death_mode_start(data: dict):
         user_profile["mp"] = user_cls["base_mp"]
         user_profile["max_mp"] = user_cls["base_mp"]
         user_profile["level"] = 1
-        user_profile["skills"] = list(user_cls["starting_skills"])
+        user_profile["skills"] = user_skill_ids
         if user_name:
             user_profile["name"] = user_name
         _save_user_profile(user_profile)
@@ -1443,7 +1444,7 @@ def api_death_mode_start(data: dict):
                 "mp": user_cls["base_mp"],
                 "max_mp": user_cls["base_mp"],
                 "stats": dict(user_cls["base_stats"]),
-                "skills": list(user_cls["starting_skills"]),
+                "skills": user_skill_ids,
                 "awakening_skills": [],
                 "equipment": [],
                 "experience": 0,

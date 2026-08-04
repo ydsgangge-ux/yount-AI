@@ -235,7 +235,9 @@ def create_initial_state(
             "choices": [],
             "history": [],
             "pending_action": None,
+            "unresolved_hooks": [],  # 未解决的剧情钩子（LLM 必须承接）
         },
+        "spotted_enemies": [],  # 叙事中提到的敌人，战斗时优先使用
         "enemy": None,  # 当前遭遇的敌人信息（兼容旧版）
         "enemies": [],  # 当前遭遇的敌人列表（支持一群怪）
         "in_combat": False,  # 是否在战斗中
@@ -245,6 +247,18 @@ def create_initial_state(
         "start_time": datetime.now().isoformat(),  # 游戏开始时间（天数按实际时间计算）
         "kill_count": 0,
         "created_at": datetime.now().isoformat(),
+        # ── 任务系统 ──
+        "quests": {
+            "active": [],            # 已接进行中的任务实例
+            "available_offers": [],  # LLM 动态生成的任务委托（未接受）
+            "turned_in_ids": [],     # 已交付的任务 id
+            "failed_ids": [],        # 失败的任务 id
+            "series_progress": {},   # series_id -> 当前已完成到第几个
+            "dynamic_series": {},   # series_id -> {title, description}（LLM 生成的系列信息）
+        },
+        # ── 世界推进 ──
+        "world_news": [],              # 冒险者酒馆新闻列表
+        "world_progress_triggered": [],  # 已触发的世界事件 id
         # ── 共享背包 ──
         "shared_inventory": [],  # 两角色共享的背包（装备穿戴后从此取出）
         # ── 用户角色（与AI角色并列） ──

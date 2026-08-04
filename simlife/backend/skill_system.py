@@ -20,7 +20,10 @@ from enum import Enum
 # ============================================================
 
 MAX_SKILLS = 10  # 单个角色最多可学习的技能数量
+MAX_LEVEL = 60   # 角色满级
 AWAKENING_SLOTS = 3  # 每个角色预留的觉醒技能槽位数量
+# 觉醒技能槽位等级要求：槽位0需40级，槽位1需50级，槽位2需60级
+AWAKENING_LEVEL_REQ = [40, 50, 60]
 
 
 # 觉醒技能模板（空槽位用）
@@ -714,12 +717,15 @@ class SkillSystem:
     def get_awakening_slots(cls, character: Dict) -> List[Dict]:
         """
         获取角色的觉醒技能槽位
-        
-        返回: [{"slot_index": 0, "skill": Skill|None, "is_empty": bool}, ...]
+
+        返回: [{"slot_index": 0, "skill": Skill|None, "is_empty": bool, "req_level": 40, "unlocked": bool}, ...]
         """
         awakening_skills = character.get("awakening_skills", [])
+        char_level = character.get("level", 1)
         slots = []
         for i in range(AWAKENING_SLOTS):
+            req_level = AWAKENING_LEVEL_REQ[i]
+            unlocked = char_level >= req_level
             if i < len(awakening_skills) and awakening_skills[i]:
                 skill_data = awakening_skills[i]
                 if skill_data.get("name") and skill_data.get("name") != "空":
@@ -728,18 +734,24 @@ class SkillSystem:
                         "slot_index": i,
                         "skill": skill,
                         "is_empty": False,
+                        "req_level": req_level,
+                        "unlocked": unlocked,
                     })
                 else:
                     slots.append({
                         "slot_index": i,
                         "skill": None,
                         "is_empty": True,
+                        "req_level": req_level,
+                        "unlocked": unlocked,
                     })
             else:
                 slots.append({
                     "slot_index": i,
                     "skill": None,
                     "is_empty": True,
+                    "req_level": req_level,
+                    "unlocked": unlocked,
                 })
         return slots
 
@@ -748,7 +760,7 @@ class SkillSystem:
                              skill_data: Dict) -> Tuple[bool, str]:
         """
         设置觉醒技能
-        
+
         skill_data: {
             "name": str,          # 技能名称
             "type": str,          # physical/magic/heal/buff/utility
@@ -759,6 +771,12 @@ class SkillSystem:
         """
         if slot_index < 0 or slot_index >= AWAKENING_SLOTS:
             return False, f"槽位索引无效（0~{AWAKENING_SLOTS-1}）"
+
+        # 等级检查：槽位0需40级，槽位1需50级，槽位2需60级
+        req_level = AWAKENING_LEVEL_REQ[slot_index]
+        char_level = character.get("level", 1)
+        if char_level < req_level:
+            return False, f"觉醒技能槽位{slot_index}需要等级{req_level}，当前等级{char_level}"
 
         # 验证技能数据
         name = skill_data.get("name", "").strip()
@@ -781,7 +799,7 @@ class SkillSystem:
             "type": skill_type,
             "mp_cost": max(0, skill_data.get("mp_cost", 10)),
             "effects": effects,
-            "req_level": 1,
+            "req_level": req_level,
             "req_class": None,
             "req_stats": {},
             "cooldown": max(0, skill_data.get("cooldown", 0)),
