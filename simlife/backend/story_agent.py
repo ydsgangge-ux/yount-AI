@@ -52,16 +52,36 @@ class StoryAgent:
         except Exception:
             region_ctx, relations_ctx = "", ""
 
-        # ── 2. 区域文件未命中时，回退到内嵌 regions ──
+        # ── 2. 区域文件未命中时，从 world_map 中获取区域数据 ──
         if not region_ctx:
-            current_region = self._resolve_current_region(state, ws)
-            if current_region:
-                region_ctx = self._build_region_context(current_region, ws)
+            # 优先从 world_map 的区域数据构建上下文
+            wm_data = state.get("world_map", {})
+            wm_regions = wm_data.get("regions", {})
+            cur_region_id = wm_data.get("current_region_id", "")
+            cur_location = state.get("story", {}).get("current_location", "")
+            # 尝试匹配当前区域
+            region_data = None
+            for rid, rdata in wm_regions.items():
+                if rid == cur_region_id or rid == cur_location or rdata.get("name") == cur_location:
+                    region_data = rdata
+                    break
+            if region_data:
+                r_name = region_data.get("name", cur_location or "未知")
+                r_desc = region_data.get("description", "")
+                r_type = region_data.get("region_type", "")
+                r_danger = region_data.get("danger_level", 0)
+                type_label = {"town": "城镇", "wild": "野外", "dungeon": "地下城", "boss_lair": "Boss巢穴", "secret": "隐秘区域"}.get(r_type, r_type)
+                region_ctx = f"【当前区域】{r_name}（{type_label}，危险等级{r_danger}）\n{r_desc}"
             else:
-                regions = ws.get("geography", {}).get("regions", [])
-                if regions:
-                    names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
-                    region_ctx = f"已知区域：{'、'.join(names)}"
+                # 最终回退到内嵌 regions
+                current_region = self._resolve_current_region(state, ws)
+                if current_region:
+                    region_ctx = self._build_region_context(current_region, ws)
+                else:
+                    regions = ws.get("geography", {}).get("regions", [])
+                    if regions:
+                        names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
+                        region_ctx = f"已知区域：{'、'.join(names)}"
 
         # ── 3. 世界地理概述 ──
         geo_overview = ws.get("geography", {}).get("overview", "")

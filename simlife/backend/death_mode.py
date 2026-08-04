@@ -307,6 +307,28 @@ class DeathModeEngine:
         self.world_map = MapGenerator.generate(world_setting, self.llm)
         self.state["world_map"] = self.world_map.to_dict()
 
+        # 把地图区域保存到文件系统，供 world_manager.load_region 使用
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = world_setting.get("world_id", "")
+            if world_id:
+                for rid, region in self.world_map.regions.items():
+                    region_data = {
+                        "id": rid,
+                        "name": region.name,
+                        "description": region.description,
+                        "climate": "",
+                        "key_locations": [],
+                        "dangers": [],
+                        "npcs": [],
+                        "factions": [],
+                        "level_range": [],
+                        "biome": region.region_type or "",
+                    }
+                    wm.save_region(world_id, region_data)
+        except Exception as e:
+            print(f"[DeathMode] 保存区域文件失败: {e}")
+
         # 生成NPC
         self.npc_system = NPCGenerator.generate_for_world(world_setting, self.world_map, self.llm)
         self.state["npc_system"] = self.npc_system.to_dict()
