@@ -216,7 +216,7 @@ class StoryAgent:
         return npcs[:3]
 
     def _build_character_context(self, state: Dict) -> str:
-        """构建角色状态"""
+        """构建角色状态（含用户同伴角色）"""
         char = state.get("character", {})
         stats = char.get("stats", {})
 
@@ -229,6 +229,19 @@ class StoryAgent:
             f"装备：{'、'.join([e.get('name','') for e in char.get('equipment', [])]) or '无'}",
             f"金币：{char.get('gold', 0)}",
         ]
+
+        # 用户同伴角色（重要：让LLM知道有两个主角一起冒险）
+        user_char = state.get("user_character", {})
+        if user_char.get("class_name") or user_char.get("name"):
+            u_stats = user_char.get("stats", {})
+            parts.append("")
+            parts.append(f"同伴：{user_char.get('name', '用户')}（{user_char.get('class_name', '冒险者')} Lv.{user_char.get('level', 1)}）")
+            parts.append(f"同伴HP: {user_char.get('hp', 0)}/{user_char.get('max_hp', 0)}")
+            parts.append(f"同伴MP: {user_char.get('mp', 0)}/{user_char.get('max_mp', 0)}")
+            parts.append(f"同伴属性：力量{u_stats.get('strength',5)} 敏捷{u_stats.get('agility',5)} 智力{u_stats.get('intelligence',5)} 体质{u_stats.get('vitality',5)} 运气{u_stats.get('luck',5)}")
+            parts.append(f"同伴技能：{'、'.join(user_char.get('skills', [])) or '无'}")
+            parts.append(f"同伴装备：{'、'.join([e.get('name','') for e in user_char.get('equipment', [])]) or '无'}")
+            parts.append(f"（{char.get('name', 'AI')} 与 {user_char.get('name', '用户')} 是一起冒险的同伴，行动中提到「两人」「我们」「他俩」时，默认就是指他们俩，不要写成其他NPC）")
         return "\n".join(parts)
 
     def _build_story_context(self, state: Dict) -> str:
@@ -353,11 +366,12 @@ class StoryAgent:
             print(f"[DeathMode] 场景生成失败: {e}")
             return self._default_scene(chapter, day)
 
-    def process_action(self, state: Dict, action: str, action_type: str = "choice") -> Dict:
+    def process_action(self, state: Dict, action: str, action_type: str = "choice", sender: str = "user") -> Dict:
         """
         处理用户行动，生成叙事结果。
         action: 用户选择的选项ID 或 自由输入的行动描述
         action_type: "choice" (选择预设选项) / "free" (自由输入)
+        sender: "user"（用户发的指令）或 "ai"（系统角色发的指令，行动中的「我」指AI角色）
         返回: {"narrative": "叙事文本", "outcome": "...", "combat_triggered": bool}
         """
         char = state.get("character", {})
@@ -389,19 +403,45 @@ class StoryAgent:
         if hooks:
             hooks_ctx = "【必须承接的剧情钩子】\n" + "\n".join(f"  - {h}" for h in hooks) + "\n"
 
-        # ── 识别行动主角（用户可操作 AI 角色：当行动明确提到焕灵时，由焕灵执行）──
-        # 玩家通过输入"焕灵查看..."等指令，让 AI 系统角色代为行动
+        # ── 识别行动主角 ──
+        # sender="ai"：行动由 A层（系统角色）发起，行动中的「我」指 AI角色
+        # sender="user"：行动由用户发起，行动中的「我」指用户角色
         _ai_name = char.get("name", "焕灵")
         _user_name = user_char.get("name", "你") if user_char.get("class_name") else ""
         _action_lower = (action or "").strip()
-        # 默认主角：用户（叙事用"你"或用户名）
-        _subject = _user_name or "你"
-        _ai_mentioned = False
-        if _ai_name and _ai_name in _action_lower:
-            _ai_mentioned = True
-            _subject = _ai_name  # 明确提到焕灵 → 由焕灵执行
-        # 角色行动提示（告诉 LLM 谁是主角）
-        _subject_hint = f"【行动主角】本行动由『{_subject}』执行。叙事必须以此角色为主语（用其名字或对应称谓称呼它），不要写成其它角色。"
+
+        # 默认主角由 sender 决定
+        if sender == "ai":
+            _subject = _ai_name or "AI角色"
+            _default_actor = _ai_name
+        else:
+            _subject = _user_name or "你"
+            _default_actor = _user_name
+
+        # 行动中明确提到对方名字 → 可切换主角（但群体行动仍以发起者为主）
+        _ai_mentioned = bool(_ai_name and _ai_name in _action_lower)
+        _user_mentioned = bool(_user_name and _user_name in _action_lower)
+        if _ai_mentioned and not _user_mentioned and sender == "user":
+            # 用户明确提到 AI角色 → 由 AI角色执行
+            _subject = _ai_name
+
+        # 群体指代检测：「两人/我们/俩/双」表示两人一起在场
+        # 注意：群体指代只表示两人都在场，不改变行动主体（发起者仍是主角）
+        _group_keywords = ["两人", "我们", "我俩", "俩", "双人", "两人一起", "他俩"]
+        _is_group_action = any(k in _action_lower for k in _group_keywords)
+        if _is_group_action and _ai_name and _user_name:
+            _subject_hint = (
+                f"【行动主角】本行动由『{_subject}』发起执行（行动中的「我」就是{_subject}）。"
+                f"叙事必须以『{_subject}』为主语，用其名字称呼。"
+                f"重要：『{_ai_name}』和『{_user_name}』是一起冒险的同伴，两人都在场。"
+                f"行动中出现的「两人/我们/我俩」就是指{_ai_name}和{_user_name}两人，绝不能写成其他NPC。"
+                f"场景中其他NPC（如艾德蒙、旅店老板等）只能作为配角出现，不能替换掉这两人中的任何一个。"
+            )
+        else:
+            _subject_hint = (
+                f"【行动主角】本行动由『{_subject}』执行（行动中的「我」就是{_subject}）。"
+                f"叙事必须以此角色为主语（用其名字），不要写成其他角色。"
+            )
 
         # 如果是选择预设选项，找到对应的选项描述
         action_desc = action

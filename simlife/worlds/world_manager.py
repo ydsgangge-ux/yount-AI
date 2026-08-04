@@ -10,8 +10,10 @@ import json
 from pathlib import Path
 from typing import Optional, Dict
 
-WORLDS_DIR = Path(__file__).parent / "worlds"
+# 内置资源目录（模板、生成提示词随包发布，不要写到此处）
+WORLDS_DIR = Path(__file__).parent
 WORLD_TEMPLATE = WORLDS_DIR / "world_setting_template.json"
+WORLD_GENERATE_PROMPT = WORLDS_DIR / "generate_world_prompt.md"
 
 # 现代世界的特殊标记
 MODERN_WORLD = "modern"

@@ -403,14 +403,26 @@ class DungeonAgent:
 
         response = self.llm.generate(prompt, max_tokens=1200, temperature=0.8, thinking=False)
         response = response.strip()
+
+        # 清理markdown代码块包裹
         if response.startswith("```"):
             lines = response.split("\n")
-            response = "\n".join(lines[1:])
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
+            # 去掉第一行(如```json)和最后的```
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            response = "\n".join(lines).strip()
 
-        result = json.loads(response)
+        # 去掉LLM可能在JSON前后添加的文字
+        first_brace = response.find("{")
+        last_brace = response.rfind("}")
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            response = response[first_brace:last_brace + 1]
+
+        # 容错解析：尾随逗号/缺逗号/单引号/注释等
+        from simlife.backend.generator import _safe_json_loads
+        result = _safe_json_loads(response)
 
         dg = Dungeon(
             dungeon_id=dungeon_id,

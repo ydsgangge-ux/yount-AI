@@ -1360,6 +1360,15 @@ def api_get_world_template():
     return {}
 
 
+@app.get("/api/worlds/generate-prompt")
+def api_get_world_generate_prompt():
+    """获取世界观生成提示词 Markdown（给用户复制到 LLM 生成世界观用）"""
+    from simlife.worlds.world_manager import WORLD_GENERATE_PROMPT
+    if WORLD_GENERATE_PROMPT.exists():
+        return {"content": WORLD_GENERATE_PROMPT.read_text(encoding="utf-8")}
+    return {"content": ""}
+
+
 # ── 死亡模式 API ──────────────────────────────────────
 
 @app.get("/api/death-mode/classes")

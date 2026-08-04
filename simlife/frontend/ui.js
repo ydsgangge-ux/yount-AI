@@ -508,10 +508,75 @@ async function doAIGenerateWorld() {
   }
 }
 
+// 下载世界观模板 JSON
+async function doDownloadWorldTemplate() {
+  try {
+    const resp = await fetch('/api/worlds/template');
+    if (!resp.ok) throw new Error('获取模板失败');
+    const data = await resp.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'world_setting_template.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    UI.setSetupStatus('✅ 模板已下载，用 LLM 填充后导入');
+  } catch (e) {
+    UI.setSetupStatus('❌ 下载模板失败：' + e.message);
+  }
+}
+
+// 下载世界观生成提示词 Markdown
+async function doDownloadWorldPrompt() {
+  try {
+    const resp = await fetch('/api/worlds/generate-prompt');
+    if (!resp.ok) throw new Error('获取提示词失败');
+    const data = await resp.json();
+    const content = data.content || '';
+    if (!content) {
+      UI.setSetupStatus('❌ 提示词文件不存在');
+      return;
+    }
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'generate_world_prompt.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    UI.setSetupStatus('✅ 生成提示词已下载，复制到任意 LLM 即可生成世界观');
+  } catch (e) {
+    UI.setSetupStatus('❌ 下载提示词失败：' + e.message);
+  }
+}
+
+// 上传 JSON 文件，自动填入文本框
+function onWorldFileSelected(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const ta = document.getElementById('inp-import-json');
+    if (ta) {
+      ta.value = e.target.result;
+      UI.setSetupStatus('📂 已载入 ' + file.name + '，确认无误后点击「导入并使用」');
+    }
+  };
+  reader.onerror = () => UI.setSetupStatus('❌ 读取文件失败');
+  reader.readAsText(file, 'utf-8');
+  // 重置 input，允许再次选择同一文件
+  input.value = '';
+}
+
 async function doImportWorld() {
   const jsonStr = document.getElementById('inp-import-json').value.trim();
   if (!jsonStr) {
-    UI.setSetupStatus('请粘贴世界观 JSON');
+    UI.setSetupStatus('请粘贴世界观 JSON 或从文件导入');
     return;
   }
 

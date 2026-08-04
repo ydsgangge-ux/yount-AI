@@ -515,8 +515,16 @@ class ConsciousnessAgent:
                     # 1. 检测是否是行动指令
                     dm_result = self._try_death_mode_action(user_input, dm_state)
                     if dm_result:
-                        dm_system_message = dm_result  # 行动结果
+                        dm_system_message = dm_result  # 行动结果（UI独立显示）
                         need_tools = False
+                        # 关键：把行动结果注入A层上下文，让它基于真实结果回复用户
+                        # 否则A层不知道行动后果，会编造与场景矛盾的回应
+                        tool_result_section += (
+                            f"\n⚠️ 你刚刚在异世界执行了一个行动，以下是行动的真实结果（叙事、NPC反应、战斗结果、状态变化等）。"
+                            f"你必须严格基于这个真实结果回应用户，描述你看到/听到/感受到的，"
+                            f"不要编造与结果矛盾的内容，也不要忽略结果中NPC的实际反应。\n"
+                            f"行动真实结果：\n{dm_result[:2500]}\n"
+                        )
                     else:
                         # 2. 普通聊天：显示当前状态摘要
                         dm_system_message = self._get_dm_status_brief(dm_state)
@@ -1643,7 +1651,10 @@ class ConsciousnessAgent:
             if data.get("leveled_up"):
                 result += f"🎉 升级到 Lv.{data.get('new_level',2)}！\n"
                 if data.get("new_skills"):
-                    result += f"新技能：{'、'.join(data['new_skills'])}\n"
+                    # new_skills 可能是 dict 列表 [{"id":..., "name":...}] 或字符串列表
+                    _ns = data['new_skills']
+                    _ns_names = [s.get('name', s.get('id', str(s))) if isinstance(s, dict) else str(s) for s in _ns]
+                    result += f"新技能：{'、'.join(_ns_names)}\n"
 
             if data.get("character_died"):
                 result += f"\n☠️ {data.get('death_description','')}\n"

@@ -763,7 +763,7 @@ class DeathModeEngine:
             return result
 
         # 1. Agent 生成叙事（不含数值结果）— 非扫荡模式才走LLM
-        agent_result = self.agent.process_action(state, action, action_type)
+        agent_result = self.agent.process_action(state, action, action_type, sender=sender)
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
         next_tension = agent_result.get("next_tension", "medium")

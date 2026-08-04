@@ -658,9 +658,19 @@ body {
     </div>
     <!-- 导入世界观面板 -->
     <div id="import-world-panel" style="display:none;">
+      <div style="margin-bottom:12px;padding:10px 12px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.3);border-radius:8px;font-size:12px;color:var(--text-dim);line-height:1.6;">
+        <div style="color:var(--text);font-weight:bold;margin-bottom:4px;">📦 格式标准</div>
+        世界观必须为 JSON，包含 <code style="color:#a5b4fc;">world_id</code> / <code style="color:#a5b4fc;">world_name</code> / <code style="color:#a5b4fc;">world_type</code> / <code style="color:#a5b4fc;">era</code> / <code style="color:#a5b4fc;">communication</code> / <code style="color:#a5b4fc;">geography</code> 等字段。先下载模板或提示词，用 LLM 生成后再导入。
+      </div>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button onclick="doDownloadWorldTemplate()" style="padding:8px 10px;background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);border-radius:6px;font-size:12px;cursor:pointer;">📥 下载模板 JSON</button>
+        <button onclick="doDownloadWorldPrompt()" style="padding:8px 10px;background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.4);border-radius:6px;font-size:12px;cursor:pointer;">📝 下载生成提示词</button>
+      </div>
       <div class="field">
-        <label>粘贴世界观 JSON</label>
-        <textarea id="inp-import-json" rows="6" placeholder="将 LLM 生成的 world_setting JSON 粘贴到这里…" style="width:100%;padding:10px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;resize:vertical;font-family:monospace;"></textarea>
+        <label>粘贴世界观 JSON 或上传文件</label>
+        <input type="file" id="inp-import-file" accept=".json,application/json" style="display:none;" onchange="onWorldFileSelected(this)">
+        <button onclick="document.getElementById('inp-import-file').click()" style="width:100%;padding:8px;margin-bottom:8px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.4);border-radius:6px;font-size:12px;cursor:pointer;">📂 从文件导入…</button>
+        <textarea id="inp-import-json" rows="6" placeholder="将 LLM 生成的 world_setting JSON 粘贴到这里，或点击上方按钮选择文件…" style="width:100%;padding:10px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;resize:vertical;font-family:monospace;"></textarea>
       </div>
       <button onclick="doImportWorld()" style="width:100%;padding:12px;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:bold;margin-bottom:14px;">📋 导入并使用</button>
     </div>
@@ -763,7 +773,7 @@ body {
 </div>
 
 <script src="/static/renderer.js?v=2"></script>
-<script src="/static/ui.js?v=2"></script>
+<script src="/static/ui.js?v=3"></script>
 <script src="/static/death_mode_ui.js?v=8"></script>
 <script src="/static/game.js?v=2"></script>
 </body>
