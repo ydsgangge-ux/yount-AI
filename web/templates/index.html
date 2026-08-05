@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI</title>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/death_mode_panel.css">
 </head>
 <body>
 
@@ -52,13 +53,17 @@
 
     <!-- Sections -->
     <nav class="sidebar-nav">
-      <a href="#" class="nav-item active">
+      <a href="#" class="nav-item active" onclick="DeathModePanel.hide();return false;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Chats
       </a>
       <a href="#" class="nav-item" onclick="showTimedTasks();return false;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         定时任务
+      </a>
+      <a href="#" class="nav-item" onclick="DeathModePanel.show();return false;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 17.5L3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/></svg>
+        死亡模式
       </a>
     </nav>
 
@@ -149,6 +154,27 @@
       </div>
       <p class="disclaimer">AI can make mistakes. Please double-check responses.</p>
     </div>
+
+    <!-- 死亡模式视图 -->
+    <div id="deathModeView">
+      <div class="dm-topbar">
+        <span class="dm-topbar-title">⚔️ 死亡模式</span>
+        <span class="dm-topbar-meta" id="dmTopbarMeta">未开始<span class="dm-refresh-dot" style="background:#999;"></span></span>
+      </div>
+      <div class="dm-status-bar" id="dmStatusBar">
+        <div class="dm-no-game">加载中...</div>
+      </div>
+      <div class="dm-log-area" id="dmLogArea">
+        <div class="dm-log-empty">加载中...</div>
+      </div>
+      <div class="dm-input-area">
+        <div class="dm-input-wrapper">
+          <textarea id="dmActionInput" class="dm-input" placeholder="输入行动…（回车发送，Shift+回车换行）" rows="1" onkeydown="DeathModePanel.onKeydown(event)"></textarea>
+          <button id="dmSendBtn" class="dm-send-btn" onclick="DeathModePanel.sendAction()">发起行动</button>
+        </div>
+        <p class="dm-hint">行动将发送到死亡模式服务（8769）· 每5秒自动刷新状态</p>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -170,5 +196,6 @@
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/death_mode_panel.js"></script>
 </body>
 </html>

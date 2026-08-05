@@ -784,7 +784,10 @@ class DeathModeEngine:
         if spotted and isinstance(spotted, list):
             state["spotted_enemies"] = spotted
         else:
-            state["spotted_enemies"] = []
+            # 兜底：LLM 可能叙事里提到了怪物但没填 spotted_enemies
+            # 从叙事文本中提取已知怪物名（world_map 区域怪物 + 历史击败过的敌人）
+            _extracted = self._extract_enemy_names_from_narrative(narrative)
+            state["spotted_enemies"] = _extracted
 
         # 未解决的剧情钩子 → 累积保存（最多 4 个）
         hooks = agent_result.get("unresolved_hooks")
@@ -1135,6 +1138,13 @@ class DeathModeEngine:
                     if eq_item:
                         shared_inv.append(eq_item)
                         result.setdefault("items_to_backpack", []).append(eq_item.get("name", item_name))
+                    else:
+                        # 装备池没有 → 尝试创建消耗品（药剂等）
+                        char_level = state.get("character", {}).get("level", 1)
+                        cons_item = self._create_consumable_from_name(item_name, char_level)
+                        if cons_item:
+                            shared_inv.append(cons_item)
+                            result.setdefault("items_to_backpack", []).append(cons_item["name"])
                 # 任务进度：收集物品触发
                 try:
                     QuestSystem.record_progress(state, "collect",
@@ -1196,13 +1206,28 @@ class DeathModeEngine:
 
         # 4. 记录故事历史（含完整行动和叙事，供下一段场景生成参考）
         action_text = action if action_type == "free" else (choice_info.get("text", "") if choice_info else action)
-        state["story"]["history"].append({
+        _summary_text = narrative[:200]
+        # 战斗胜利后，在summary追加明确的战斗结果，防止LLM下一回合以为敌人还活着
+        if result.get("combat_result") and result["combat_result"].get("victory"):
+            _defeated_names = result["combat_result"].get("enemies_defeated", [])
+            _defeated_str = "、".join(_defeated_names) if _defeated_names else "所有敌人"
+            _summary_text += f"【战斗结束：{_defeated_str}已被全部击败，战斗结束，敌人已死亡。】"
+        _history_entry = {
             "chapter": state["story"]["current_chapter"],
-            "summary": narrative[:200],
+            "summary": _summary_text,
             "action": action_text,
             "outcome": outcome_type,
             "location": state["story"].get("current_location", ""),
-        })
+        }
+        # 记录战斗结果，供 story_agent 下一回合参考
+        if result.get("combat_result"):
+            _cr = result["combat_result"]
+            _history_entry["combat_result"] = {
+                "victory": _cr.get("victory", False),
+                "enemies_defeated": _cr.get("enemies_defeated", []),
+                "combat_summary": "; ".join(_cr.get("combat_log", [])[-3:])[:150],
+            }
+        state["story"]["history"].append(_history_entry)
 
         # 章节按历史进度推进（每5条历史推进一章）
         if len(state["story"]["history"]) % 5 == 0:
@@ -1347,6 +1372,122 @@ class DeathModeEngine:
         # 3. 装备池中不存在 → 拒绝生成，防止用户口令凭空变出
         return None
 
+    def _create_consumable_from_name(self, item_name: str, char_level: int = 1) -> Optional[Dict]:
+        """根据物品名创建消耗品（药剂等），非消耗品返回 None"""
+        is_hp = any(k in item_name for k in ("生命", "治疗", "疗伤", "体力", "回血", "HP", "hp", "红药", "伤药"))
+        is_mp = any(k in item_name for k in ("魔法", "法力", "灵力", "回蓝", "MP", "mp", "蓝药", "魔力"))
+        is_both = any(k in item_name for k in ("恢复", "补给", "全能", "综合", "药剂", "药水"))
+
+        if not (is_hp or is_mp or is_both):
+            return None
+
+        base = 20 + char_level * 5
+        heal_hp = base if (is_hp or is_both) else 0
+        heal_mp = base if (is_mp or is_both) else 0
+        desc_parts = []
+        if heal_hp:
+            desc_parts.append(f"{heal_hp}HP")
+        if heal_mp:
+            desc_parts.append(f"{heal_mp}MP")
+
+        return {
+            "type": "consumable",
+            "name": item_name,
+            "heal_hp": heal_hp,
+            "heal_mp": heal_mp,
+            "description": f"恢复{'和'.join(desc_parts)}",
+            "value": 30 + char_level * 5,
+        }
+
+    def _extract_enemy_names_from_narrative(self, narrative: str) -> list:
+        """从叙事文本中提取敌人名（兜底：LLM 没填 spotted_enemies 时使用）
+        三重数据源：
+        1. world_map 所有区域的预定义怪物名
+        2. history 里击败过的敌人名
+        3. 中文怪物关键词模式匹配（识别 LLM 临时编的敌人，如"骨魔"/"腐木蜥蜴"/"灰雾吞噬者"等）
+        返回 [{"name": "怪物名", "count": 1}, ...]
+        """
+        if not narrative:
+            return []
+        _known_names = set()
+
+        # 1. 从 world_map 所有区域收集怪物名
+        if self.world_map:
+            for region in self.world_map.regions.values():
+                for m in (region.monsters or []):
+                    _n = m.get("name", "")
+                    if _n:
+                        _known_names.add(_n)
+                if region.boss:
+                    _bn = region.boss.get("name", "")
+                    if _bn:
+                        _known_names.add(_bn)
+
+        # 2. 从 history 里收集击败过的敌人名
+        _history = self.state.get("story", {}).get("history", [])
+        for h in _history:
+            _cr = h.get("combat_result", {})
+            for _en in (_cr.get("enemies_defeated") or []):
+                if _en:
+                    _known_names.add(_en)
+
+        # 3. 在叙事文本中搜索已知怪物名
+        _found = []
+        _used_names = set()
+        for name in _known_names:
+            if name in narrative and name not in _used_names:
+                count = self._estimate_enemy_count(narrative, name)
+                _found.append({"name": name, "count": count})
+                _used_names.add(name)
+
+        # 4. 中文怪物关键词模式匹配（识别 LLM 临时编的敌人）
+        # 常见怪物后缀：魔/兽/灵/妖/怪/龙/鬼/尸/蛛/蛇/蜥/狼/熊/甲/虫/人/者/徒/徒/吞噬者/吞噬兽/巨兽/魔像
+        _monster_suffixes = [
+            "吞噬者", "吞噬兽", "巨兽", "魔像", "巨人", "战士", "法师", "刺客",
+            "魔", "兽", "灵", "妖", "怪", "龙", "鬼", "尸", "蛛", "蛇", "蜥",
+            "狼", "熊", "甲", "虫", "者", "徒", "王", "主", "将", "兵", "卫",
+        ]
+        # 排除非怪物的常见词
+        _exclude_words = {"圣光", "魔法", "暗影", "神圣", "灰烬", "火焰", "冰霜",
+                          "闪电", "圣击", "火球", "冰", "光", "暗", "圣", "影",
+                          "骨", "灰", "雾", "腐", "木", "鳞", "爪", "角", "牙",
+                          "皮", "甲", "刃", "剑", "弓", "杖", "盾", "袍"}
+
+        import re as _re
+        for suffix in _monster_suffixes:
+            # 匹配 1-4 个中文字符 + 后缀（如"骨魔""腐木蜥蜴""灰雾吞噬者"）
+            for m in _re.finditer(r'([\u4e00-\u9fa5]{1,4})' + suffix, narrative):
+                _full = m.group(0)
+                _prefix = m.group(1)
+                # 排除纯元素词（如"火焰""冰霜"）和已添加的
+                if _full in _used_names:
+                    continue
+                if _prefix in _exclude_words or _full in _exclude_words:
+                    continue
+                # 排除角色名
+                _ai_name = self.state.get("character", {}).get("name", "")
+                _user_name = self.state.get("user_character", {}).get("name", "")
+                if _ai_name and _ai_name in _full:
+                    continue
+                if _user_name and _user_name in _full:
+                    continue
+                # 至少 2 个字才算是怪物名
+                if len(_full) < 2:
+                    continue
+                _found.append({"name": _full, "count": self._estimate_enemy_count(narrative, _full)})
+                _used_names.add(_full)
+
+        return _found
+
+    def _estimate_enemy_count(self, narrative: str, name: str) -> int:
+        """从叙事文本估算某个怪物的数量"""
+        for kw, n in [("两只", 2), ("三只", 3), ("四只", 4), ("五只", 5),
+                      ("一群", 4), ("数只", 3), ("几只", 2), ("数头", 3),
+                      ("两头", 2), ("三头", 3), ("数个", 3)]:
+            if kw in narrative:
+                return n
+        return 1
+
     def _generate_enemies_with_spotted(self, state: Dict, risk_level: str) -> list:
         """生成敌人：优先用叙事中提到的敌人（spotted_enemies），否则随机生成。
         spotted_enemies 格式: [{"name": "Elemental Slime", "count": 3}, ...]
@@ -1449,6 +1590,7 @@ class DeathModeEngine:
         """
         from simlife.backend.combat_system import TacticalSystem
         from simlife.backend.skill_system import SkillSystem
+        from simlife.backend.enemy_agent import EnemyAgent, get_enemy_agent
 
         char = state["character"]  # AI角色
         user_char = state.get("user_character", {})  # 用户角色
@@ -1479,11 +1621,30 @@ class DeathModeEngine:
         if cmd_override:
             cmd.update(cmd_override)
 
+        # ── 创建敌人Agent（精英/BOSS使用EnemyAgent智能决策） ──
+        enemy_agents = {}
+        world_setting = state.get("world_setting", {})
+        for e in enemies:
+            agent = get_enemy_agent(e, world_setting)
+            if agent:
+                enemy_agents[e.get("name", "")] = agent
+                # 战斗开始对话
+                dialogue = agent.get_dialogue("battle_start")
+                if dialogue:
+                    combat_log.append(f"💬 {e.get('name','?')}：{dialogue}")
+
         def _enemy_defense(enemy=None):
-            """敌人随机防御"""
-            choices = [DefenseAction.DODGE, DefenseAction.BLOCK, DefenseAction.NONE]
+            """敌人随机防御（精英/BOSS使用EnemyAgent决策）"""
             e = enemy or target
-            if e and e.get("stats", {}).get("intelligence", 5) > 12:
+            if not e:
+                return DefenseAction.BLOCK
+            # 检查是否有EnemyAgent
+            agent = enemy_agents.get(e.get("name", ""))
+            if agent:
+                return agent.choose_defense()
+            # 默认随机防御
+            choices = [DefenseAction.DODGE, DefenseAction.BLOCK, DefenseAction.NONE]
+            if e.get("stats", {}).get("intelligence", 5) > 12:
                 choices.append(DefenseAction.PARRY)
             return random.choice(choices)
 
@@ -1688,6 +1849,22 @@ class DeathModeEngine:
                     _check_drop(target, attacker.get("stats", {}))
                     continue
 
+                # ── 辅助技能（heal/buff/utility）：走 resolve_skill，不攻击敌人 ──
+                _support_skill_id = cmd.get(f"{role}_support_skill")
+                if _support_skill_id:
+                    _sk_obj = SkillSystem.get_skill(_support_skill_id)
+                    if _sk_obj:
+                        _targets = {"self": [attacker], "all_allies": [attacker]}
+                        if role == "ai" and user_in_combat and user_char.get("hp", 0) > 0:
+                            _targets["all_allies"].append(user_char)
+                        elif role == "user" and char.get("hp", 0) > 0:
+                            _targets["all_allies"].append(char)
+                        _skill_result = SkillSystem.resolve_skill(_sk_obj, attacker, _targets)
+                        round_log.append(f"{attacker.get('name','?')}【{_sk_obj.name}】")
+                        for _log_line in _skill_result.get("log", []):
+                            round_log.append(f"  {_log_line}")
+                        continue
+
                 target = cmd.get(f"{role}_target") or next((e for e in enemies if e.get("hp", 0) > 0), None)
                 if not target:
                     continue
@@ -1760,21 +1937,77 @@ class DeathModeEngine:
                                 attacker["hp"] = min(attack_max_hp, attacker.get("hp", 0) + ls_amount)
                                 round_log.append(f"  ❤️‍🔥 {attacker.get('name','?')}吸血{ls_amount}HP")
 
-            # ── 存活敌人反击（智能承伤）──
+            # ── 存活敌人反击（智能承伤 + EnemyAgent）──
             for enemy in enemies:
                 if enemy.get("hp", 0) <= 0:
                     continue
-                # 决定攻击目标：坦克优先 > HP健康者优先承伤 > 随机
-                # 1. 明确指定坦克
+
+                # 检查是否有EnemyAgent
+                agent = enemy_agents.get(enemy.get("name", ""))
+
+                # 低血量/阶段变化对话
+                if agent:
+                    if agent.is_low_hp():
+                        dialogue = agent.get_dialogue("crisis_low_hp")
+                        if dialogue:
+                            round_log.append(f"💬 {enemy.get('name','?')}：{dialogue}")
+                    if agent.check_phase_change():
+                        dialogue = agent.get_dialogue("stage_enter")
+                        if dialogue:
+                            round_log.append(f"💬 {enemy.get('name','?')}：{dialogue}")
+
+                # 决定攻击目标：坦克优先 > EnemyAgent选择 > 加权随机
                 if tank_role == "ai" and char.get("hp", 0) > 0:
                     target_char, target_defense, target_name = char, cmd.get("ai_defense", DefenseAction.BLOCK), char.get("name", "你")
                 elif tank_role == "user" and user_in_combat and user_char.get("hp", 0) > 0:
                     target_char, target_defense, target_name = user_char, cmd.get("user_defense", DefenseAction.BLOCK), user_char.get("name", "用户")
+                elif agent:
+                    # EnemyAgent 智能选择目标
+                    all_targets = []
+                    # 构建可用目标列表
+                    for r_name, r_char in [("ai", char), ("user", user_char)]:
+                        if r_char.get("hp", 0) <= 0:
+                            continue
+                        if r_name == "user" and not user_in_combat:
+                            continue
+                        is_tank = (tank_role == r_name)
+                        all_targets.append({
+                            "name": r_char.get("name", r_name),
+                            "hp": r_char.get("hp", 0),
+                            "max_hp": r_char.get("max_hp", 1),
+                            "is_tank": is_tank,
+                        })
+                    for pm in party_in_combat:
+                        all_targets.append({
+                            "name": pm.name,
+                            "hp": pm.hp,
+                            "max_hp": pm.max_hp,
+                            "is_tank": False,
+                        })
+                    if all_targets:
+                        chosen = agent.choose_target(all_targets)
+                        # 将选中的目标名匹配回实际对象
+                        target_name = chosen.get("name", "")
+                        target_char = None
+                        if target_name == char.get("name"):
+                            target_char = char
+                        elif target_name == user_char.get("name"):
+                            target_char = user_char
+                        else:
+                            # 匹配队友
+                            for pm in party_in_combat:
+                                if pm.name == target_name:
+                                    target_char = pm.to_combat_entity()
+                                    break
+                        if not target_char:
+                            target_char = char
+                        target_defense = cmd.get("ai_defense" if target_char is char else "user_defense", DefenseAction.BLOCK)
+                    else:
+                        continue
                 else:
-                    # 2. 无明确坦克：构建候选列表，按HP比例加权选择
+                    # 无坦克 + 无Agent：加权随机选择（原逻辑）
                     import random as _rng
                     candidates = []
-                    # 近战职业自动当坦克（更高被攻击概率）
                     melee_classes = ("战士", "骑士", "圣骑士", "武僧", "剑士", "狂战士")
                     for r_name, r_char, r_def in [
                         ("ai", char, cmd.get("ai_defense", DefenseAction.BLOCK)),
@@ -1787,16 +2020,14 @@ class DeathModeEngine:
                         hp_ratio = r_char.get("hp", 0) / max(1, r_char.get("max_hp", 1))
                         r_class = r_char.get("class_name", "")
                         is_melee = any(c in r_class for c in melee_classes)
-                        # 权重：近战职业权重高，HP越低权重越低（避免被集火致死）
                         weight = 1.0
                         if is_melee:
-                            weight = 3.0  # 近战更容易被攻击
+                            weight = 3.0
                         if hp_ratio < 0.3:
-                            weight *= 0.2  # 危险血量，大幅降低被攻击概率
+                            weight *= 0.2
                         elif hp_ratio < 0.5:
-                            weight *= 0.5  # 低血量，降低被攻击概率
+                            weight *= 0.5
                         candidates.append((r_name, r_char, r_def, weight))
-                    # 队友也是候选目标
                     for pm in party_in_combat:
                         if pm.hp > 0:
                             pm_entity = pm.to_combat_entity()
@@ -1812,7 +2043,6 @@ class DeathModeEngine:
                             candidates.append((f"party_{pm.member_id}", pm_entity, DefenseAction.BLOCK, weight))
                     if not candidates:
                         continue
-                    # 按权重随机选择
                     total_weight = sum(c[3] for c in candidates)
                     if total_weight <= 0:
                         pick = _rng.choice(candidates)
@@ -1826,12 +2056,11 @@ class DeathModeEngine:
                                 pick = c
                                 break
                     target_char, target_defense, target_name = pick[1], pick[2], pick[1].get("name", "?")
-                    # 如果被攻击者HP危险(<=30%)且有队友存活，有30%概率队友帮忙承伤
+                    # 队友承伤保护
                     target_hp_ratio = target_char.get("hp", 0) / max(1, target_char.get("max_hp", 1))
                     if target_hp_ratio <= 0.3:
                         other_allies = [c for c in candidates if c[1] is not target_char and c[1].get("hp", 0) > 0]
                         if other_allies and _rng.random() < 0.3:
-                            # 队友帮忙承伤
                             protector = _rng.choice(other_allies)
                             target_char, target_defense, target_name = protector[1], protector[2], protector[1].get("name", "?")
                             combat_log.append(f"🛡️ {target_name}挺身而出，为{pick[1].get('name','?')}挡下攻击！")
@@ -1839,7 +2068,33 @@ class DeathModeEngine:
                 if target_char.get("stagger_turns", 0) > 0:
                     target_defense = DefenseAction.NONE
 
-                def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
+                # ── EnemyAgent 使用技能攻击 ──
+                enemy_skill_name = ""
+                if agent:
+                    skills = agent.get_skills()
+                    if skills:
+                        chosen_skill = random.choice(skills)
+                        caster_attack = (enemy.get("stats", {}).get("strength", 5) * 2 +
+                                         enemy.get("stats", {}).get("agility", 5) * 0.5 +
+                                         enemy.get("stats", {}).get("intelligence", 5) * 0.5)
+                        # 计算技能伤害
+                        skill_mult = chosen_skill.get("multiplier", 1.0)
+                        is_magic = chosen_skill.get("type") == "magic"
+                        base_damage = int(caster_attack * skill_mult)
+                        defense = target_char.get("stats", {}).get("vitality", 5) * 1.5
+                        for eq in target_char.get("equipment", []):
+                            if eq.get("type") == "outfit":
+                                base_damage -= eq.get("bonus", 0)
+                        damage = max(1, base_damage - int(defense))
+                        damage = max(1, int(damage * random.uniform(0.9, 1.1)))
+                        target_char["hp"] = max(0, target_char.get("hp", 0) - damage)
+                        enemy_skill_name = f"【{chosen_skill['name']}】"
+                        def_result = {"description": f"使用{chosen_skill['name']}造成{damage}点伤害", "damage": damage,
+                                      "defense_result": {"damage_taken": damage, "defense_used": str(target_defense)}}
+                    else:
+                        def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
+                else:
+                    def_result = CombatSystem.attack(enemy, target_char, defense_action=target_defense)
 
                 if ai_alone and target_char is char and def_result.get("damage", 0) > 0:
                     def_result["damage"] = int(def_result["damage"] * 1.4)
@@ -1848,7 +2103,7 @@ class DeathModeEngine:
                             def_result["defense_result"].get("damage_taken", 0) * 1.4
                         )
 
-                round_log.append(f"{enemy.get('name', '?')}{def_result['description']} → {target_name}")
+                round_log.append(f"{enemy.get('name', '?')}{enemy_skill_name}{def_result['description']} → {target_name}")
 
                 # 死亡判定
                 if target_char["hp"] <= 0:
@@ -2298,7 +2553,7 @@ class DeathModeEngine:
 
         # ── 坦克/承伤角色识别 ──
         # 口令中"XX拦截/承伤/坦克/守护/掩护/保护/挡" → XX是坦克，吸引所有敌人仇恨
-        tank_keywords = ("拦截", "承伤", "坦克", "守护", "掩护", "保护", "挡", "拉仇恨", "吸引")
+        tank_keywords = ("拦截", "承伤", "抗伤", "坦克", "守护", "掩护", "保护", "挡", "拉仇恨", "吸引", "顶住", "扛")
         if any(k in t for k in tank_keywords):
             # 判断谁是坦克：看谁的名字/代词紧挨着坦克关键词
             user_tank_kw = tuple("用户" + k for k in tank_keywords) + tuple("我" + k for k in tank_keywords) + tuple("我" + kw for kw in ("拦截", "承伤", "坦克", "守护", "掩护", "保护", "挡"))
@@ -2392,39 +2647,77 @@ class DeathModeEngine:
         from simlife.backend.skill_system import SkillSystem
         world_type = state.get("world_type", "fantasy")
 
+        # ── 复合指令切分：按角色名分配子句 ──
+        # "yount使用冥想，焕灵抗伤" → yount:"使用冥想" 焕灵:"抗伤"
+        import re as _re
+        _clauses = [c.strip() for c in _re.split(r'[，,。；;！!？?\n]', t) if c.strip()]
+        _ai_text = []
+        _user_text = []
+        _general_text = []
+        for _cl in _clauses:
+            _has_ai = any(k in _cl for k in ai_name_kw)
+            _has_user = any(k in _cl for k in user_name_kw) or ("我" in _cl and sender == "user")
+            if _has_ai and not _has_user:
+                _ai_text.append(_cl)
+            elif _has_user and not _has_ai:
+                _user_text.append(_cl)
+            else:
+                _general_text.append(_cl)
+        # 有明确角色子句时按角色匹配，否则用全文
+        _ai_search = " ".join(_ai_text + _general_text) if (_ai_text or _user_text) else t
+        _user_search = " ".join(_user_text + _general_text) if (_ai_text or _user_text) else t
+
         # AI角色技能匹配
         ai_skills = ai_char.get("skills", [])
         for skill_id in ai_skills:
             skill = SkillSystem.get_skill(skill_id)
-            if skill and skill.name in t:
-                result["ai_skill"] = skill.id
-                result["ai_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
-                if skill.type == "magic":
-                    result["ai_is_magic"] = True
-                mp_cost = skill.mp_cost
-                if ai_char.get("mp", 0) >= mp_cost:
-                    ai_char["mp"] = ai_char.get("mp", 0) - mp_cost
-                else:
-                    result["ai_skill"] = None
-                    result["ai_skill_mult"] = 1.0
-                break
+            if skill and skill.name in _ai_search:
+                if skill.type in ("heal", "buff", "utility"):
+                    # 辅助技能：走 resolve_skill 路径，不当攻击用
+                    mp_cost = skill.mp_cost
+                    if ai_char.get("mp", 0) >= mp_cost:
+                        ai_char["mp"] = ai_char.get("mp", 0) - mp_cost
+                        result["ai_support_skill"] = skill.id
+                    break
+                elif skill.type in ("physical", "magic"):
+                    # 攻击技能：走 attack 路径
+                    result["ai_skill"] = skill.id
+                    result["ai_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
+                    if skill.type == "magic":
+                        result["ai_is_magic"] = True
+                    mp_cost = skill.mp_cost
+                    if ai_char.get("mp", 0) >= mp_cost:
+                        ai_char["mp"] = ai_char.get("mp", 0) - mp_cost
+                    else:
+                        result["ai_skill"] = None
+                        result["ai_skill_mult"] = 1.0
+                    break
 
         # 用户角色技能匹配
         user_skills = user_char.get("skills", [])
         for skill_id in user_skills:
             skill = SkillSystem.get_skill(skill_id)
-            if skill and skill.name in t:
-                result["user_skill"] = skill.id
-                result["user_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
-                if skill.type == "magic":
-                    result["user_is_magic"] = True
-                mp_cost = skill.mp_cost
-                if user_char.get("mp", 0) >= mp_cost:
-                    user_char["mp"] = user_char.get("mp", 0) - mp_cost
-                else:
-                    result["user_skill"] = None
-                    result["user_skill_mult"] = 1.0
-                break
+            if skill and skill.name in _user_search:
+                if skill.type in ("heal", "buff", "utility"):
+                    # 辅助技能：走 resolve_skill 路径，不当攻击用
+                    mp_cost = skill.mp_cost
+                    if user_char.get("mp", 0) >= mp_cost:
+                        user_char["mp"] = user_char.get("mp", 0) - mp_cost
+                        result["user_support_skill"] = skill.id
+                    break
+                elif skill.type in ("physical", "magic"):
+                    # 攻击技能：走 attack 路径
+                    result["user_skill"] = skill.id
+                    result["user_skill_mult"] = skill.effects[0].value if skill.effects else 1.0
+                    if skill.type == "magic":
+                        result["user_is_magic"] = True
+                    mp_cost = skill.mp_cost
+                    if user_char.get("mp", 0) >= mp_cost:
+                        user_char["mp"] = user_char.get("mp", 0) - mp_cost
+                    else:
+                        result["user_skill"] = None
+                        result["user_skill_mult"] = 1.0
+                    break
 
         # ── 防御方式 ──
         # 用户指定的防御方式同时应用于两角色

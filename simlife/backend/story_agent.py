@@ -242,6 +242,20 @@ class StoryAgent:
             parts.append(f"同伴技能：{'、'.join(user_char.get('skills', [])) or '无'}")
             parts.append(f"同伴装备：{'、'.join([e.get('name','') for e in user_char.get('equipment', [])]) or '无'}")
             parts.append(f"（{char.get('name', 'AI')} 与 {user_char.get('name', '用户')} 是一起冒险的同伴，行动中提到「两人」「我们」「他俩」时，默认就是指他们俩，不要写成其他NPC）")
+
+        # 战斗状态（让 LLM 知道当前是否在战斗中）
+        in_combat = state.get("in_combat", False)
+        enemies = state.get("enemies", [])
+        if in_combat and enemies:
+            alive = [e for e in enemies if e.get("hp", 0) > 0]
+            if alive:
+                _enemy_descs = [f"{e.get('name','?')}(HP:{e.get('hp',0)})" for e in alive]
+                parts.append("")
+                parts.append(f"【战斗中】当前敌人：{', '.join(_enemy_descs)}")
+                parts.append("战斗正在进行，叙事应描述交锋过程，不要生成新敌人或切换地点。")
+            else:
+                parts.append("")
+                parts.append("【战斗中】所有敌人已被击败，战斗即将结束。")
         return "\n".join(parts)
 
     def _build_story_context(self, state: Dict) -> str:
@@ -250,6 +264,14 @@ class StoryAgent:
         if not history:
             return "（故事刚刚开始）"
 
+        # 检查最近一条历史是否有战斗胜利，如有则在上下文最前面突出警告
+        combat_warning = ""
+        last_h = history[-1] if history else {}
+        if last_h.get('combat_result') and last_h['combat_result'].get('victory'):
+            _defeated = last_h['combat_result'].get('enemies_defeated', [])
+            _defeated_str = "、".join(_defeated) if _defeated else "所有敌人"
+            combat_warning = f"⚠️【重要·最近战斗结果】{_defeated_str} 已在上一回合被全部击败并死亡。叙事中绝不能让这些已死亡的敌人再次出现或还活着，应描述战后的场景（清理战场、休整、推进剧情）。\n\n"
+
         recent = history[-5:]
         parts = []
         for h in recent:
@@ -257,11 +279,20 @@ class StoryAgent:
             action = h.get('action', '')
             summary = h.get('summary', '')
             outcome = h.get('outcome', '')
+            # 显示战斗结果
+            combat_info = ""
+            if h.get('combat_result'):
+                cr = h['combat_result']
+                if cr.get('victory'):
+                    defeated = ', '.join(cr.get('enemies_defeated', []))
+                    combat_info = f" [战斗胜利：击败{defeated}]"
+                else:
+                    combat_info = f" [战斗进行中：{cr.get('combat_summary', '')}]"
             if action:
-                parts.append(f"[第{chapter}章] 行动：{action}\n结果：{summary}（{outcome}）")
+                parts.append(f"[第{chapter}章] 行动：{action}\n结果：{summary}（{outcome}）{combat_info}")
             else:
-                parts.append(f"[第{chapter}章] {summary}")
-        text = "\n".join(parts)
+                parts.append(f"[第{chapter}章] {summary}{combat_info}")
+        text = combat_warning + "\n".join(parts)
 
         # 附加未解决的剧情钩子（LLM 上一段返回的，必须承接）
         hooks = state.get("story", {}).get("unresolved_hooks", [])
@@ -392,10 +423,24 @@ class StoryAgent:
                 _act = h.get("action", "")
                 _sum = h.get("summary", "")
                 _loc = h.get("location", "")
+                _combat = h.get("combat_result")
+                _combat_info = ""
+                if _combat:
+                    if _combat.get("victory"):
+                        _defeated = "、".join(_combat.get("enemies_defeated", [])) or "所有敌人"
+                        _combat_info = f" [✅战斗胜利：{_defeated}已被全部击败并死亡，不能再出现]"
+                    else:
+                        _combat_info = f" [⚔️战斗中：{_combat.get('combat_summary', '')}]"
                 if _act and _sum:
-                    history_lines.append(f"  • 行动：{_act}\n    结果：{_sum[:120]}" + (f"（地点：{_loc}）" if _loc else ""))
+                    history_lines.append(f"  • 行动：{_act}\n    结果：{_sum[:120]}{_combat_info}" + (f"（地点：{_loc}）" if _loc else ""))
             if history_lines:
                 history_ctx = "【最近行动记录】（必须保持连续性，不能与以下内容矛盾）\n" + "\n".join(history_lines) + "\n"
+
+            # 如果最近一条是战斗胜利，在history_ctx最前面加醒目警告
+            _last = recent_history[-1] if recent_history else {}
+            if _last.get("combat_result") and _last["combat_result"].get("victory"):
+                _defeated = "、".join(_last["combat_result"].get("enemies_defeated", [])) or "所有敌人"
+                history_ctx = f"⚠️【重要·上一回合战斗结果】{_defeated} 已在上一回合被全部击败并死亡。叙事中绝不能让这些已死亡的敌人再次出现或还活着，应描述战后的场景（清理战场、休整、推进剧情、引出新威胁）。\n\n" + history_ctx
 
         # 未解决的剧情钩子
         hooks = state.get("story", {}).get("unresolved_hooks", [])
@@ -502,6 +547,8 @@ class StoryAgent:
 12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力），new_location 填新地点。
 13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。
 14. 【行动连续性·最重要】必须参考【最近行动记录】，当前行动是之前行动的延续。NPC名字、地点、对话内容必须与之前一致。如果之前在跟某个NPC对话，当前必须还是那个NPC。如果之前在某个地点，当前必须还在那个地点（除非行动明确涉及移动）。
+15. 【战斗状态感知·关键】如果【角色状态】中标注了【战斗中】，说明战斗正在进行：叙事必须描述战斗交锋过程，绝不能生成新敌人（spotted_enemies 填 null），绝不能切换地点（new_location 填 null）。如果【最近行动记录】中有[战斗胜利]，说明战斗刚结束：叙事应描述战后的短暂喘息或清理战场，不要假装敌人还活着。
+16. 【角色名约束·最严格】叙事中只能使用以下角色名：{char.get('name', 'AI')}（系统角色）和{user_char.get('name', '用户')}（用户角色）。绝不能编造其他角色名（如 turent、张三等），绝不能把技能或攻击归属到不存在的角色身上。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
@@ -521,9 +568,9 @@ class StoryAgent:
 - rewards 要合理：easy 给 exp 20-40 / gold 10-30；normal 给 exp 40-80 / gold 30-60；hard 给 exp 80-200 / gold 50-150
 - 系列任务时，series_id 用英文蛇形命名（如 "series_dark_guild_probe"），series_title 给中文名
 
-返回JSON格式：
+返回JSON格式（重要：narrative控制在150字以内，确保outcome_type等后续字段能完整输出）：
 {{
-  "narrative": "结果叙事（3-5句）",
+  "narrative": "结果叙事（2-3句，不超过150字）",
   "outcome_type": "combat_success/combat_fail/discovery/social_response/trap/escape/rest/trade/nothing",
   "next_tension": "low/medium/high",
   "new_location": "新地点名称" 或 null,
@@ -585,7 +632,7 @@ unresolved_hooks 规则：
 只返回JSON，不要其他文字。"""
 
         try:
-            response = self.llm.generate(prompt, max_tokens=700, temperature=0.8, thinking=False)
+            response = self.llm.generate(prompt, max_tokens=1200, temperature=0.8, thinking=False)
             response = response.strip()
             # 清理 LLM 输出：提取 JSON
             result = self._extract_json(response)
@@ -794,6 +841,40 @@ unresolved_hooks 规则：
         except json.JSONDecodeError:
             pass
 
-        # 全部失败，返回空
+        # 全部失败，尝试从截断的 JSON 中提取已有字段（narrative 等）
+        _partial = StoryAgent._extract_partial_json(text)
+        if _partial:
+            return _partial
+
         print(f"[StoryAgent] JSON提取失败，原始文本: {text[:200]}")
+        return None
+
+    @staticmethod
+    def _extract_partial_json(text: str):
+        """从截断的 JSON 中提取已有字段（LLM token 耗尽时的兜底）
+        例如 LLM 只返回了 {"narrative": "很长的叙事..." 就截断了
+        会尝试提取 narrative / outcome_type / spotted_enemies 等已完整输出的字段
+        """
+        if not text or '{' not in text:
+            return None
+
+        result = {}
+        # 用正则提取已完成的 "key": "value" 或 "key": [...] 或 "key": null
+        # 字符串值
+        for m in re.finditer(r'"(narrative|outcome_type|next_tension|new_location)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
+            result[m.group(1)] = m.group(2).encode().decode('unicode_escape')
+        # null 值
+        for m in re.finditer(r'"(new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers)"\s*:\s*(null)', text):
+            result[m.group(1)] = None
+        # 数值
+        for m in re.finditer(r'"(gold_spent|gold_gained|hp_change|mp_change)"\s*:\s*(-?\d+)', text):
+            result[m.group(1)] = int(m.group(2))
+
+        if result.get("narrative"):
+            # 确保有 outcome_type，默认 nothing
+            result.setdefault("outcome_type", "nothing")
+            result.setdefault("next_tension", "medium")
+            print(f"[StoryAgent] 从截断JSON中提取到部分字段: {list(result.keys())}")
+            return result
+
         return None

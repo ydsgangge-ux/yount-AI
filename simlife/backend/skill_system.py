@@ -690,6 +690,83 @@ class SkillSystem:
                 return False, f"技能冷却中（剩余{remaining}回合）"
         return True, ""
 
+    # ── 敌人技能分配 ──────────────────────────────────
+
+    @classmethod
+    def assign_skills_for_enemy(cls, count: int, level: int, enemy_type: str) -> List[Dict]:
+        """从技能数据库给敌人分配技能
+        
+        count: 技能数量
+        level: 敌人等级
+        enemy_type: "normal" / "elite" / "boss"
+        返回: [{"skill_id": str, "name": str, "type": str, "target_type": str, "multiplier": float, "mp_cost": int, "effects": [...]}, ...]
+        """
+        cls._build_db()
+        all_skills = list(cls._SKILL_DB.values())
+
+        # 过滤：只选攻击类技能（physical/magic），排除辅助/治疗/通用技能
+        combat_skills = [s for s in all_skills if s.type in ("physical", "magic")]
+
+        if not combat_skills:
+            return []
+
+        # 按等级筛选合适的技能
+        level_range = max(1, level - 5)
+        suitable = [s for s in combat_skills if s.req_level <= level and s.req_level >= level_range - 3]
+        if not suitable:
+            suitable = combat_skills
+
+        # 随机选 count 个（不重复）
+        import random
+        selected = random.sample(suitable, min(count, len(suitable)))
+
+        result = []
+        for s in selected:
+            # 判断是否为AOE
+            is_aoe = any(
+                e.target in ("all_enemies", "all_allies")
+                for e in s.effects
+            )
+            target_type = "aoe" if is_aoe else "single"
+            mult = s.effects[0].value if s.effects else 1.0
+            result.append({
+                "skill_id": s.id,
+                "name": s.name,
+                "type": s.type,
+                "target_type": target_type,
+                "multiplier": mult,
+                "mp_cost": s.mp_cost,
+                "effects": [e.to_dict() for e in s.effects],
+            })
+
+        return result
+
+    @classmethod
+    def get_random_aoe_skill(cls, level: int) -> Optional[Dict]:
+        """获取一个随机的AOE技能（专供BOSS使用）"""
+        cls._build_db()
+        all_skills = list(cls._SKILL_DB.values())
+        aoe_skills = [
+            s for s in all_skills
+            if s.type in ("physical", "magic")
+            and any(e.target in ("all_enemies", "all_allies") for e in s.effects)
+            and s.req_level <= level
+        ]
+        if not aoe_skills:
+            return None
+        import random
+        s = random.choice(aoe_skills)
+        is_aoe = any(e.target in ("all_enemies", "all_allies") for e in s.effects)
+        return {
+            "skill_id": s.id,
+            "name": s.name,
+            "type": s.type,
+            "target_type": "aoe" if is_aoe else "single",
+            "multiplier": s.effects[0].value if s.effects else 1.0,
+            "mp_cost": s.mp_cost,
+            "effects": [e.to_dict() for e in s.effects],
+        }
+
     @classmethod
     def get_starting_skills(cls, world_type: str, class_id: str) -> List[str]:
         """获取初始技能（Lv.1可学的技能id列表）"""
