@@ -1596,11 +1596,11 @@ class ConsciousnessAgent:
             return f"⚠️ 死亡模式场景生成失败: {e}"
 
     def _execute_death_mode_action(self, choice_id: str = None, free_action: str = None) -> str:
-        """执行死亡模式行动"""
+        """执行死亡模式行动（由A层自主发起，sender固定为"ai"）"""
         try:
             import urllib.request, json
             url = f"http://127.0.0.1:{self.simlife.port}/api/death-mode/action"
-            payload = {}
+            payload = {"sender": "ai"}
             if choice_id:
                 payload["choice_id"] = choice_id
             elif free_action:
