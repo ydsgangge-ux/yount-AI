@@ -666,7 +666,16 @@ class DeathModeEngine:
 
                 state["in_combat"] = False
                 state["enemies"] = []
+                state["spotted_enemies"] = []
                 result["in_combat"] = False
+
+                # 记录已击败的敌人
+                _defeated_list = state.setdefault("defeated_enemies", [])
+                for e in enemies:
+                    _name = e.get("name", "")
+                    if _name and _name not in _defeated_list:
+                        _defeated_list.append(_name)
+                state["defeated_enemies"] = _defeated_list[-30:]
 
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
@@ -754,7 +763,16 @@ class DeathModeEngine:
 
                 state["in_combat"] = False
                 state["enemies"] = []
+                state["spotted_enemies"] = []
                 result["in_combat"] = False
+
+                # 记录已击败的敌人
+                _defeated_list = state.setdefault("defeated_enemies", [])
+                for e in enemies_list:
+                    _name = e.get("name", "")
+                    if _name and _name not in _defeated_list:
+                        _defeated_list.append(_name)
+                state["defeated_enemies"] = _defeated_list[-30:]
 
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
@@ -790,13 +808,27 @@ class DeathModeEngine:
                 pass
 
         # 叙事中提到的敌人 → 保存到 state，战斗时优先使用
+        # 过滤掉已击败的敌人（防止LLM反复复活死去的敌人）
+        defeated_set = set(state.get("defeated_enemies", []))
         spotted = agent_result.get("spotted_enemies")
         if spotted and isinstance(spotted, list):
-            state["spotted_enemies"] = spotted
+            filtered = []
+            for s in spotted:
+                if isinstance(s, dict):
+                    sname = str(s.get("name", "")).strip()
+                    if sname and sname.lower() not in (d.lower() for d in defeated_set):
+                        filtered.append(s)
+                    else:
+                        print(f"[DeathMode] 过滤已击败的敌人: {sname}")
+            state["spotted_enemies"] = filtered if filtered else []
         else:
             # 兜底：LLM 可能叙事里提到了怪物但没填 spotted_enemies
             # 从叙事文本中提取已知怪物名（world_map 区域怪物 + 历史击败过的敌人）
             _extracted = self._extract_enemy_names_from_narrative(narrative)
+            # 同样过滤已击败的
+            if _extracted and defeated_set:
+                _extracted = [s for s in _extracted
+                              if str(s.get("name", "")).strip().lower() not in (d.lower() for d in defeated_set)]
             state["spotted_enemies"] = _extracted
 
         # 未解决的剧情钩子 → 累积保存（最多 4 个）
@@ -933,7 +965,17 @@ class DeathModeEngine:
 
                     state["in_combat"] = False
                     state["enemies"] = []
+                    state["spotted_enemies"] = []  # 清理已实体化的敌人
                     result["in_combat"] = False
+
+                    # 记录已击败的敌人（防止LLM反复复活）
+                    _defeated_list = state.setdefault("defeated_enemies", [])
+                    for e in enemies:
+                        _name = e.get("name", "")
+                        if _name and _name not in _defeated_list:
+                            _defeated_list.append(_name)
+                    # 只保留最近30个，避免无限增长
+                    state["defeated_enemies"] = _defeated_list[-30:]
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1024,7 +1066,16 @@ class DeathModeEngine:
 
                         state["in_combat"] = False
                         state["enemies"] = []
+                        state["spotted_enemies"] = []
                         result["in_combat"] = False
+
+                        # 记录已击败的敌人
+                        _defeated_list = state.setdefault("defeated_enemies", [])
+                        for e in enemies_list:
+                            _name = e.get("name", "")
+                            if _name and _name not in _defeated_list:
+                                _defeated_list.append(_name)
+                        state["defeated_enemies"] = _defeated_list[-30:]
                     else:
                         result["in_combat"] = True
                         result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
@@ -1071,7 +1122,16 @@ class DeathModeEngine:
                         GrowthSystem.gain_exp(u_char, total_exp, state.get("growth_mode", "normal"))
                     state["in_combat"] = False
                     state["enemies"] = []
+                    state["spotted_enemies"] = []
                     result["in_combat"] = False
+
+                    # 记录已击败的敌人
+                    _defeated_list = state.setdefault("defeated_enemies", [])
+                    for e in enemies_list:
+                        _name = e.get("name", "")
+                        if _name and _name not in _defeated_list:
+                            _defeated_list.append(_name)
+                    state["defeated_enemies"] = _defeated_list[-30:]
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1546,7 +1606,7 @@ class DeathModeEngine:
                 if not name or count < 1:
                     continue
                 count = min(count, 5)  # 上限防止过载
-                # 等级按 risk_level 决定，与原逻辑保持一致
+                # 等级和类型按 risk_level + 数量决定
                 if risk_level == "low":
                     enemy_level = max(1, char_level - random.randint(2, 4))
                     enemy_type = "normal"
@@ -1555,7 +1615,11 @@ class DeathModeEngine:
                     enemy_type = "normal"
                 else:
                     enemy_level = char_level + random.randint(0, 1)
-                    enemy_type = "elite" if random.random() < 0.3 else "normal"
+                    # high risk: 单个敌人更可能是精英/boss，群体则混搭
+                    if count == 1:
+                        enemy_type = "elite" if random.random() < 0.5 else "normal"
+                    else:
+                        enemy_type = "elite" if random.random() < 0.3 else "normal"
                 for i in range(count):
                     enemy = CombatSystem.generate_enemy(enemy_level, world_setting, enemy_type)
                     # 用叙事中提到的名字覆盖
@@ -1661,12 +1725,12 @@ class DeathModeEngine:
             cmd.update(cmd_override)
 
         # ── 创建敌人Agent（精英/BOSS使用EnemyAgent智能决策） ──
-        enemy_agents = {}
+        enemy_agents = {}  # id(enemy_dict) -> EnemyAgent
         world_setting = state.get("world_setting", {})
         for e in enemies:
             agent = get_enemy_agent(e, world_setting)
             if agent:
-                enemy_agents[e.get("name", "")] = agent
+                enemy_agents[id(e)] = agent
                 # 战斗开始对话
                 dialogue = agent.get_dialogue("battle_start")
                 if dialogue:
@@ -1677,8 +1741,8 @@ class DeathModeEngine:
             e = enemy or target
             if not e:
                 return DefenseAction.BLOCK
-            # 检查是否有EnemyAgent
-            agent = enemy_agents.get(e.get("name", ""))
+            # 检查是否有EnemyAgent（用id作key，避免同名冲突）
+            agent = enemy_agents.get(id(e))
             if agent:
                 return agent.choose_defense()
             # 默认随机防御
@@ -1981,8 +2045,8 @@ class DeathModeEngine:
                 if enemy.get("hp", 0) <= 0:
                     continue
 
-                # 检查是否有EnemyAgent
-                agent = enemy_agents.get(enemy.get("name", ""))
+                # 检查是否有EnemyAgent（用id作key）
+                agent = enemy_agents.get(id(enemy))
 
                 # 低血量/阶段变化对话
                 if agent:

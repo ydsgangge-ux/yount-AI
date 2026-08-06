@@ -9,7 +9,7 @@ const DeathModeUI = {
   _state: null,
   _classes: [],
   _logTimer: null,
-  _lastLogCount: 0,
+  _lastLogTotal: 0,
   _userName: '',   // 用户角色名（用于替换日志中的"你"）
 
   // ── 初始化 ──────────────────────────────────────
@@ -612,9 +612,9 @@ const DeathModeUI = {
       const logs = data.logs || [];
       if (countEl) countEl.textContent = `共 ${data.total} 条记录`;
 
-      // 如果没有新日志，不重新渲染
-      if (logs.length === this._lastLogCount && container.children.length > 0) return;
-      this._lastLogCount = logs.length;
+      // 用 data.total 判断是否有新日志（logs.length 受 limit 限制，超过100条后永远相等）
+      if (data.total === this._lastLogTotal && container.children.length > 0) return;
+      this._lastLogTotal = data.total;
 
       if (logs.length === 0) {
         container.innerHTML = `

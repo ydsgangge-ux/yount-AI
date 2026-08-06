@@ -152,15 +152,14 @@ const UI = {
   updateLogs(logs) {
     if (!logs || logs.length === 0) return;
 
-    const existing = this.$logList.children.length;
-    const newLogs = logs.slice(existing);
+    // 用 JSON 序列化比较，避免日志条数达到上限后无法追加
+    const currentHtml = this.$logList.innerHTML;
+    const newHtml = logs.map(log =>
+      `<div class="log-item"><span class="log-time">${log.time}</span><span class="log-event">${log.event}</span></div>`
+    ).join('');
+    if (newHtml === currentHtml) return;
 
-    for (const log of newLogs) {
-      const item = document.createElement('div');
-      item.className = 'log-item';
-      item.innerHTML = `<span class="log-time">${log.time}</span><span class="log-event">${log.event}</span>`;
-      this.$logList.appendChild(item);
-    }
+    this.$logList.innerHTML = newHtml;
 
     const panel = document.getElementById('log-panel');
     panel.scrollTop = panel.scrollHeight;

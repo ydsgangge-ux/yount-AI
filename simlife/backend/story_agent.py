@@ -480,6 +480,13 @@ class StoryAgent:
         if hooks:
             hooks_ctx = "【必须承接的剧情钩子】\n" + "\n".join(f"  - {h}" for h in hooks) + "\n"
 
+        # 已击败的敌人列表（防止LLM复活死去的敌人）
+        defeated_enemies = state.get("defeated_enemies", [])
+        defeated_ctx = ""
+        if defeated_enemies:
+            recent_defeated = defeated_enemies[-10:]  # 最近10个
+            defeated_ctx = f"【已击败的敌人·绝不能复活】以下敌人已被击败并死亡，叙事中绝不能让它们再次出现、还活着或重新战斗：{', '.join(recent_defeated)}\n"
+
         # ── 识别行动主角 ──
         # sender="ai"：行动由 A层（系统角色）发起，行动中的「我」指 AI角色
         # sender="user"：行动由用户发起，行动中的「我」指用户角色
@@ -579,7 +586,7 @@ class StoryAgent:
 {char_ctx}
 
 {history_ctx}
-{hooks_ctx}
+{hooks_ctx}{defeated_ctx}
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}

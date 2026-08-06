@@ -55,7 +55,7 @@ const Game = {
   startLoop() {
     this.render();
     this.poll();
-    this.pollInterval = setInterval(() => this.poll(), 60000);
+    this.pollInterval = setInterval(() => this.poll(), 15000);
   },
 
   render() {

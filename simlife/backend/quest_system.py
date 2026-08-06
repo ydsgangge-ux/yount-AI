@@ -408,7 +408,9 @@ class QuestSystem:
     # ── 可接任务 ──
     @classmethod
     def get_available_quests(cls, state: Dict, character: Dict) -> List[Dict]:
-        """获取角色当前可接的任务（未接且满足前置/等级）"""
+        """获取角色当前可接的任务（未接且满足前置/等级）
+        自定义世界（有 world_id）只返回动态任务，不返回预定义任务
+        """
         cls._ensure_state(state)
         world_type = state.get("world_type", "fantasy")
         char_level = character.get("level", 1)
@@ -416,19 +418,24 @@ class QuestSystem:
         active_ids = {q["id"] for q in state["quests"]["active"]}
         failed = set(state["quests"]["failed_ids"])
 
+        # 自定义世界（有 world_id）不显示预定义任务，只靠 LLM 动态生成
+        cur_world = cls._current_world_id(state)
+
         available = []
-        for q_def in QUEST_DEFS.get(world_type, []):
-            qid = q_def["id"]
-            if qid in turned_in or qid in active_ids or qid in failed:
-                continue
-            # 等级要求
-            if q_def.get("req_level", 1) > char_level:
-                continue
-            # 前置任务
-            reqs = q_def.get("req_quests", [])
-            if not all(r in turned_in for r in reqs):
-                continue
-            available.append(q_def)
+        if not cur_world:
+            # 仅默认世界（无 world_id）才显示预定义任务
+            for q_def in QUEST_DEFS.get(world_type, []):
+                qid = q_def["id"]
+                if qid in turned_in or qid in active_ids or qid in failed:
+                    continue
+                # 等级要求
+                if q_def.get("req_level", 1) > char_level:
+                    continue
+                # 前置任务
+                reqs = q_def.get("req_quests", [])
+                if not all(r in turned_in for r in reqs):
+                    continue
+                available.append(q_def)
         return available
 
     # ── 进行中任务 ──
@@ -642,14 +649,16 @@ class QuestSystem:
 
         # 按 series_id 分组（预定义 + 动态 offers）
         series_map: Dict[str, List[Dict]] = {}
-        for q_def in QUEST_DEFS.get(world_type, []):
-            sid = q_def.get("series_id")
-            if not sid:
-                continue
-            series_map.setdefault(sid, []).append(q_def)
+        cur_world = cls._current_world_id(state)
+        # 自定义世界（有 world_id）不显示预定义系列，只显示动态系列
+        if not cur_world:
+            for q_def in QUEST_DEFS.get(world_type, []):
+                sid = q_def.get("series_id")
+                if not sid:
+                    continue
+                series_map.setdefault(sid, []).append(q_def)
 
         # 加入动态 offers 中的系列任务（未接受）— 按当前世界过滤
-        cur_world = cls._current_world_id(state)
         for o in state["quests"]["available_offers"]:
             sid = o.get("series_id")
             if not sid:

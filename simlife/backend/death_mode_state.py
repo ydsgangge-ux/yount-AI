@@ -247,6 +247,7 @@ def create_initial_state(
         "start_time": datetime.now().isoformat(),  # 游戏开始时间（天数按实际时间计算）
         "kill_count": 0,
         "created_at": datetime.now().isoformat(),
+        "defeated_enemies": [],  # 已击败的敌人名列表（防止LLM反复复活）
         # ── 任务系统 ──
         "quests": {
             "active": [],            # 已接进行中的任务实例

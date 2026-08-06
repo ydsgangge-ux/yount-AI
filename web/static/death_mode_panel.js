@@ -8,7 +8,7 @@ const DeathModePanel = {
   API_BASE: 'http://127.0.0.1:8769',
 
   _timer: null,
-  _lastLogCount: -1,
+  _lastLogTotal: -1,
   _userName: '用户',
   _sending: false,
 
@@ -130,8 +130,8 @@ const DeathModePanel = {
         return;
       }
       const logs = data.logs || [];
-      if (logs.length === this._lastLogCount && container.children.length > 0) return;
-      this._lastLogCount = logs.length;
+      if (data.total === this._lastLogTotal && container.children.length > 0) return;
+      this._lastLogTotal = data.total;
 
       if (logs.length === 0) {
         container.innerHTML = `<div class="dm-log-empty">📜 还没有行动记录<br><span style="font-size:11px;">在下方输入框发起行动</span></div>`;
