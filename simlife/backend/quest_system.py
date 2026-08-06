@@ -535,11 +535,29 @@ class QuestSystem:
             - collect: items=[{"name":...}, ...]
             - visit_location: location="..."
             - talk_npc: npc_name="..."
+            - narrative: "叙事文本"（可选，用于 fallback 匹配，当 LLM 输出中文名时兜底）
+            - action_text: "用户行动文本"（可选，额外 fallback）
         """
         cls._ensure_state(state)
         active = state["quests"]["active"]
         if not active:
             return []
+
+        # 提取 fallback 文本（叙事文本和用户行动文本）
+        _narrative = str(kwargs.get("narrative", "") or "").lower()
+        _action = str(kwargs.get("action_text", "") or "").lower()
+
+        # 构建 fallback 关键词变体
+        # 对于 "warehouse_basement" 这样的内部ID，拆成 ["warehouse_basement", "warehouse", "basement"]
+        # 对于 "黑雾核心情报" 这样的中文关键词，保持原样匹配
+        def _build_fallback_keywords(kw: str) -> List[str]:
+            variants = [kw]
+            # 按 _ - 空格拆分
+            for sep in ("_", "-", " "):
+                if sep in kw:
+                    parts = [p for p in kw.split(sep) if p]
+                    variants.extend(parts)
+            return variants
 
         progressed = []
         for quest in active:
@@ -552,19 +570,66 @@ class QuestSystem:
                     continue
                 # 关键词匹配（不区分大小写）
                 kw = obj["target_keyword"].lower()
+                if not kw:
+                    continue
                 matched = False
                 if event_type == "kill":
                     names = kwargs.get("enemy_names", [])
                     matched = any(kw in str(n).lower() for n in names)
+                    # fallback：从叙事文本中匹配
+                    if not matched and _narrative:
+                        for _v in _build_fallback_keywords(kw):
+                            if _v in _narrative:
+                                matched = True
+                                break
                 elif event_type == "collect":
                     items = kwargs.get("items", [])
                     matched = any(kw in str(it.get("name", "")).lower() for it in items)
+                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    if not matched:
+                        _fbs = _build_fallback_keywords(kw)
+                        if _narrative:
+                            for _v in _fbs:
+                                if _v in _narrative:
+                                    matched = True
+                                    break
+                        if not matched and _action:
+                            for _v in _fbs:
+                                if _v in _action:
+                                    matched = True
+                                    break
                 elif event_type == "visit_location":
                     loc = str(kwargs.get("location", "")).lower()
                     matched = kw in loc
+                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    if not matched:
+                        _fbs = _build_fallback_keywords(kw)
+                        if _narrative:
+                            for _v in _fbs:
+                                if _v in _narrative:
+                                    matched = True
+                                    break
+                        if not matched and _action:
+                            for _v in _fbs:
+                                if _v in _action:
+                                    matched = True
+                                    break
                 elif event_type == "talk_npc":
                     npc = str(kwargs.get("npc_name", "")).lower()
                     matched = kw in npc
+                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    if not matched:
+                        _fbs = _build_fallback_keywords(kw)
+                        if _narrative:
+                            for _v in _fbs:
+                                if _v in _narrative:
+                                    matched = True
+                                    break
+                        if not matched and _action:
+                            for _v in _fbs:
+                                if _v in _action:
+                                    matched = True
+                                    break
 
                 if matched:
                     obj["progress"] = min(obj["count"], obj["progress"] + 1)

@@ -800,12 +800,38 @@ class DeathModeEngine:
         new_location = agent_result.get("new_location")
         if new_location and isinstance(new_location, str) and new_location.strip():
             state["story"]["current_location"] = new_location.strip()
-            # 任务进度：进入新地点触发
+            # 任务进度：进入新地点触发（传入叙事文本用于 fallback 匹配）
             try:
                 QuestSystem.record_progress(state, "visit_location",
-                                             location=new_location.strip())
+                                             location=new_location.strip(),
+                                             narrative=narrative, action_text=action)
             except Exception:
                 pass
+
+        # 任务进度：与NPC对话触发（从用户行动和叙事文本中提取NPC名）
+        try:
+            _talk_keywords = ("对话", "找", "问", "打听", "聊天", "交谈", "拜访", "见面",
+                              "talk", "ask", "chat", "speak", "meet", "找一下",
+                              "说话", "谈谈", "聊", "见", "找找", "寻")
+            _action_lower = (action or "").lower()
+            _narrative_lower = (narrative or "").lower()
+            _is_talk_action = any(kw in _action_lower for kw in _talk_keywords)
+            if self.npc_system:
+                # 遍历所有存活的NPC，不依赖位置匹配（因为NPC.location是区域ID，story.location是中文名）
+                for _npc in self.npc_system.npcs.values():
+                    if not _npc.alive or not _npc.name:
+                        continue
+                    _npc_name_lower = _npc.name.lower()
+                    # 条件1：用户行动含对话意图 + NPC名在用户行动中
+                    _matched = _is_talk_action and _npc_name_lower in _action_lower
+                    # 条件2：NPC名在叙事文本中（即使没有对话关键词，NPC出现说明在互动）
+                    if not _matched:
+                        _matched = _npc_name_lower in _narrative_lower
+                    if _matched:
+                        QuestSystem.record_progress(state, "talk_npc", npc_name=_npc.name,
+                                                     narrative=narrative, action_text=action)
+        except Exception:
+            pass
 
         # 叙事中提到的敌人 → 保存到 state，战斗时优先使用
         # 过滤掉已击败的敌人（防止LLM反复复活死去的敌人）
@@ -1215,10 +1241,11 @@ class DeathModeEngine:
                         if cons_item:
                             shared_inv.append(cons_item)
                             result.setdefault("items_to_backpack", []).append(cons_item["name"])
-                # 任务进度：收集物品触发
+                # 任务进度：收集物品触发（传入叙事文本用于 fallback 匹配）
                 try:
                     QuestSystem.record_progress(state, "collect",
-                                                 items=[{"name": n} for n in items_gained])
+                                                 items=[{"name": n} for n in items_gained],
+                                                 narrative=narrative, action_text=action)
                 except Exception:
                     pass
 
@@ -3178,6 +3205,8 @@ class DeathModeEngine:
 
         # ── 地下城区域：触发 DungeonAgent ──
         if target.region_type == "dungeon":
+            # 更新故事位置为地下城入口
+            state["story"]["current_location"] = target.name
             dungeon_result = self._enter_dungeon_region(state, target)
             if dungeon_result.get("success"):
                 result = {
@@ -3189,6 +3218,13 @@ class DeathModeEngine:
                     "is_dungeon": True,
                     "dungeon": dungeon_result.get("dungeon_display"),
                 }
+                # 任务进度：到达地下城触发
+                try:
+                    QuestSystem.record_progress(state, "visit_location",
+                                                 location=target.name,
+                                                 narrative=target.description)
+                except Exception:
+                    pass
                 adjacent = self.world_map.get_adjacent_regions()
                 result["adjacent"] = [{"id": r.region_id, "name": r.name, "explored": r.explored} for r in adjacent]
                 self._log_action("enter_dungeon", {
@@ -3200,6 +3236,14 @@ class DeathModeEngine:
         # 更新故事位置
         state["story"]["current_location"] = target.name
         state["story"]["scene_description"] = target.description
+
+        # 任务进度：到达新区域触发
+        try:
+            QuestSystem.record_progress(state, "visit_location",
+                                         location=target.name,
+                                         narrative=target.description)
+        except Exception:
+            pass
 
         # 构建区域信息
         result = {
@@ -3316,6 +3360,17 @@ class DeathModeEngine:
                 "room_name": result.get("room_name", ""),
                 "is_boss": result.get("is_boss", False),
             })
+
+            # 更新故事位置为当前房间名
+            _room_name = result.get("room_name", "")
+            if _room_name:
+                state["story"]["current_location"] = _room_name
+                # 任务进度：到达新房间触发
+                try:
+                    QuestSystem.record_progress(state, "visit_location",
+                                                 location=_room_name)
+                except Exception:
+                    pass
 
             # 房间有敌人 → 触发战斗
             if result.get("has_enemies"):
@@ -3618,7 +3673,8 @@ class DeathModeEngine:
             })
             # 任务进度：与NPC交谈触发
             try:
-                QuestSystem.record_progress(state, "talk_npc", npc_name=npc_name)
+                QuestSystem.record_progress(state, "talk_npc", npc_name=npc_name,
+                                             action_text=f"和{npc_name}对话")
             except Exception:
                 pass
             self._save()
