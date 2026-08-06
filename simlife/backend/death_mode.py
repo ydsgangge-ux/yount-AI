@@ -29,6 +29,7 @@ from simlife.backend.quest_system import QuestSystem
 from simlife.backend.world_progress import WorldProgress
 from simlife.backend.dungeon_agent import DungeonAgent, Dungeon
 from simlife.backend.party_agent import PartyAgent, PartyMember
+from simlife.backend.ending_system import generate_hidden_ending, HiddenEnding
 
 
 class DeathModeEngine:
@@ -328,6 +329,15 @@ class DeathModeEngine:
                     wm.save_region(world_id, region_data)
         except Exception as e:
             print(f"[DeathMode] 保存区域文件失败: {e}")
+
+        # ── 生成隐藏结局（对用户和系统角色完全隐藏）──
+        try:
+            hidden_ending = generate_hidden_ending(world_setting, self.llm, self.world_map)
+            if hidden_ending:
+                self.state["hidden_ending"] = hidden_ending.to_dict()
+                print(f"[DeathMode] 隐藏结局生成成功：{hidden_ending.title}")
+        except Exception as e:
+            print(f"[DeathMode] 隐藏结局生成失败: {e}")
 
         # 生成NPC
         self.npc_system = NPCGenerator.generate_for_world(world_setting, self.world_map, self.llm)
@@ -1247,7 +1257,17 @@ class DeathModeEngine:
         try:
             offers = agent_result.get("quest_offers")
             if offers and isinstance(offers, list):
-                created_n, created_titles = QuestSystem.create_dynamic_quests(state, offers)
+                # 获取隐藏结局方向提示（供任务系统生成匹配结局的任务链）
+                ending_hint_for_quest = ""
+                try:
+                    ending_data = state.get("hidden_ending")
+                    if ending_data and not ending_data.get("triggered", False):
+                        from simlife.backend.ending_system import HiddenEnding
+                        ending = HiddenEnding.from_dict(ending_data)
+                        ending_hint_for_quest = ending.get_stage_hint_for_quest()
+                except Exception:
+                    pass
+                created_n, created_titles = QuestSystem.create_dynamic_quests(state, offers, ending_hint_for_quest)
                 if created_n > 0:
                     result["new_quest_offers"] = created_titles
         except Exception as e:
@@ -1260,6 +1280,25 @@ class DeathModeEngine:
                 result["world_news"] = new_news
         except Exception:
             pass
+
+        # ── 隐藏结局进度检查 ──
+        try:
+            ending_data = state.get("hidden_ending")
+            if ending_data and not ending_data.get("triggered", False) and not ending_data.get("completed", False):
+                ending = HiddenEnding.from_dict(ending_data)
+                progress = ending.check_progress(state)
+                if progress.get("stage_advanced"):
+                    state["hidden_ending"] = ending.to_dict()
+                    if progress.get("ending_ready"):
+                        # 结局条件已满足，标记触发
+                        result["ending_ready"] = True
+                        result["ending_message"] = ending.description
+                        print(f"[DeathMode] 隐藏结局触发！{ending.title}")
+                    else:
+                        # 阶段推进（不通知用户，只系统记录）
+                        print(f"[DeathMode] 结局阶段推进到 {ending.current_stage}/{len(ending.stages)}")
+        except Exception as e:
+            print(f"[DeathMode] 结局进度检查失败: {e}")
 
         self._save()
 

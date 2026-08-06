@@ -259,7 +259,7 @@ class QuestSystem:
 
     # ── 动态任务生成（LLM 叙事触发）──
     @classmethod
-    def create_dynamic_quests(cls, state: Dict, offers: List[Dict]) -> Tuple[int, List[str]]:
+    def create_dynamic_quests(cls, state: Dict, offers: List[Dict], ending_hint: str = "") -> Tuple[int, List[str]]:
         """
         接受 LLM 生成的任务 offer，存入 available_offers。
         支持：
@@ -272,6 +272,10 @@ class QuestSystem:
         cls._ensure_state(state)
         if not isinstance(offers, list) or not offers:
             return 0, []
+
+        # 记录结局方向上下文（供后续检查使用）
+        if ending_hint:
+            state["quests"]["ending_context"] = ending_hint
 
         # 已有 offer 标题（去重，避免 LLM 重复生成）
         existing_titles = {o.get("title", "").strip() for o in state["quests"]["available_offers"]}
@@ -717,3 +721,31 @@ class QuestSystem:
                 obj_lines.append(f"{o['type']}:{o['target_keyword']}({o['progress']}/{o['count']})")
             lines.append(f"· {q['title']} - {'/'.join(obj_lines)}")
         return "当前任务：\n" + "\n".join(lines)
+
+    # ── 按系列查询任务（供隐藏结局系统使用）──
+    @classmethod
+    def get_quests_by_series(cls, state: Dict, series_id: str) -> List[Dict]:
+        """获取指定系列的所有任务（包括已交付、进行中、可接的）"""
+        cls._ensure_state(state)
+        result = []
+        turned_in = set(state["quests"]["turned_in_ids"])
+        active_ids = {q["id"] for q in state["quests"]["active"]}
+
+        # 从预定义任务中查找
+        world_type = state.get("world_type", "fantasy")
+        for q_def in QUEST_DEFS.get(world_type, []):
+            if q_def.get("series_id") == series_id:
+                qid = q_def["id"]
+                result.append(q_def)
+
+        # 从动态任务中查找
+        for o in state["quests"].get("available_offers", []):
+            if o.get("series_id") == series_id:
+                result.append(o)
+        for q in state["quests"].get("active", []):
+            if q.get("series_id") == series_id and q not in result:
+                result.append(q)
+
+        # 按 series_order 排序
+        result.sort(key=lambda x: x.get("series_order", 0))
+        return result

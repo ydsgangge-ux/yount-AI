@@ -319,6 +319,34 @@ class StoryAgent:
         current_scene = state.get("story", {}).get("scene_description", "")
         current_location = state.get("story", {}).get("current_location", "")
 
+        # ── 隐藏结局方向提示（仅系统可见，不透露结局）──
+        ending_hint = ""
+        ending_region_hint = ""
+        try:
+            ending_data = state.get("hidden_ending")
+            if ending_data and not ending_data.get("triggered", False):
+                from simlife.backend.ending_system import HiddenEnding
+                ending = HiddenEnding.from_dict(ending_data)
+                hint = ending.get_stage_hint()
+                if hint:
+                    ending_hint = f"【世界暗流】{hint}"
+                # 如果当前阶段是区域相关，额外引导生成前往该区域的选项
+                stage = ending.get_current_stage()
+                if stage:
+                    stage_type = stage.get("type", "")
+                    conditions = stage.get("conditions", {})
+                    if stage_type == "arrival":
+                        target_region = conditions.get("region_id", "")
+                        if target_region:
+                            ending_region_hint = f"（暗中引导：角色的探索方向应逐步指向『{target_region}』，但不是强制的）"
+                    elif stage_type == "explore":
+                        target_type = conditions.get("region_type", "")
+                        type_label = {"town": "城镇", "wild": "野外", "dungeon": "地下城", "boss_lair": "Boss巢穴", "secret": "隐秘区域"}.get(target_type, target_type)
+                        if target_type:
+                            ending_region_hint = f"（暗中引导：角色应逐步前往未探索的{type_label}区域探索）"
+        except Exception:
+            pass
+
         prompt = f"""你是死亡模式人生模拟器的叙事Agent。请为角色生成下一段场景。
 
 【世界观】
@@ -334,6 +362,10 @@ class StoryAgent:
 
 【地图信息】
 {map_context or '（无地图信息）'}
+
+{ending_hint}
+
+{ending_region_hint}
 
 【设计原则】
 1. 场景必须有明确的地点名称，地点要在世界观范围内，不能随意跳跃
@@ -500,6 +532,34 @@ class StoryAgent:
         from simlife.backend.quest_system import QuestSystem
         quest_summary = QuestSystem.get_active_quests_summary(state)
         offers_count = len(QuestSystem.get_available_offers(state))
+
+        # ── 隐藏结局方向提示（仅系统可见，不透露结局）──
+        ending_hint = ""
+        ending_region_hint = ""
+        try:
+            ending_data = state.get("hidden_ending")
+            if ending_data and not ending_data.get("triggered", False):
+                from simlife.backend.ending_system import HiddenEnding
+                ending = HiddenEnding.from_dict(ending_data)
+                hint = ending.get_stage_hint()
+                if hint:
+                    ending_hint = f"\n【世界暗流】{hint}\n"
+                # 区域引导
+                stage = ending.get_current_stage()
+                if stage:
+                    stage_type = stage.get("type", "")
+                    conditions = stage.get("conditions", {})
+                    if stage_type == "arrival":
+                        target_region = conditions.get("region_id", "")
+                        if target_region:
+                            ending_region_hint = f"\n【命运指向】暗中的线索指向『{target_region}』，那里可能有重要的发现。\n"
+                    elif stage_type == "explore":
+                        target_type = conditions.get("region_type", "")
+                        type_label = {"town": "城镇", "wild": "野外", "dungeon": "地下城", "boss_lair": "Boss巢穴", "secret": "隐秘区域"}.get(target_type, target_type)
+                        if target_type:
+                            ending_region_hint = f"\n【命运指向】未探索的{type_label}区域中隐藏着关键线索。\n"
+        except Exception:
+            pass
         # 玩家等级影响难度
         char_level = char.get("level", 1)
         # 玩家最近是否在和 NPC 对话 / 看告示板 / 听传闻
@@ -531,7 +591,7 @@ class StoryAgent:
 
 {("【当前任务】" + chr(10) + quest_summary) if quest_summary else ""}
 【已有待接任务委托】{offers_count} 个
-
+{ending_hint}{ending_region_hint}
 【设计原则】
 1. 叙事要简短有力（3-5句话），描述行动的结果
 2. 不要替数值系统做判定（不要说"你赢了"或"你死了"），只描述过程
