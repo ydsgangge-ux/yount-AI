@@ -73,10 +73,14 @@ class StoryAgent:
                 type_label = {"town": "城镇", "wild": "野外", "dungeon": "地下城", "boss_lair": "Boss巢穴", "secret": "隐秘区域"}.get(r_type, r_type)
                 region_ctx = f"【当前区域】{r_name}（{type_label}，危险等级{r_danger}）\n{r_desc}"
             else:
-                # 最终回退到内嵌 regions
+                # 最终回退到内嵌 regions（统一调用 world_manager.build_region_context）
                 current_region = self._resolve_current_region(state, ws)
                 if current_region:
-                    region_ctx = self._build_region_context(current_region, ws)
+                    try:
+                        from simlife.worlds import world_manager as wm
+                        region_ctx = wm.build_region_context(current_region, ws)
+                    except Exception:
+                        region_ctx = self._build_region_context(current_region, ws)
                 else:
                     regions = ws.get("geography", {}).get("regions", [])
                     if regions:
@@ -300,6 +304,22 @@ class StoryAgent:
             text += "\n\n【必须承接的剧情钩子】（叙事必须呼应这些未解决的悬念）"
             for hook in hooks[-4:]:  # 最近 4 个钩子
                 text += f"\n- {hook}"
+
+        # 附加剧情线（关键设定，防止前后矛盾）
+        plot_threads = state.get("plot_threads", [])
+        active_threads = [t for t in plot_threads if t.get("status") in ("introduced", "active")]
+        if active_threads:
+            text += "\n\n【剧情线·必须遵守】"
+            for t in active_threads:
+                title = t.get("title", "")
+                facts = "；".join(t.get("key_facts", []))
+                text += f"\n▶ {title}：{facts}"
+
+        # 附加剧情摘要（长期记忆）
+        story_summary = state.get("story_summary", "")
+        if story_summary:
+            text += f"\n\n【剧情摘要】\n{story_summary}"
+
         return text
 
     def generate_scene(self, state: Dict, map_context: str = "") -> Dict:
@@ -480,12 +500,33 @@ class StoryAgent:
         if hooks:
             hooks_ctx = "【必须承接的剧情钩子】\n" + "\n".join(f"  - {h}" for h in hooks) + "\n"
 
-        # 已击败的敌人列表（防止LLM复活死去的敌人）
-        defeated_enemies = state.get("defeated_enemies", [])
+        # 已击败的特殊敌人列表（只有elite/boss，小怪不屏蔽）
+        defeated_unique = state.get("defeated_unique_enemies", [])
         defeated_ctx = ""
-        if defeated_enemies:
-            recent_defeated = defeated_enemies[-10:]  # 最近10个
-            defeated_ctx = f"【已击败的敌人·绝不能复活】以下敌人已被击败并死亡，叙事中绝不能让它们再次出现、还活着或重新战斗：{', '.join(recent_defeated)}\n"
+        if defeated_unique:
+            recent_defeated = defeated_unique[-15:]  # 最近15个特殊敌人
+            defeated_ctx = f"【已击败的特殊敌人·绝不能复活】以下精英/Boss已被击败并死亡，叙事中绝不能让它们再次出现、还活着或重新战斗：{', '.join(recent_defeated)}\n"
+
+        # ── 剧情线（Plot Threads）：跟踪关键剧情设定，防止前后矛盾 ──
+        plot_threads = state.get("plot_threads", [])
+        plot_ctx = ""
+        if plot_threads:
+            active_threads = [t for t in plot_threads if t.get("status") in ("introduced", "active")]
+            if active_threads:
+                plot_lines = []
+                for t in active_threads:
+                    title = t.get("title", "未知")
+                    facts = t.get("key_facts", [])
+                    status_label = "进行中" if t.get("status") == "active" else "刚引入"
+                    fact_str = "；".join(facts) if facts else "（暂无线索）"
+                    plot_lines.append(f"▶ {title} [{status_label}]\n  关键设定：{fact_str}")
+                plot_ctx = "【剧情线·必须遵守】以下剧情设定已确立，叙事必须与之保持一致，不得矛盾或篡改：\n" + "\n".join(plot_lines) + "\n"
+
+        # ── 剧情摘要（长期记忆）──
+        story_summary = state.get("story_summary", "")
+        summary_ctx = ""
+        if story_summary:
+            summary_ctx = f"【剧情摘要·长期记忆】\n{story_summary}\n"
 
         # ── 识别行动主角 ──
         # sender="ai"：行动由 A层（系统角色）发起，行动中的「我」指 AI角色
@@ -586,7 +627,7 @@ class StoryAgent:
 {char_ctx}
 
 {history_ctx}
-{hooks_ctx}{defeated_ctx}
+{hooks_ctx}{defeated_ctx}{plot_ctx}{summary_ctx}
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}
@@ -667,7 +708,10 @@ class StoryAgent:
   "spotted_enemies": [
     {{"name": "敌人名（英文，如 Elemental Slime）", "count": 3}}
   ] 或 null,
-  "unresolved_hooks": ["本段叙事留下的悬念1（一句话）", "悬念2"] 或 null
+  "unresolved_hooks": ["本段叙事留下的悬念1（一句话）", "悬念2"] 或 null,
+  "plot_thread_updates": [
+    {{"title": "剧情线标题", "action": "introduce/advance/resolve", "new_fact": "新增的关键设定（一句话）"}}
+  ] 或 null
 }}
 
 物品/金币规则：
@@ -688,6 +732,7 @@ spotted_enemies 规则（关键！）：
 - count 是叙事中提到的数量
 - 玩家下回合说"清掉这些怪/扫荡小怪"时，战斗系统会用这些敌人，不会随机生成
 - 如果叙事没有提到具体敌人，填 null
+- 【名字一致性·最严格】如果叙事中提到的敌人在【最近行动记录】中出现过，必须使用完全相同的名字，不得改写、简写、加连字符或变体。例如：之前记录中是"Crystal Scale Fish Dragon"，这次也必须用"Crystal Scale Fish Dragon"，绝不能写成"Scale Fish Dragon"或"Crystal-Scale Fish Dragon"
 
 unresolved_hooks 规则：
 - 这段叙事留下的悬念，例如"地精独眼闪烁危险光芒"、"身后传来非人呼吸声"
@@ -695,6 +740,16 @@ unresolved_hooks 规则：
 - 最多 2 条
 - 后续叙事必须承接这些钩子，不能装作没看到
 - 如果叙事没有留下悬念，填 null
+
+plot_thread_updates 规则（剧情线管理·最关键！）：
+- 当叙事引入了新的重要剧情设定（如关键道具、重要NPC的秘密、势力阴谋、核心人物身份等），用 action="introduce" 新建剧情线
+- 当叙事推进了已有剧情线（如获得新线索、新发现、关键NPC透露新信息），用 action="advance" 并在 new_fact 中记录新设定
+- 当某条剧情线达到结局（如真相大白、敌人被消灭），用 action="resolve"
+- new_fact 必须是客观事实描述，不能是模糊的猜测
+- 【必须输出】只要叙事中涉及了关键道具（如贤者之石）、重要NPC（如老修恩）、核心剧情设定（如渊喉之影、黑雾源头），就必须输出对应的 plot_thread_updates，不得填 null
+- 【已有剧情线约束】如果上方【剧情线·必须遵守】中已有同名剧情线，叙事必须与之保持一致，不得篡改已有设定。如需推进，用 action="advance" 并在 new_fact 中补充新信息
+- 示例：{{"title": "贤者之石", "action": "introduce", "new_fact": "贤者之石是封印渊喉之影的关键道具，藏在钟楼祭坛深处"}}
+- 示例：{{"title": "贤者之石", "action": "advance", "new_fact": "老修恩警告贤者之石一旦脱离祭坛会唤醒渊喉之影"}}
 
 只返回JSON，不要其他文字。"""
 
@@ -725,10 +780,173 @@ unresolved_hooks 规则：
                 "spotted_enemies": result.get("spotted_enemies"),
                 # 这段叙事留下的未解决钩子（后续必须承接）
                 "unresolved_hooks": result.get("unresolved_hooks"),
+                # 剧情线更新（introduce/advance/resolve）
+                "plot_thread_updates": result.get("plot_thread_updates"),
             }
         except Exception as e:
             print(f"[DeathMode] 行动处理失败: {e}")
             return {"narrative": "行动执行完毕，但结果未知。", "outcome_type": "nothing", "next_tension": "medium"}
+
+    def process_combat_action(self, state: Dict, action: str, combat_result: Dict,
+                               sender: str = "user") -> Dict:
+        """
+        战斗回合格式：先执行战斗系统，再基于 combat_log + 历史上下文生成叙事。
+        combat_result: _combat_round() 的返回值，包含 combat_log, victory, enemies_defeated 等
+        """
+        char = state.get("character", {})
+        user_char = state.get("user_character", {})
+        world_ctx = self._build_world_context(state)
+        char_ctx = self._build_character_context(state)
+        current_location = state.get("story", {}).get("current_location", "")
+        current_scene = state.get("story", {}).get("scene_description", "")
+
+        # ── 构建历史上下文（复用 process_action 的逻辑）──
+        history = state.get("story", {}).get("history", [])
+        recent_history = history[-5:] if history else []
+        history_ctx = ""
+        if recent_history:
+            history_lines = []
+            for h in recent_history:
+                _act = h.get("action", "")
+                _sum = h.get("summary", "")
+                _loc = h.get("location", "")
+                _combat = h.get("combat_result")
+                _combat_info = ""
+                if _combat:
+                    if _combat.get("victory"):
+                        _defeated = "、".join(_combat.get("enemies_defeated", [])) or "所有敌人"
+                        _combat_info = f" [✅战斗胜利：{_defeated}已被全部击败并死亡]"
+                    else:
+                        _combat_info = f" [⚔️战斗中：{_combat.get('combat_summary', '')}]"
+                if _act and _sum:
+                    history_lines.append(f"  • 行动：{_act}\n    结果：{_sum[:120]}{_combat_info}" + (f"（地点：{_loc}）" if _loc else ""))
+            if history_lines:
+                history_ctx = "【最近行动记录】\n" + "\n".join(history_lines) + "\n"
+
+        # 剧情线 + 摘要
+        plot_threads = state.get("plot_threads", [])
+        plot_ctx = ""
+        active_threads = [t for t in plot_threads if t.get("status") in ("introduced", "active")]
+        if active_threads:
+            plot_lines = []
+            for t in active_threads:
+                title = t.get("title", "未知")
+                facts = t.get("key_facts", [])
+                fact_str = "；".join(facts) if facts else "（暂无线索）"
+                plot_lines.append(f"▶ {title}\n  关键设定：{fact_str}")
+            plot_ctx = "【剧情线·必须遵守】\n" + "\n".join(plot_lines) + "\n"
+
+        story_summary = state.get("story_summary", "")
+        summary_ctx = f"【剧情摘要】\n{story_summary}\n" if story_summary else ""
+
+        # ── 构建战斗日志摘要 ──
+        combat_log = combat_result.get("combat_log", [])
+        victory = combat_result.get("victory", False)
+        enemies_defeated = combat_result.get("enemies_defeated", [])
+        player_died = combat_result.get("player_died", False)
+        drops = combat_result.get("drops", [])
+
+        # 战斗日志精简（最多15条，防止 token 爆炸）
+        log_text = "\n".join(combat_log[-15:]) if combat_log else "（无战斗日志）"
+
+        # 掉落物
+        drops_text = ""
+        if drops:
+            drops_text = "掉落：" + "、".join(f"{d.get('name','?')}({d.get('rarity_name','普通')})" for d in drops[:4])
+
+        # 战斗结果描述
+        if player_died:
+            battle_outcome = "角色阵亡"
+        elif victory:
+            battle_outcome = f"战斗胜利，击败了{('、'.join(enemies_defeated)) if enemies_defeated else '所有敌人'}"
+        else:
+            battle_outcome = "战斗继续中（敌人未全部消灭）"
+
+        char_name = char.get("name", "AI")
+        user_name = user_char.get("name", "用户") if user_char.get("class_name") else ""
+
+        prompt = f"""你是死亡模式人生模拟器的叙事Agent。角色在战斗中执行了一个行动，请基于实际战斗日志生成叙事。
+
+【世界观】
+{world_ctx}
+
+【角色状态】
+{char_ctx}
+
+{history_ctx}
+{plot_ctx}{summary_ctx}
+【当前场景】
+当前地点：{current_location or '未知'}
+场景描述：{current_scene or '（战斗中）'}
+
+【角色行动】
+{action}
+
+【实际战斗日志】（必须基于此日志叙事，不得编造日志中不存在的事件）
+{log_text}
+
+【战斗结果】
+{battle_outcome}
+{drops_text}
+
+【设计原则】
+1. 叙事要基于上方【实际战斗日志】描述战斗过程，不得编造日志中不存在的伤害、技能或事件
+2. 叙事简短有力（3-5句话，不超过150字）
+3. 如果战斗胜利，描述最后一击和战后瞬间
+4. 如果战斗继续，描述本回合交锋的紧张感，留下"敌人还在"的悬念
+5. 如果角色阵亡，描述壮烈的最后一刻
+6. Boss/精英的对话和技能必须与日志一致
+7. 角色名只能使用：{char_name}（系统角色）和{user_name}（用户角色）
+8. new_location 必须填 null（战斗中不切换地点）
+9. spotted_enemies 必须填 null（战斗中不生成新敌人）
+
+返回JSON格式：
+{{
+  "narrative": "战斗叙事（基于实际日志，不超过150字）",
+  "outcome_type": "combat_success" 或 "combat_fail" 或 "combat_ongoing",
+  "next_tension": "low/medium/high",
+  "new_location": null,
+  "items_gained": null,
+  "gold_spent": null,
+  "gold_gained": null,
+  "hp_change": null,
+  "mp_change": null,
+  "quest_offers": null,
+  "spotted_enemies": null,
+  "unresolved_hooks": ["战斗留下的悬念"] 或 null,
+  "plot_thread_updates": null
+}}
+
+只返回JSON，不要其他文字。"""
+
+        try:
+            response = self.llm.generate(prompt, max_tokens=800, temperature=0.7, thinking=False)
+            response = response.strip()
+            if response.startswith("```"):
+                response = response.split("```")[1]
+                if response.startswith("json"):
+                    response = response[4:]
+            result = json.loads(response)
+            return {
+                "narrative": str(result.get("narrative", "")),
+                "outcome_type": str(result.get("outcome_type", "combat_ongoing")),
+                "next_tension": str(result.get("next_tension", "medium")),
+                "new_location": None,  # 战斗中不切换地点
+                "items_gained": None,
+                "gold_spent": None,
+                "gold_gained": None,
+                "hp_change": None,
+                "mp_change": None,
+                "quest_offers": None,
+                "spotted_enemies": None,
+                "unresolved_hooks": result.get("unresolved_hooks"),
+                "plot_thread_updates": result.get("plot_thread_updates"),
+            }
+        except Exception as e:
+            print(f"[DeathMode] 战斗叙事生成失败: {e}")
+            # 兜底：用 combat_log 直接拼叙事
+            _fallback = "；".join(combat_log[-5:]) if combat_log else "战斗继续。"
+            return {"narrative": _fallback, "outcome_type": "combat_ongoing", "next_tension": "high"}
 
     def generate_quick_combat_narrative(self, state: Dict, combat_summary: Dict) -> str:
         """
@@ -768,10 +986,15 @@ unresolved_hooks 规则：
         char_name = char.get("name", "无名")
         user_name = user_char.get("name", "") if user_char.get("class_name") else ""
 
+        # 构建角色描述（兼容 Python 3.10，避免 f-string 嵌套引号问题）
+        _char_desc = f"{char_name}（{char.get('class_name', '战士')} Lv.{char.get('level', 1)}）"
+        if user_name:
+            _char_desc += f"、{user_name}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）"
+
         prompt = f"""你是死亡模式人生模拟器的叙事Agent。角色刚刚完成了一次快速扫荡战斗，请生成简短的战斗总结叙事。
 
 【角色】
-{char_name}（{char.get('class_name', '战士')} Lv.{char.get('level', 1)}）{f'、{user_name}（{user_char.get('class_name', '')} Lv.{user_char.get('level', 1)}）' if user_name else ''}
+{_char_desc}
 当前HP: {char.get('hp', 0)}/{char.get('max_hp', 0)}
 
 【战斗地点】（叙事必须围绕此地点，不得跳转）

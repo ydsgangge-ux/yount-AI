@@ -30,6 +30,27 @@ class EnemyAgent:
     敌人数据仍由 CombatSystem 生成，Agent 只提供决策和对话。
     """
 
+    # 特殊敌人类型（击败后永久屏蔽，不允许LLM重新生成）
+    UNIQUE_TYPES = ("elite", "boss")
+
+    @classmethod
+    def is_unique_enemy(cls, enemy: Dict) -> bool:
+        """判断是否为特殊敌人（精英/Boss）"""
+        return enemy.get("type", "normal") in cls.UNIQUE_TYPES
+
+    @staticmethod
+    def is_already_defeated(state: Dict, enemy_name: str) -> bool:
+        """检查特殊敌人是否已被击败（永久屏蔽）"""
+        if not enemy_name:
+            return False
+        # 规范化名字比较（去连字符、统一空格），与 spotted_enemies 处理保持一致
+        import re
+        def _normalize(n):
+            return re.sub(r'\s+', ' ', n.replace('-', ' ')).strip().lower()
+        normalized = _normalize(enemy_name)
+        unique_defeated = state.get("defeated_unique_enemies", [])
+        return normalized in (_normalize(d) for d in unique_defeated)
+
     def __init__(self, enemy: Dict, world_setting: Dict = None):
         """
         enemy: 敌人字典（来自 CombatSystem.generate_enemy）
@@ -311,3 +332,12 @@ def get_enemy_agent(enemy: Dict, world_setting: Dict) -> Optional[EnemyAgent]:
     if should_use_agent(enemy):
         return EnemyAgent(enemy, world_setting)
     return None
+
+
+# ── 特殊敌人唯一性管理 ──
+UNIQUE_ENEMY_TYPES = ("elite", "boss")
+
+
+def is_unique_enemy(enemy: Dict) -> bool:
+    """判断是否为特殊敌人（精英/Boss），特殊敌人击败后永久屏蔽"""
+    return enemy.get("type", "normal") in UNIQUE_ENEMY_TYPES

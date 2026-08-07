@@ -423,11 +423,21 @@ def build_region_context(region: Dict, world_setting: Dict = None, relations: Di
     if climate:
         parts.append(f"气候：{climate[:100]}")
 
+    # 区域类型 + 等级范围（问题5/6：统一 biome 字段名，注入 level_range）
+    biome = region.get("biome", "")
+    type_label = {"town": "城镇", "wild": "野外", "dungeon": "地下城",
+                  "boss_lair": "Boss巢穴", "secret": "隐秘区域"}.get(biome, biome or "未知")
+    level_range = region.get("level_range", [])
+    if level_range and len(level_range) >= 2:
+        parts.append(f"区域类型：{type_label}（建议等级 {level_range[0]}-{level_range[1]}）")
+    else:
+        parts.append(f"区域类型：{type_label}")
+
     key_locs = region.get("key_locations", [])
     if key_locs:
         parts.append(f"关键地点：{'、'.join(key_locs[:5])}")
 
-    # 本区危险/怪物（含特性）
+    # 本区危险/怪物概述（供叙事参考）
     dangers = region.get("dangers", [])
     if dangers:
         names = []
@@ -437,6 +447,32 @@ def build_region_context(region: Dict, world_setting: Dict = None, relations: Di
             else:
                 names.append(str(d))
         parts.append(f"本区危险：{'、'.join(names)}")
+
+    # 本区怪物战斗数据（问题3：注入 monsters 供叙事 LLM 知道怪物行为/类型）
+    monsters = region.get("monsters", [])
+    if monsters:
+        m_descs = []
+        for m in monsters[:4]:
+            if isinstance(m, dict):
+                m_name = m.get("name", "?")
+                m_type = m.get("type", "normal")
+                m_behavior = m.get("behavior", "")
+                m_level = m.get("level", "?")
+                _type_label = {"normal": "普通", "elite": "精英", "boss": "BOSS"}.get(m_type, m_type)
+                desc_parts = [f"{m_name}（Lv.{m_level}，{_type_label}）"]
+                if m_behavior:
+                    desc_parts.append(f"特性：{m_behavior}")
+                m_descs.append("，".join(desc_parts))
+        if m_descs:
+            parts.append(f"本区怪物：{'；'.join(m_descs)}")
+
+    # 区域 BOSS
+    boss = region.get("boss")
+    if boss and isinstance(boss, dict):
+        boss_desc = f"区域BOSS：{boss.get('name', '?')}"
+        if boss.get("description"):
+            boss_desc += f"（{boss['description'][:80]}）"
+        parts.append(boss_desc)
 
     # 本区 NPC（标准 NPC 卡；无则按区域特征动态派生）
     npcs = region.get("npcs", [])
@@ -473,10 +509,13 @@ def build_region_context(region: Dict, world_setting: Dict = None, relations: Di
 
 
 def _derive_region_npcs(region: Dict, world_setting: Dict = None) -> list:
-    """基于区域特征动态派生本区 NPC（不额外调 LLM，规则化生成）"""
-    rname = (region.get("name") or "").lower()
+    """基于区域特征动态派生本区 NPC（不额外调 LLM，规则化生成）
+    支持中英文关键词匹配（问题7）
+    """
+    rname = (region.get("name") or "")
+    rname_lower = rname.lower()
     key_locs = region.get("key_locations", [])
-    locs_str = "，".join(key_locs[:3]) if key_locs else region.get("name", "此区域")
+    locs_str = "，".join(key_locs[:3]) if key_locs else rname or "此区域"
 
     # 优先取一个势力作为本地驻军/联络人
     main_faction = "当地势力"
@@ -489,23 +528,32 @@ def _derive_region_npcs(region: Dict, world_setting: Dict = None) -> list:
                     main_faction = f.get("name", "当地势力")
                     break
 
+    # 中英文关键词映射（问题7）
+    KEYWORD_MAP = {
+        "forest": (["forest", "wood", "magic", "vale", "森", "林", "木", "翠", "绿"],
+                   f"{main_faction}在此镇守的队长", f"{locs_str}的本地猎人/药师"),
+        "water": (["water", "lake", "river", "iron", "coast", "海", "湖", "河", "水", "港", "铁", "矿", "岸"],
+                  f"{main_faction}在港口/矿区的管事", f"{locs_str}的船夫/矿工"),
+        "mountain": (["high", "wind", "sky", "peak", "mount", "山", "峰", "岳", "岭", "崖", "高", "风", "空"],
+                     f"{main_faction}在高地据点的观察员", f"{locs_str}的山地向导"),
+        "shadow": (["shadow", "dark", "waste", "glac", "暗", "影", "黑", "废", "冰", "寒", "夜"],
+                   f"{main_faction}潜伏在此的密探", f"{locs_str}的守夜人"),
+        "border": (["thorn", "wall", "荆", "棘", "墙", "关", "隘", "边", "塞"],
+                   f"{main_faction}在边陲的戍卫队长", f"{locs_str}的巡逻兵"),
+        "fire": (["fire", "lava", "ember", "volcano", "火", "熔", "烬", "炎", "山"],
+                 f"{main_faction}在火焰地带的警戒者", f"{locs_str}的火焰术士"),
+        "desert": (["desert", "sand", "dune", "沙", "漠", "荒"],
+                   f"{main_faction}在沙漠的巡逻队长", f"{locs_str}的游牧向导"),
+    }
+
     npcs = []
-    if "forest" in rname or "wood" in rname or "magic" in rname or "vale" in rname:
-        npcs.append(f"{main_faction}在此镇守的队长")
-        npcs.append(f"{locs_str}的本地猎人/药师")
-    elif "water" in rname or "lake" in rname or "river" in rname or "iron" in rname or "coast" in rname:
-        npcs.append(f"{main_faction}在港口/矿区的管事")
-        npcs.append(f"{locs_str}的船夫/矿工")
-    elif "high" in rname or "wind" in rname or "sky" in rname or "peak" in rname or "mount" in rname:
-        npcs.append(f"{main_faction}在高地据点的观察员")
-        npcs.append(f"{locs_str}的山地向导")
-    elif "shadow" in rname or "dark" in rname or "waste" in rname or "glac" in rname:
-        npcs.append(f"{main_faction}潜伏在此的密探")
-        npcs.append(f"{locs_str}的守夜人")
-    elif "thorn" in rname or "wall" in rname:
-        npcs.append(f"{main_faction}在边陲的戍卫队长")
-        npcs.append(f"{locs_str}的巡逻兵")
-    else:
+    for _key, (keywords, npc1, npc2) in KEYWORD_MAP.items():
+        if any(kw in rname_lower for kw in keywords if kw):
+            npcs.append(npc1)
+            npcs.append(npc2)
+            break
+
+    if not npcs:
         npcs.append(f"{locs_str}的{main_faction}联络人")
         npcs.append(f"{locs_str}的本地旅店老板")
 

@@ -119,6 +119,15 @@ class NPCSystem:
             {"role": "魔修", "personality": "阴冷", "can_trade": True, "dialogue": "嘿嘿，想要力量吗？"},
             {"role": "隐士", "personality": "超然", "can_quest": True, "dialogue": "天道无常…"},
         ],
+        "wuxia": [
+            {"role": "客栈掌柜", "personality": "圆滑", "can_trade": True, "dialogue": "客官住店还是打尖？"},
+            {"role": "铁匠", "personality": "豪爽", "can_trade": True, "dialogue": "好刀配好汉，看看这把！"},
+            {"role": "镖师", "personality": "稳重", "can_quest": True, "dialogue": "这趟镖不好走啊…"},
+            {"role": "江湖郎中", "personality": "热心", "can_trade": True, "dialogue": "祖传秘方，药到病除！"},
+            {"role": "丐帮弟子", "personality": "机灵", "can_quest": True, "dialogue": "嘿嘿，我知道些小道消息…"},
+            {"role": "侠客", "personality": "正义", "can_quest": True, "dialogue": "路见不平，拔刀相助！"},
+            {"role": "隐世高手", "personality": "超然", "can_quest": True, "dialogue": "功夫…不在招式，在心。"},
+        ],
         "post_apocalyptic": [
             {"role": "交易商", "personality": "谨慎", "can_trade": True, "dialogue": "以物换物，童叟无欺。"},
             {"role": "医生", "personality": "疲惫", "can_trade": True, "dialogue": "又一个受伤的…躺下吧。"},
@@ -255,14 +264,60 @@ class NPCGenerator:
 
     @staticmethod
     def generate_for_world(world_setting: Dict, world_map, llm_client=None) -> NPCSystem:
-        """根据世界观生成NPC。优先用LLM，失败则用模板。"""
+        """根据世界观生成NPC。优先用LLM，失败则用模板。
+        生成后同步写入区域文件的 npcs 字段，消除内存/文件双轨制。
+        """
         if llm_client:
             try:
-                return NPCGenerator._generate_with_llm(world_setting, world_map, llm_client)
+                system = NPCGenerator._generate_with_llm(world_setting, world_map, llm_client)
             except Exception as e:
                 print(f"[NPC] LLM生成失败，使用模板: {e}")
+                system = NPCGenerator._generate_from_template(world_setting, world_map)
+        else:
+            system = NPCGenerator._generate_from_template(world_setting, world_map)
 
-        return NPCGenerator._generate_from_template(world_setting, world_map)
+        # 同步 NPC 到区域文件（消除双轨制：文件 npcs 字段 = npc_system 数据源）
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = world_setting.get("world_id", "")
+            if world_id:
+                NPCGenerator._sync_npcs_to_region_files(system, world_id, world_map)
+        except Exception as e:
+            print(f"[NPC] 同步到区域文件失败: {e}")
+
+        return system
+
+    @staticmethod
+    def _sync_npcs_to_region_files(npc_system, world_id: str, world_map):
+        """把 npc_system 中的 NPC 同步写入对应区域文件的 npcs 字段"""
+        # 按 location 分组
+        region_npcs = {}  # region_id -> [npc_dict]
+        for npc in npc_system.npcs.values():
+            loc = npc.location or ""
+            if loc not in region_npcs:
+                region_npcs[loc] = []
+            region_npcs[loc].append({
+                "id": npc.npc_id,
+                "name": npc.name,
+                "role": npc.role,
+                "description": npc.personality,
+                "faction_id": npc.faction or "",
+                "is_key": False,
+            })
+
+        # 写入每个区域文件
+        for rid, npcs in region_npcs.items():
+            try:
+                region = wm.load_region(world_id, rid)
+                if not region:
+                    continue
+                # 只在文件没有 npcs 或 npcs 为空时写入（不覆盖 generator 已生成的）
+                if not region.get("npcs"):
+                    region["npcs"] = npcs
+                    wm.save_region(world_id, region)
+                    print(f"[NPC] 区域 {rid} 写入 {len(npcs)} 个 NPC")
+            except Exception as e:
+                print(f"[NPC] 写入区域 {rid} 失败: {e}")
 
     @staticmethod
     def _generate_from_template(world_setting: Dict, world_map) -> NPCSystem:
@@ -279,6 +334,7 @@ class NPCGenerator:
         name_pool = {
             "fantasy": ["艾琳", "加尔", "莉娜", "奥德", "索菲", "卡尔", "薇拉", "赫克托"],
             "xianxia": ["云逸", "青鸾", "墨尘", "紫萱", "风无痕", "月瑶", "剑心", "灵均"],
+            "wuxia": ["李逍遥", "柳如烟", "铁无双", "白展堂", "慕容秋", "风清扬", "令狐冲", "东方未明"],
             "post_apocalyptic": ["老周", "阿铁", "小七", "影子", "银狐", "铁锤", "零号", "灰烬"],
             "modern_power": ["陈教官", "林曦", "赵暗", "苏瑶", "王铁山", "周灵", "叶飞", "方晴"],
             "scifi": ["诺娃", "泽罗", "艾达", "凯恩", "露娜", "阿特拉斯", "薇安", "奥丁"],

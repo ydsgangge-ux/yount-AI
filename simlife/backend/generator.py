@@ -230,7 +230,7 @@ def generate_world_setting(
 - 时间跨度要真实：学习一项技能需要数周到数月，修炼提升需要长期投入，不是几天就能速成
 - 种族基本是人类，可能有小比例的变异者或觉醒者
 """
-    elif world_type in ("fantasy", "xianxia"):
+    elif world_type in ("fantasy", "xianxia", "wuxia"):
         type_constraints = """
 重要：时间跨度要真实可信：
 - 学习一项基础技能至少需要2-4周
@@ -292,9 +292,24 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
         import hashlib
         setting["world_id"] = "world_" + hashlib.md5(core_theme.encode()).hexdigest()[:8]
 
-    # 确保 world_type
+    # 确保 world_type（问题8：统一为英文标准值，LLM 可能返回中文）
     if not setting.get("world_type"):
         setting["world_type"] = world_type
+    # 中文 → 英文标准化映射
+    _world_type_map = {
+        "奇幻": "fantasy", "奇幻魔法": "fantasy", "魔法": "fantasy", "西方奇幻": "fantasy",
+        "仙侠": "xianxia", "修仙": "xianxia", "东方仙侠": "xianxia",
+        "武侠": "wuxia", "传统武侠": "wuxia",
+        "末世": "post_apocalyptic", "废土": "post_apocalyptic", "后启示录": "post_apocalyptic",
+        "现代超能": "modern_power", "现世超武": "modern_power", "都市异能": "modern_power",
+        "科幻": "scifi", "太空歌剧": "scifi", "赛博朋克": "scifi",
+    }
+    wt = setting["world_type"]
+    if wt in _world_type_map:
+        setting["world_type"] = _world_type_map[wt]
+    elif wt not in ("fantasy", "xianxia", "wuxia", "post_apocalyptic", "modern_power", "scifi"):
+        # 未知类型默认归为 fantasy
+        setting["world_type"] = "fantasy"
 
     # ── 标准 schema 清洗 + 区域文件化落盘 ──
     try:

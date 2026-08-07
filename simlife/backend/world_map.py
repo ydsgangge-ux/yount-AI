@@ -196,6 +196,18 @@ class MapGenerator:
             {"id": "market", "name": "仙市坊", "type": "town", "danger": 0, "desc": "修仙者交易之地，丹药法器齐全"},
             {"id": "lotus_pond", "name": "碧莲池", "type": "secret", "danger": 2, "desc": "传说中洗髓伐毛的圣池"},
         ],
+        "wuxia": [
+            {"id": "village", "name": "新手村", "type": "town", "danger": 0, "desc": "偏僻的小村庄，武林新人的起点"},
+            {"id": "provincial_road", "name": "官道", "type": "wild", "danger": 1, "desc": "连接各大城镇的官道，偶有山贼出没"},
+            {"id": "bamboo_forest", "name": "翠竹林", "type": "wild", "danger": 2, "desc": "茂密的竹林深处，常有武林人士切磋"},
+            {"id": "ancient_tomb", "name": "古墓秘境", "type": "dungeon", "danger": 3, "desc": "前朝高手的陵墓，藏有绝世武学"},
+            {"id": "bandit_fort", "name": "山寨", "type": "wild", "danger": 3, "desc": "山贼盘踞的寨子，祸害一方"},
+            {"id": "sect", "name": "武林门派", "type": "dungeon", "danger": 4, "desc": "隐世门派的驻地，藏有武林秘辛"},
+            {"id": "ice_peak", "name": "冰封雪峰", "type": "wild", "danger": 4, "desc": "终年积雪的险峰，传说有绝世高手隐居"},
+            {"id": "dark_palace", "name": "魔教总坛", "type": "boss_lair", "danger": 5, "desc": "魔教盘踞之地，武林浩劫的根源"},
+            {"id": "market", "name": "集市", "type": "town", "danger": 0, "desc": "江湖人士聚集交易之地，消息灵通"},
+            {"id": "waterfall", "name": "瀑布秘境", "type": "secret", "danger": 2, "desc": "瀑布后的隐秘洞穴，内有前辈遗刻"},
+        ],
         "post_apocalyptic": [
             {"id": "shelter", "name": "地下避难所", "type": "town", "danger": 0, "desc": "幸存者的庇护所，相对安全"},
             {"id": "ruins_city", "name": "废弃城区", "type": "wild", "danger": 1, "desc": "残破的摩天楼，搜刮物资的好去处"},
@@ -463,6 +475,7 @@ class MapGenerator:
         boss_names = {
             "fantasy": ["暗黑魔王", "远古巨龙", "死亡领主", "深渊之主"],
             "xianxia": ["魔尊", "上古妖王", "天魔", "血海魔神"],
+            "wuxia": ["魔教教主", "天下第一高手", "隐世宗师", "武林至尊"],
             "post_apocalyptic": ["虫族女王", "变异始祖", "毁灭者", "终极兵器"],
             "modern_power": ["暗影之主", "魔门门主", "暗黑导师", "堕落古武宗师"],
             "scifi": ["叛变AI·奥米伽", "异形母体", "机械暴君", "纳米瘟疫"],

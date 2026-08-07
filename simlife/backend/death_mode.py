@@ -308,25 +308,43 @@ class DeathModeEngine:
         self.world_map = MapGenerator.generate(world_setting, self.llm)
         self.state["world_map"] = self.world_map.to_dict()
 
-        # 把地图区域保存到文件系统，供 world_manager.load_region 使用
+        # 把地图区域的运行时数据合并到文件系统（不覆盖已有的 monsters/npcs/factions）
+        # 仅补充文件中缺失的运行时字段：danger_level/region_type/connections/boss/level_range
         try:
             from simlife.worlds import world_manager as wm
             world_id = world_setting.get("world_id", "")
             if world_id:
                 for rid, region in self.world_map.regions.items():
-                    region_data = {
-                        "id": rid,
-                        "name": region.name,
-                        "description": region.description,
-                        "climate": "",
-                        "key_locations": [],
-                        "dangers": [],
-                        "npcs": [],
-                        "factions": [],
-                        "level_range": [],
-                        "biome": region.region_type or "",
-                    }
-                    wm.save_region(world_id, region_data)
+                    existing = wm.load_region(world_id, rid)
+                    if existing:
+                        # 文件已存在（generator 生成的完整数据）→ 只补充运行时字段
+                        updated = False
+                        if not existing.get("biome") and region.region_type:
+                            existing["biome"] = region.region_type
+                            updated = True
+                        if not existing.get("level_range"):
+                            # 根据 danger_level 推算 level_range
+                            dl = region.danger_level or 1
+                            existing["level_range"] = [max(1, dl * 3 - 2), dl * 3 + 2]
+                            updated = True
+                        if updated:
+                            wm.save_region(world_id, existing)
+                    else:
+                        # 文件不存在（LLM/模板生成的地图）→ 创建最小区域文件
+                        region_data = {
+                            "id": rid,
+                            "name": region.name,
+                            "description": region.description,
+                            "biome": region.region_type or "wild",
+                            "level_range": [max(1, (region.danger_level or 1) * 3 - 2),
+                                           (region.danger_level or 1) * 3 + 2],
+                        }
+                        # 怪物名存入 dangers（供 prompt 注入）
+                        if region.monsters:
+                            region_data["dangers"] = [m.get("name", "") for m in region.monsters if m.get("name")]
+                        if region.boss:
+                            region_data["boss"] = region.boss
+                        wm.save_region(world_id, region_data)
         except Exception as e:
             print(f"[DeathMode] 保存区域文件失败: {e}")
 
@@ -669,13 +687,8 @@ class DeathModeEngine:
                 state["spotted_enemies"] = []
                 result["in_combat"] = False
 
-                # 记录已击败的敌人
-                _defeated_list = state.setdefault("defeated_enemies", [])
-                for e in enemies:
-                    _name = e.get("name", "")
-                    if _name and _name not in _defeated_list:
-                        _defeated_list.append(_name)
-                state["defeated_enemies"] = _defeated_list[-30:]
+                # 记录已击败的特殊敌人（小怪不屏蔽，允许重复出现）
+                self._record_defeated(state, enemies)
 
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
@@ -766,13 +779,8 @@ class DeathModeEngine:
                 state["spotted_enemies"] = []
                 result["in_combat"] = False
 
-                # 记录已击败的敌人
-                _defeated_list = state.setdefault("defeated_enemies", [])
-                for e in enemies_list:
-                    _name = e.get("name", "")
-                    if _name and _name not in _defeated_list:
-                        _defeated_list.append(_name)
-                state["defeated_enemies"] = _defeated_list[-30:]
+                # 记录已击败的特殊敌人（小怪不屏蔽）
+                self._record_defeated(state, enemies_list)
 
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
@@ -790,7 +798,110 @@ class DeathModeEngine:
             self._save()
             return result
 
-        # 1. Agent 生成叙事（不含数值结果）— 非扫荡模式才走LLM
+        # ── 战斗回合：先跑战斗系统，再基于 combat_log 生成叙事 ──
+        in_combat_now = state.get("in_combat", False)
+        _enemies_now = state.get("enemies", [])
+        _is_flee_action = ("逃跑" in action or "撤退" in action)
+
+        if in_combat_now and _enemies_now and not _is_flee_action:
+            # 战斗回合：先执行战斗系统
+            combat_result = self._combat_round(state, _enemies_now, action_text=action, sender=sender)
+
+            # 基于战斗日志生成叙事（带历史上下文，保持剧情连贯）
+            agent_result = self.agent.process_combat_action(state, action, combat_result, sender=sender)
+            narrative = agent_result.get("narrative", "")
+            outcome_type = agent_result.get("outcome_type", "combat_ongoing")
+            next_tension = agent_result.get("next_tension", "high")
+
+            # 处理战斗结果
+            result = {
+                "narrative": narrative,
+                "combat_result": combat_result,
+                "leveled_up": False,
+                "new_skills": [],
+                "character_died": False,
+                "death_description": None,
+                "exp_gained": 0,
+                "gold_gained": 0,
+            }
+
+            if combat_result.get("player_died"):
+                result["character_died"] = True
+                result["user_died"] = combat_result.get("user_died", False)
+                who = "user" if combat_result.get("user_died") else "ai"
+                result["death_description"] = self._handle_death(state, combat_result.get("death_cause", "战斗中阵亡"), who_died=who)
+                result["death_pending"] = True
+                result["death_who"] = who
+                result["last_words"] = state.get("last_words", "")
+                # 记录历史后返回
+                self._record_history_and_save(state, action, narrative, outcome_type, combat_result, result)
+                return result
+
+            # 检查是否所有敌人已击败
+            alive_enemies = [e for e in _enemies_now if e.get("hp", 0) > 0]
+            if not alive_enemies:
+                # 战斗胜利
+                char = state["character"]
+                total_exp = sum(e.get("exp_reward", 10) for e in _enemies_now)
+                total_gold = sum(e.get("gold_reward", 5) for e in _enemies_now)
+                char["gold"] += total_gold
+                result["gold_gained"] = total_gold
+                result["exp_gained"] = total_exp
+                state["kill_count"] += len(_enemies_now)
+                combat_result["victory"] = True
+                combat_result["enemies_defeated"] = [e.get("name", "") for e in _enemies_now]
+
+                # 任务进度：击杀敌人触发
+                try:
+                    progressed = QuestSystem.record_progress(state, "kill",
+                                                             enemy_names=combat_result["enemies_defeated"])
+                    if progressed:
+                        result["quest_progress"] = progressed
+                except Exception:
+                    pass
+
+                char["world_type"] = state.get("world_type", "fantasy")
+                growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
+                if growth_result["leveled_up"]:
+                    result["leveled_up"] = True
+                    result["new_level"] = growth_result["new_level"]
+                    result["new_skills"] = growth_result.get("new_skills", [])
+
+                user_char = state.get("user_character", {})
+                if user_char and user_char.get("class_name"):
+                    user_char["world_type"] = state.get("world_type", "fantasy")
+                    u_growth = GrowthSystem.gain_exp(user_char, total_exp, state.get("growth_mode", "normal"))
+                    if u_growth["leveled_up"]:
+                        result.setdefault("user_leveled_up", True)
+                        result.setdefault("user_new_skills", u_growth.get("new_skills", []))
+
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                result["in_combat"] = False
+
+                # 记录已击败的特殊敌人
+                self._record_defeated(state, _enemies_now)
+
+                # 地下城：清除房间
+                if state.get("in_dungeon"):
+                    clear_result = self.clear_dungeon_room()
+                    if clear_result.get("success"):
+                        result["dungeon_room_cleared"] = True
+                        result["dungeon_completed"] = clear_result.get("dungeon_completed", False)
+                        if clear_result.get("loot"):
+                            result["dungeon_loot"] = clear_result["loot"]
+            else:
+                # 战斗继续
+                state["in_combat"] = True
+                result["in_combat"] = True
+                result["enemies"] = alive_enemies
+
+            # 记录历史并保存
+            self._record_history_and_save(state, action, narrative, outcome_type, combat_result, result)
+            return result
+
+        # 1. 非战斗回合：Agent 生成叙事（不含数值结果）
         agent_result = self.agent.process_action(state, action, action_type, sender=sender)
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
@@ -834,27 +945,34 @@ class DeathModeEngine:
             pass
 
         # 叙事中提到的敌人 → 保存到 state，战斗时优先使用
-        # 过滤掉已击败的敌人（防止LLM反复复活死去的敌人）
-        defeated_set = set(state.get("defeated_enemies", []))
+        # 只过滤已击败的特殊敌人（elite/boss），小怪允许重复出现
+        # 名字规范化：去连字符、统一空格，防止同一敌人因变体名（Crystal-Scale vs Crystal Scale）被重复生成
+        def _normalize_enemy_name(n):
+            return re.sub(r'\s+', ' ', n.replace('-', ' ')).strip().lower()
+
+        unique_defeated_set = set(_normalize_enemy_name(d) for d in state.get("defeated_unique_enemies", []))
         spotted = agent_result.get("spotted_enemies")
         if spotted and isinstance(spotted, list):
             filtered = []
+            seen_normalized = set()
             for s in spotted:
                 if isinstance(s, dict):
                     sname = str(s.get("name", "")).strip()
-                    if sname and sname.lower() not in (d.lower() for d in defeated_set):
+                    normalized = _normalize_enemy_name(sname)
+                    if sname and normalized not in unique_defeated_set and normalized not in seen_normalized:
+                        # 统一去除连字符，保持名字一致性
+                        s["name"] = sname.replace('-', ' ')
                         filtered.append(s)
-                    else:
-                        print(f"[DeathMode] 过滤已击败的敌人: {sname}")
+                        seen_normalized.add(normalized)
+                    elif sname:
+                        print(f"[DeathMode] 过滤已击败/重复的敌人: {sname}")
             state["spotted_enemies"] = filtered if filtered else []
         else:
             # 兜底：LLM 可能叙事里提到了怪物但没填 spotted_enemies
-            # 从叙事文本中提取已知怪物名（world_map 区域怪物 + 历史击败过的敌人）
             _extracted = self._extract_enemy_names_from_narrative(narrative)
-            # 同样过滤已击败的
-            if _extracted and defeated_set:
+            if _extracted and unique_defeated_set:
                 _extracted = [s for s in _extracted
-                              if str(s.get("name", "")).strip().lower() not in (d.lower() for d in defeated_set)]
+                              if _normalize_enemy_name(str(s.get("name", "")).strip()) not in unique_defeated_set]
             state["spotted_enemies"] = _extracted
 
         # 未解决的剧情钩子 → 累积保存（最多 4 个）
@@ -866,6 +984,44 @@ class DeathModeEngine:
                     existing.append(h.strip())
             # 只保留最近 4 个
             state["story"]["unresolved_hooks"] = existing[-4:]
+
+        # ── 剧情线更新（Plot Threads）：跟踪关键设定，防止前后矛盾 ──
+        thread_updates = agent_result.get("plot_thread_updates")
+        if thread_updates and isinstance(thread_updates, list):
+            threads = state.setdefault("plot_threads", [])
+            for upd in thread_updates:
+                if not isinstance(upd, dict):
+                    continue
+                _title = str(upd.get("title", "")).strip()
+                _action = str(upd.get("action", "")).strip()
+                _new_fact = str(upd.get("new_fact", "")).strip()
+                if not _title or not _action:
+                    continue
+                # 查找已有剧情线（标题模糊匹配）
+                _existing = None
+                for t in threads:
+                    if t.get("title", "") == _title or _title in t.get("title", "") or t.get("title", "") in _title:
+                        _existing = t
+                        break
+                if _action == "introduce" and not _existing:
+                    threads.append({
+                        "title": _title,
+                        "status": "introduced",
+                        "key_facts": [_new_fact] if _new_fact else [],
+                    })
+                elif _existing:
+                    if _action == "advance":
+                        _existing["status"] = "active"
+                        if _new_fact and _new_fact not in _existing.get("key_facts", []):
+                            _existing.setdefault("key_facts", []).append(_new_fact)
+                    elif _action == "resolve":
+                        _existing["status"] = "resolved"
+                        if _new_fact and _new_fact not in _existing.get("key_facts", []):
+                            _existing.setdefault("key_facts", []).append(_new_fact)
+            # 只保留未解决的剧情线 + 最近3个已解决的（供参考）
+            _unresolved = [t for t in threads if t.get("status") in ("introduced", "active")]
+            _resolved = [t for t in threads if t.get("status") == "resolved"]
+            state["plot_threads"] = _unresolved + _resolved[-3:]
 
         # 休息关键词强制覆盖：确保"休息"相关指令可靠触发恢复逻辑
         if _is_rest_action:
@@ -994,14 +1150,8 @@ class DeathModeEngine:
                     state["spotted_enemies"] = []  # 清理已实体化的敌人
                     result["in_combat"] = False
 
-                    # 记录已击败的敌人（防止LLM反复复活）
-                    _defeated_list = state.setdefault("defeated_enemies", [])
-                    for e in enemies:
-                        _name = e.get("name", "")
-                        if _name and _name not in _defeated_list:
-                            _defeated_list.append(_name)
-                    # 只保留最近30个，避免无限增长
-                    state["defeated_enemies"] = _defeated_list[-30:]
+                    # 记录已击败的特殊敌人（小怪不屏蔽）
+                    self._record_defeated(state, enemies)
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1095,13 +1245,8 @@ class DeathModeEngine:
                         state["spotted_enemies"] = []
                         result["in_combat"] = False
 
-                        # 记录已击败的敌人
-                        _defeated_list = state.setdefault("defeated_enemies", [])
-                        for e in enemies_list:
-                            _name = e.get("name", "")
-                            if _name and _name not in _defeated_list:
-                                _defeated_list.append(_name)
-                        state["defeated_enemies"] = _defeated_list[-30:]
+                        # 记录已击败的特殊敌人（小怪不屏蔽）
+                        self._record_defeated(state, enemies_list)
                     else:
                         result["in_combat"] = True
                         result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
@@ -1151,13 +1296,8 @@ class DeathModeEngine:
                     state["spotted_enemies"] = []
                     result["in_combat"] = False
 
-                    # 记录已击败的敌人
-                    _defeated_list = state.setdefault("defeated_enemies", [])
-                    for e in enemies_list:
-                        _name = e.get("name", "")
-                        if _name and _name not in _defeated_list:
-                            _defeated_list.append(_name)
-                    state["defeated_enemies"] = _defeated_list[-30:]
+                    # 记录已击败的特殊敌人（小怪不屏蔽）
+                    self._record_defeated(state, enemies_list)
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1325,6 +1465,16 @@ class DeathModeEngine:
                 "combat_summary": "; ".join(_cr.get("combat_log", [])[-3:])[:150],
             }
         state["story"]["history"].append(_history_entry)
+
+        # ── 每10回合自动生成剧情摘要（长期记忆，防止剧情跑偏）──
+        _history_len = len(state["story"]["history"])
+        _last_summary_len = state.get("_last_summary_history_len", 0)
+        if _history_len - _last_summary_len >= 10:
+            try:
+                self._generate_story_summary(state)
+                state["_last_summary_history_len"] = _history_len
+            except Exception as _e:
+                print(f"[DeathMode] 剧情摘要生成失败: {_e}")
 
         # 章节按历史进度推进（每5条历史推进一章）
         if len(state["story"]["history"]) % 5 == 0:
@@ -1525,6 +1675,126 @@ class DeathModeEngine:
             "value": 30 + char_level * 5,
         }
 
+    def _record_history_and_save(self, state: Dict, action: str, narrative: str,
+                                  outcome_type: str, combat_result: Dict, result: Dict):
+        """战斗回合的公共逻辑：记录历史 + 剧情线 + 摘要 + 保存"""
+        # 记录剧情钩子
+        if combat_result:
+            hooks = [f"战斗中：{combat_result.get('combat_log', ['战斗进行中'])[-1]}"]
+            existing = state.get("story", {}).get("unresolved_hooks", [])
+            for h in hooks:
+                if isinstance(h, str) and h.strip() and h.strip() not in existing:
+                    existing.append(h.strip())
+            state["story"]["unresolved_hooks"] = existing[-4:]
+
+        # 记录故事历史
+        _summary_text = narrative[:200]
+        if combat_result and combat_result.get("victory"):
+            _defeated_names = combat_result.get("enemies_defeated", [])
+            _defeated_str = "、".join(_defeated_names) if _defeated_names else "所有敌人"
+            _summary_text += f"【战斗结束：{_defeated_str}已被全部击败，战斗结束，敌人已死亡。】"
+        _history_entry = {
+            "chapter": state["story"]["current_chapter"],
+            "summary": _summary_text,
+            "action": action,
+            "outcome": outcome_type,
+            "location": state["story"].get("current_location", ""),
+        }
+        if combat_result:
+            _history_entry["combat_result"] = {
+                "victory": combat_result.get("victory", False),
+                "enemies_defeated": combat_result.get("enemies_defeated", []),
+                "combat_summary": "; ".join(combat_result.get("combat_log", [])[-3:])[:150],
+            }
+        state["story"]["history"].append(_history_entry)
+
+        # 每10回合生成剧情摘要
+        _history_len = len(state["story"]["history"])
+        _last_summary_len = state.get("_last_summary_history_len", 0)
+        if _history_len - _last_summary_len >= 10:
+            try:
+                self._generate_story_summary(state)
+                state["_last_summary_history_len"] = _history_len
+            except Exception as _e:
+                print(f"[DeathMode] 剧情摘要生成失败: {_e}")
+
+        # 章节推进
+        if len(state["story"]["history"]) % 5 == 0:
+            state["story"]["current_chapter"] += 1
+
+        # 非战斗状态保留叙事作为场景上下文
+        if not state.get("in_combat", False):
+            state["story"]["scene_description"] = narrative[:300]
+            state["story"]["choices"] = []
+            state["story"]["pending_action"] = None
+            result["next_scene"] = True
+        else:
+            result["next_scene"] = False
+
+        self._log_action("combat_round", result)
+        self._save()
+
+    @staticmethod
+    def _record_defeated(state: Dict, enemies: list):
+        """记录已击败的敌人：小怪不屏蔽（允许重复），特殊敌人（elite/boss）永久屏蔽"""
+        from simlife.backend.enemy_agent import EnemyAgent
+        unique_list = state.setdefault("defeated_unique_enemies", [])
+        for e in enemies:
+            _name = e.get("name", "")
+            _etype = e.get("type", "normal")
+            if not _name:
+                continue
+            # 规范化名字（去连字符），保持与 spotted_enemies 处理一致
+            _name_normalized = re.sub(r'\s+', ' ', _name.replace('-', ' ')).strip()
+            # 只有特殊敌人（elite/boss）加入永久屏蔽列表
+            if EnemyAgent.is_unique_enemy(e) and _name_normalized not in unique_list:
+                unique_list.append(_name_normalized)
+        state["defeated_unique_enemies"] = unique_list[-50:]  # 保留最近50个特殊敌人
+
+    def _generate_story_summary(self, state: Dict):
+        """生成剧情摘要：把最近10条历史压缩成简短摘要，作为长期记忆注入prompt"""
+        history = state.get("story", {}).get("history", [])
+        if not history:
+            return
+        # 取最近10条历史
+        recent = history[-10:]
+        history_text = ""
+        for h in recent:
+            _act = h.get("action", "")
+            _sum = h.get("summary", "")
+            _loc = h.get("location", "")
+            _combat = ""
+            if h.get("combat_result"):
+                cr = h["combat_result"]
+                if cr.get("victory"):
+                    _combat = f"[击败{', '.join(cr.get('enemies_defeated', []))}]"
+                else:
+                    _combat = f"[战斗中]"
+            history_text += f"• {_act} → {_sum}{_combat}" + (f"（{_loc}）" if _loc else "") + "\n"
+
+        existing_summary = state.get("story_summary", "")
+        char_name = state.get("character", {}).get("name", "角色")
+
+        prompt = f"""请把以下游戏历史记录压缩成简短的剧情摘要（不超过200字）。
+保留关键信息：重要NPC名字、地点、获得的线索/道具、战斗结果、剧情设定。
+去掉无关细节。
+
+{f"已有摘要（在此基础上补充）：{existing_summary}" if existing_summary else ""}
+
+最近发生的事：
+{history_text}
+
+请直接输出摘要文本，不要其他内容。"""
+
+        try:
+            summary = self.story_agent.llm.generate(prompt, max_tokens=400, temperature=0.3, thinking=False)
+            summary = summary.strip()
+            if summary:
+                state["story_summary"] = summary
+                print(f"[DeathMode] 剧情摘要已更新（{len(summary)}字）")
+        except Exception as e:
+            print(f"[DeathMode] 摘要LLM调用失败: {e}")
+
     def _extract_enemy_names_from_narrative(self, narrative: str) -> list:
         """从叙事文本中提取敌人名（兜底：LLM 没填 spotted_enemies 时使用）
         三重数据源：
@@ -1566,42 +1836,8 @@ class DeathModeEngine:
                 _found.append({"name": name, "count": count})
                 _used_names.add(name)
 
-        # 4. 中文怪物关键词模式匹配（识别 LLM 临时编的敌人）
-        # 常见怪物后缀：魔/兽/灵/妖/怪/龙/鬼/尸/蛛/蛇/蜥/狼/熊/甲/虫/人/者/徒/徒/吞噬者/吞噬兽/巨兽/魔像
-        _monster_suffixes = [
-            "吞噬者", "吞噬兽", "巨兽", "魔像", "巨人", "战士", "法师", "刺客",
-            "魔", "兽", "灵", "妖", "怪", "龙", "鬼", "尸", "蛛", "蛇", "蜥",
-            "狼", "熊", "甲", "虫", "者", "徒", "王", "主", "将", "兵", "卫",
-        ]
-        # 排除非怪物的常见词
-        _exclude_words = {"圣光", "魔法", "暗影", "神圣", "灰烬", "火焰", "冰霜",
-                          "闪电", "圣击", "火球", "冰", "光", "暗", "圣", "影",
-                          "骨", "灰", "雾", "腐", "木", "鳞", "爪", "角", "牙",
-                          "皮", "甲", "刃", "剑", "弓", "杖", "盾", "袍"}
-
-        import re as _re
-        for suffix in _monster_suffixes:
-            # 匹配 1-4 个中文字符 + 后缀（如"骨魔""腐木蜥蜴""灰雾吞噬者"）
-            for m in _re.finditer(r'([\u4e00-\u9fa5]{1,4})' + suffix, narrative):
-                _full = m.group(0)
-                _prefix = m.group(1)
-                # 排除纯元素词（如"火焰""冰霜"）和已添加的
-                if _full in _used_names:
-                    continue
-                if _prefix in _exclude_words or _full in _exclude_words:
-                    continue
-                # 排除角色名
-                _ai_name = self.state.get("character", {}).get("name", "")
-                _user_name = self.state.get("user_character", {}).get("name", "")
-                if _ai_name and _ai_name in _full:
-                    continue
-                if _user_name and _user_name in _full:
-                    continue
-                # 至少 2 个字才算是怪物名
-                if len(_full) < 2:
-                    continue
-                _found.append({"name": _full, "count": self._estimate_enemy_count(narrative, _full)})
-                _used_names.add(_full)
+        # 4. 中文怪物关键词模式匹配已禁用（过于激进，会把"体内魔""然而贤者""趁追兵"等
+        #    叙事文本误识别为敌人名）。LLM 应主动填 spotted_enemies，未填则走随机生成。
 
         return _found
 
@@ -1632,6 +1868,11 @@ class DeathModeEngine:
                 count = int(spot.get("count", 1))
                 if not name or count < 1:
                     continue
+                # 特殊敌人已被击败 → 跳过（永久屏蔽）
+                from simlife.backend.enemy_agent import EnemyAgent
+                if EnemyAgent.is_already_defeated(state, name):
+                    print(f"[DeathMode] 跳过已击败的特殊敌人: {name}")
+                    continue
                 count = min(count, 5)  # 上限防止过载
                 # 等级和类型按 risk_level + 数量决定
                 if risk_level == "low":
@@ -1661,7 +1902,9 @@ class DeathModeEngine:
         return self._generate_enemies(state, risk_level)
 
     def _generate_enemies(self, state: Dict, risk_level: str) -> list:
-        """生成敌人列表（支持一群怪，优先使用地图区域的怪物）"""
+        """生成敌人列表（支持一群怪，优先使用地图区域的怪物）
+        优先从区域文件读取 monsters 完整战斗数据，回退到内存 world_map
+        """
         char = state["character"]
         char_level = char["level"]
         world_setting = state.get("world_setting", {})
@@ -1677,17 +1920,48 @@ class DeathModeEngine:
             count = random.randint(2, 3)
             enemy_type = "elite" if random.random() < 0.3 else "normal"
 
-        # 优先使用当前区域的怪物名称
-        region_monster_names = []
-        if self.world_map:
+        # 优先从区域文件读取怪物完整数据（含战斗数值）
+        region_monsters = []  # 完整怪物对象列表
+        region_monster_names = []  # 只有名字（回退用）
+        boss_data = None
+
+        # 1. 先从文件读取
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = world_setting.get("world_id", "")
+            cur_region_name = state.get("story", {}).get("current_location", "")
+            if world_id and cur_region_name:
+                file_region = wm.load_region(world_id, cur_region_name)
+                if file_region:
+                    file_monsters = file_region.get("monsters", [])
+                    if file_monsters and isinstance(file_monsters, list):
+                        region_monsters = [m for m in file_monsters if isinstance(m, dict) and m.get("name")]
+                    file_boss = file_region.get("boss")
+                    if file_boss and isinstance(file_boss, dict):
+                        boss_data = file_boss
+        except Exception:
+            pass
+
+        # 2. 回退到内存 world_map
+        if not region_monsters and self.world_map:
             current = self.world_map.get_current_region()
             if current and current.monsters:
-                region_monster_names = [m.get("name", "") for m in current.monsters if m.get("name")]
-                # BOSS区域可能触发BOSS战
-                if current.boss and not current.boss_defeated and risk_level == "high" and random.random() < 0.4:
-                    boss = current.boss
-                    boss_level = boss.get("level", char_level + 5)
-                    return [CombatSystem.generate_enemy(boss_level, world_setting, "boss")]
+                region_monsters = [m for m in current.monsters if isinstance(m, dict) and m.get("name")]
+            if not boss_data and current and current.boss and not current.boss_defeated:
+                boss_data = current.boss
+
+        # 提取名字列表
+        region_monster_names = [m.get("name", "") for m in region_monsters if m.get("name")]
+
+        # BOSS区域可能触发BOSS战
+        if boss_data and risk_level == "high" and random.random() < 0.4:
+            boss_level = boss_data.get("level", char_level + 5)
+            boss_enemy = CombatSystem.generate_enemy(boss_level, world_setting, "boss")
+            # 用区域 BOSS 数据覆盖
+            boss_enemy["name"] = boss_data.get("name", boss_enemy.get("name", "BOSS"))
+            if boss_data.get("description"):
+                boss_enemy["behavior"] = boss_data["description"]
+            return [boss_enemy]
 
         enemies = []
         for i in range(count):
@@ -1699,9 +1973,35 @@ class DeathModeEngine:
             else:
                 enemy_level = char_level + random.randint(0, 1)
             enemy = CombatSystem.generate_enemy(enemy_level, world_setting, enemy_type)
-            # 如果当前区域有怪物，替换名称
-            if region_monster_names:
+
+            # 如果区域文件有完整怪物数据，优先使用
+            if region_monsters:
+                chosen = random.choice(region_monsters)
+                enemy["name"] = chosen.get("name", enemy.get("name", "怪物"))
+                # 应用区域怪物的战斗数据（如果有）
+                if chosen.get("level"):
+                    enemy["level"] = chosen["level"]
+                if chosen.get("hp"):
+                    enemy["hp"] = chosen["hp"]
+                    enemy["max_hp"] = chosen.get("max_hp", chosen["hp"])
+                if chosen.get("attack_power"):
+                    enemy["attack_power"] = chosen["attack_power"]
+                if chosen.get("defense_power"):
+                    enemy["defense_power"] = chosen["defense_power"]
+                if chosen.get("exp_reward"):
+                    enemy["exp_reward"] = chosen["exp_reward"]
+                if chosen.get("gold_reward"):
+                    enemy["gold_reward"] = chosen["gold_reward"]
+                if chosen.get("type"):
+                    enemy["type"] = chosen["type"]
+                if chosen.get("behavior"):
+                    enemy["behavior"] = chosen["behavior"]
+                if chosen.get("skills"):
+                    enemy["skills"] = chosen["skills"]
+            elif region_monster_names:
+                # 只有名字，回退到旧逻辑
                 enemy["name"] = random.choice(region_monster_names)
+
             # 多个敌人时编号
             if count > 1:
                 enemy["name"] = f"{enemy['name']}{i+1}"
@@ -1975,7 +2275,8 @@ class DeathModeEngine:
                             _pm_skill_name = f"【{sk.name}】"
                     atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
                                                      attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
-                    round_log.append(f"{pm_obj.name}{_pm_skill_name}{atk_result['description']} → {target.get('name', '?')}")
+                    _pm_log_prefix = f"{pm_obj.name}{_pm_skill_name}" if _pm_skill_name else f"{pm_obj.name} "
+                    round_log.append(f"{_pm_log_prefix}{atk_result['description']} → {target.get('name', '?')}")
                     _check_drop(target, attacker.get("stats", {}))
                     continue
 
@@ -2011,7 +2312,7 @@ class DeathModeEngine:
                 # 战术加成
                 if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
                     atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
-                round_log.append(f"{attacker.get('name','?')}{_used_skill_name}{atk_result['description']} → {target.get('name', '?')}")
+                round_log.append(f"{attacker.get('name','?')}{_used_skill_name}{' ' if not _used_skill_name else ''}{atk_result['description']} → {target.get('name', '?')}")
                 _check_drop(target, attacker.get("stats", {}))
 
                 # ── 多效果技能：处理额外效果（heal/buff/stun/dot等）──
@@ -2233,7 +2534,7 @@ class DeathModeEngine:
                             def_result["defense_result"].get("damage_taken", 0) * 1.4
                         )
 
-                round_log.append(f"{enemy.get('name', '?')}{enemy_skill_name}{def_result['description']} → {target_name}")
+                round_log.append(f"{enemy.get('name', '?')}{enemy_skill_name}{' ' if not enemy_skill_name else ''}{def_result['description']} → {target_name}")
 
                 # 死亡判定
                 if target_char["hp"] <= 0:
@@ -2343,6 +2644,10 @@ class DeathModeEngine:
         # 保存初始敌人信息用于总结
         enemy_names_start = [e.get("name", "?") for e in enemies]
 
+        # ── 伤害过低检测：连续N回合伤害不足 → 自动退出扫荡 ──
+        low_damage_streak = 0
+        prev_enemy_total_hp = sum(e.get("hp", e.get("max_hp", 0)) for e in enemies)
+
         # 初始敌人总HP（用于"打到半血"目标）
         enemy_total_hp_start = sum(e.get("hp", e.get("max_hp", 0)) for e in enemies)
         enemy_half_target = enemy_total_hp_start * 0.5 if stop_condition == "half" else 0
@@ -2411,6 +2716,15 @@ class DeathModeEngine:
                 stopped_at = "low_hp"
                 key_events.append(f"角色HP危险（焕灵{int(ai_hp_ratio*100)}%/yount{int(user_hp_ratio*100)}%），自动停止扫荡")
                 all_combat_logs.append(f"⚠️ 角色HP危险，自动停止扫荡！焕灵{int(ai_hp_ratio*100)}%，yount{int(user_hp_ratio*100)}%")
+                break
+
+            # ── MP耗尽检测：双方MP都为0 → 无法施放技能，退出扫荡 ──
+            ai_mp = char.get("mp", 0)
+            user_mp = user_char.get("mp", 0) if user_in_combat else 0
+            if ai_mp <= 0 and user_mp <= 0 and round_num > 2:
+                stopped_at = "mp_exhausted"
+                key_events.append(f"双方MP耗尽（焕灵MP:{ai_mp}/yount MP:{user_mp}），无法有效输出，退出扫荡")
+                all_combat_logs.append(f"💧 双方MP耗尽，普攻伤害不足，自动退出扫荡！请恢复MP后再战。")
                 break
 
             # 半血目标：敌人总HP已降到初始一半以下 → 停止
@@ -2517,6 +2831,22 @@ class DeathModeEngine:
                 killed_names = [e.get("name", "?") for e in alive_enemies if e.get("hp", 0) <= 0]
                 key_events.append(f"第{round_num}回合：击杀{'、'.join(killed_names)}")
 
+            # ── 伤害过低检测：连续3回合对敌人总HP减少<初始HP的3% → 退出 ──
+            cur_enemy_total_hp = sum(e.get("hp", 0) for e in enemies if e.get("hp", 0) > 0)
+            round_damage_dealt = prev_enemy_total_hp - cur_enemy_total_hp
+            prev_enemy_total_hp = cur_enemy_total_hp
+            # 阈值：初始敌人总HP的3%，至少5点
+            _low_dmg_threshold = max(5, enemy_total_hp_start * 0.03)
+            if round_damage_dealt < _low_dmg_threshold:
+                low_damage_streak += 1
+            else:
+                low_damage_streak = 0
+            if low_damage_streak >= 3:
+                stopped_at = "low_damage"
+                key_events.append(f"连续3回合伤害不足（阈值{_low_dmg_threshold:.0f}点），可能MP耗尽或敌人防御过高，退出扫荡")
+                all_combat_logs.append(f"⚠️ 连续3回合伤害过低，自动退出扫荡！建议恢复MP或调整策略后再战。")
+                break
+
             # 如果没有玩家死亡且所有敌人被击败 → 胜利
             if not new_alive:
                 break
@@ -2546,6 +2876,8 @@ class DeathModeEngine:
             "exp_gained": total_exp,
             "gold_gained": total_gold,
             "key_events": key_events[:8],  # 最多8条关键事件
+            "stopped_at": stopped_at,  # 停止原因：kill/enemies_defeated/low_hp/mp_exhausted/low_damage
+            "alive_enemies": [e.get("name", "?") for e in enemies if e.get("hp", 0) > 0],
         }
 
         # ── 调用一次LLM生成总结叙事 ──
@@ -2557,6 +2889,13 @@ class DeathModeEngine:
                 print(f"[DeathMode] 快速战斗叙事失败: {e}")
                 char_name = char.get("name", "无名")
                 narrative = f"经过{rounds}回合的扫荡，{char_name}击败了所有敌人。获得{total_exp}经验和{total_gold}金币。"
+        elif not victory and stopped_at in ("mp_exhausted", "low_damage"):
+            # MP耗尽或伤害过低导致扫荡中止 → 生成中止叙事
+            _alive_names = "、".join([e.get("name", "?") for e in enemies if e.get("hp", 0) > 0])
+            if stopped_at == "mp_exhausted":
+                narrative = f"经过{rounds}回合的战斗，双方魔力耗尽，普攻难以造成有效伤害，{_alive_names}仍未被击败。需要恢复魔力后再战。"
+            else:
+                narrative = f"经过{rounds}回合的战斗，伤害输出持续不足，难以击破{_alive_names}的防御，扫荡被迫中止。建议调整策略或恢复状态后再战。"
 
         # ── 精简战斗日志（只保留关键事件+首尾回合）──
         concise_log = []
@@ -2565,11 +2904,17 @@ class DeathModeEngine:
             concise_log.append(f"⚡ 扫荡开始 — {'、'.join(enemy_names_start)}")
             # 保留关键事件
             concise_log.extend(key_events[:6])
-            # 保留末回合（如果超过3回合）
-            if rounds > 3:
-                concise_log.append(f"⚡ 扫荡结束 — 共{rounds}回合")
+            # 保留末回合
+            if victory:
+                concise_log.append(f"⚡ 扫荡完成 — {rounds}回合，全部击败")
+            elif stopped_at == "mp_exhausted":
+                concise_log.append(f"⚡ 扫荡中止 — 共{rounds}回合，MP耗尽")
+            elif stopped_at == "low_damage":
+                concise_log.append(f"⚡ 扫荡中止 — 共{rounds}回合，伤害不足")
+            elif stopped_at == "low_hp":
+                concise_log.append(f"⚡ 扫荡中止 — 共{rounds}回合，HP危险")
             else:
-                concise_log.append(f"⚡ 扫荡完成 — {rounds}回合")
+                concise_log.append(f"⚡ 扫荡结束 — 共{rounds}回合")
 
         return {
             "victory": victory,

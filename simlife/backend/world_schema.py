@@ -24,11 +24,13 @@ REGION_SCHEMA = {
     "description": "",   # 地理/环境描述
     "climate": "",       # 气候
     "key_locations": [], # 关键地点（数组）
-    "dangers": [],       # 本区危险/怪物（数组或对象数组）
+    "dangers": [],       # 本区危险/怪物概述（数组或对象数组，供叙事用）
+    "monsters": [],      # 本区怪物战斗数据（MONSTER_SCHEMA 数组，供战斗系统用）
+    "boss": None,        # 区域 BOSS（dict 或 None）
     "npcs": [],          # 本区人物（标准 NPC 卡，见 NPC_SCHEMA）
     "factions": [],      # 本区驻留势力 id（数组，关联 factions）
     "level_range": [],   # 建议等级范围 [min, max]
-    "biome": "",         # 生态/地貌类型
+    "biome": "",         # 生态/地貌类型（town/wild/dungeon/boss_lair/secret）
 }
 
 NPC_SCHEMA = {
@@ -82,7 +84,7 @@ RELATIONS_SCHEMA = {
     "faction_presence": {},  # {faction_id: [region_id, ...]} 势力据点
     "storylines": [],        # 跨区域剧情线 [{id,name,regions,description,progress}]
     "characters": [],        # 跨区域人物行踪 [{id,name,role,current_region,faction_id}]
-    "routes": [],            # 区域间交通/传送 [{from,to,type,duration}]
+    # routes 字段已废弃（全代码库无读取逻辑），保留 schema 以兼容旧数据
 }
 
 
@@ -129,11 +131,18 @@ def sanitize_region(region: Dict) -> Dict:
     """清洗区域数据为标准结构"""
     if not isinstance(region, dict):
         region = {}
+    # 旧数据兼容：features → key_locations（问题11）
+    if "features" in region and not region.get("key_locations"):
+        region["key_locations"] = region.pop("features")
     region = _apply_schema(region, REGION_SCHEMA)
     region["key_locations"] = _normalize_list(region.get("key_locations"))
     region["dangers"] = _normalize_list(region.get("dangers"))
+    region["monsters"] = _normalize_list(region.get("monsters"), MONSTER_SCHEMA)
     region["npcs"] = _normalize_list(region.get("npcs"), NPC_SCHEMA)
     region["factions"] = _normalize_list(region.get("factions"))
+    # boss 可以是 None 或 dict
+    if region.get("boss") is not None and not isinstance(region.get("boss"), dict):
+        region["boss"] = None
     if not region.get("id"):
         import re
         region["id"] = re.sub(r"[^a-zA-Z0-9]+", "_", (region.get("name") or "region").lower()).strip("_") or "region"
@@ -158,7 +167,6 @@ def sanitize_relations(relations: Dict) -> Dict:
     relations["faction_presence"] = relations.get("faction_presence") or {}
     relations["storylines"] = _normalize_list(relations.get("storylines"))
     relations["characters"] = _normalize_list(relations.get("characters"))
-    relations["routes"] = _normalize_list(relations.get("routes"))
     return relations
 
 
@@ -170,8 +178,10 @@ def build_region_prompt_schema() -> str:
   "description": "地理/环境详细描述",
   "climate": "气候",
   "key_locations": ["关键地点1", "关键地点2"],
-  "dangers": ["本区危险/怪物1（含特性）", "本区危险/怪物2"],
-  "biome": "生态/地貌类型",
+  "dangers": ["本区危险/怪物概述（供叙事用）"],
+  "monsters": [{"name": "怪物名", "level": 等级, "type": "normal/elite/boss", "behavior": "行为描述"}],
+  "boss": null 或 {"name": "BOSS名", "description": "BOSS描述"},
+  "biome": "生态/地貌类型（town/wild/dungeon/boss_lair/secret）",
   "level_range": [最低等级, 最高等级]
 }
 （本区 NPC 和势力在后续步骤单独生成，这里不填）"""
