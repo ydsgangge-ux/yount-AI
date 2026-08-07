@@ -110,6 +110,50 @@ WORLD_TIMELINE = {
             "unlock_quests": [],
         },
     ],
+    "wuxia": [
+        {
+            "day_threshold": 7,
+            "id": "we_wuxia_1",
+            "title": "客栈传闻：黑风寨匪患",
+            "news": "客栈里有人说，黑风寨的山贼最近劫了好几个村子，官府悬赏剿匪。",
+            "unlock_quests": [],
+        },
+        {
+            "day_threshold": 14,
+            "id": "we_wuxia_2",
+            "title": "武林消息：英雄大会筹备",
+            "news": "江湖传言，武林盟主正在召集各派掌门，商议对付魔教的大事。",
+            "unlock_quests": [],
+        },
+        {
+            "day_threshold": 21,
+            "id": "we_wuxia_3",
+            "title": "铁匠铺闲谈：神兵出世",
+            "news": "铁匠铺老板说，有猎人在深山古墓中发现了上古神兵的线索。",
+            "unlock_quests": [],
+        },
+        {
+            "day_threshold": 30,
+            "id": "we_wuxia_4",
+            "title": "丐帮密报：魔教异动",
+            "news": "丐帮弟子传来消息，魔教似乎在暗中集结高手，意图不明。",
+            "unlock_quests": [],
+        },
+        {
+            "day_threshold": 45,
+            "id": "we_wuxia_5",
+            "title": "悬赏令：采花大盗出没",
+            "news": "各城镇贴出悬赏令，一个武功高强的采花大盗接连作案。",
+            "unlock_quests": [],
+        },
+        {
+            "day_threshold": 60,
+            "id": "we_wuxia_6",
+            "title": "江湖告急：魔教攻打总盟",
+            "news": "武林盟飞鸽传书，魔教大举进攻总盟，各路英雄火速支援！",
+            "unlock_quests": [],
+        },
+    ],
 }
 
 

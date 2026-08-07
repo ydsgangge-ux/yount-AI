@@ -36,6 +36,7 @@ class HiddenEnding:
         self.current_stage: int = data.get("current_stage", 0)  # 当前阶段索引
         self.triggered: bool = data.get("triggered", False)   # 是否已触发结局
         self.completed: bool = data.get("completed", False)   # 是否已完成
+        self.pending_transition: bool = data.get("pending_transition", False)  # 是否待衔接新章节
 
     def to_dict(self) -> dict:
         return {
@@ -47,6 +48,7 @@ class HiddenEnding:
             "current_stage": self.current_stage,
             "triggered": self.triggered,
             "completed": self.completed,
+            "pending_transition": self.pending_transition,
         }
 
     @classmethod
@@ -467,6 +469,11 @@ def _default_ending(world_setting: dict, boss_lair_name: str = "") -> HiddenEndi
             "title": "飞升之路",
             "description": f"历经千辛万苦，终于突破{boss_lair_name or '魔域深渊'}的终极试炼，踏上飞升之路。",
             "final_goal": "突破最终试炼，证道飞升",
+        },
+        "wuxia": {
+            "title": "江湖归隐",
+            "description": f"铲平{boss_lair_name or '魔教总坛'}后，武林重归太平，你的名字成为了江湖传说。",
+            "final_goal": "击败武林公敌，还天下太平",
         },
         "post_apocalyptic": {
             "title": "新纪元",

@@ -306,6 +306,7 @@ class NPCGenerator:
             })
 
         # 写入每个区域文件
+        from simlife.worlds import world_manager as wm
         for rid, npcs in region_npcs.items():
             try:
                 region = wm.load_region(world_id, rid)

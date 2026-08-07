@@ -426,6 +426,7 @@ SKILL_DATABASE = {
     },
     # 其他世界类型保留基本的技能（后续可扩展）
     "xianxia": {},
+    "wuxia": {},
     "post_apocalyptic": {},
     "modern_power": {},
     "scifi": {},
@@ -482,6 +483,19 @@ PASSIVE_SKILLS = {
                                    "effects": {"magic_damage_reduce": 0.15, "max_mp_mult": 1.10}},
         "soul_cultivator":        {"id": "passive_soul",   "name": "神魂凝聚", "description": "魔法伤害+12%，MP恢复+20%",
                                    "effects": {"magic_damage_mult": 1.12, "mp_regen_mult": 1.20}},
+    },
+    # ── 武侠江湖 ──
+    "wuxia": {
+        "swordsman":  {"id": "passive_swordsman", "name": "剑心通明", "description": "物理伤害+15%，暴击+8%",
+                       "effects": {"phys_damage_mult": 1.15, "crit_rate_bonus": 0.08}},
+        "boxer":      {"id": "passive_boxer",     "name": "铁布衫", "description": "最大HP+18%，物理减伤+10%",
+                       "effects": {"max_hp_mult": 1.18, "phys_damage_reduce": 0.10}},
+        "assassin":   {"id": "passive_assassin",  "name": "踏雪无痕", "description": "闪避+15%，暴击+10%",
+                       "effects": {"dodge_bonus": 0.15, "crit_rate_bonus": 0.10}},
+        "doctor":     {"id": "passive_doctor",    "name": "妙手回春", "description": "治疗效果+20%，免疫中毒",
+                       "effects": {"heal_mult": 1.20, "immune_dot": True}},
+        "scholar":    {"id": "passive_scholar",   "name": "浩然正气", "description": "魔法伤害+12%，MP恢复+15%",
+                       "effects": {"magic_damage_mult": 1.12, "mp_regen_mult": 1.15}},
     },
     # ── 末世废土 ──
     "post_apocalyptic": {

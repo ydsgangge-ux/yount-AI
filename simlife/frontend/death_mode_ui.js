@@ -102,7 +102,7 @@ const DeathModeUI = {
     const typeHint = overlay.querySelector('#dm-world-type-hint');
 
     const typeLabels = {
-      fantasy: '奇幻魔法', xianxia: '仙侠修真',
+      fantasy: '奇幻魔法', xianxia: '仙侠修真', wuxia: '武侠江湖',
       post_apocalyptic: '末世废土', modern_power: '现世超武', scifi: '科幻未来',
     };
 
@@ -405,7 +405,32 @@ const DeathModeUI = {
           </div>`;
       }
 
+      // ── 新篇章按钮：始终显示（结局达成/未达成两种状态） ──
+      const endingPending = state.ending_pending_transition === true;
+      const endingTitle = state.ending_title || '隐藏结局';
+      const endingDesc = state.ending_description || '';
+      let newChapterHtml = '';
+      if (endingPending) {
+        // 结局已达成：紫色高亮，显示结局标题
+        newChapterHtml = `
+          <div id="dm-new-chapter-box" style="margin-bottom:12px;padding:10px;background:linear-gradient(135deg,#2d1a3a,#1a1a2d);border:1px solid #a371f7;border-radius:8px;text-align:center;">
+            <div style="font-size:11px;color:#a371f7;font-weight:bold;margin-bottom:4px;">🏆 隐藏结局达成</div>
+            <div style="font-size:12px;color:#e6edf3;font-weight:bold;margin-bottom:4px;">${endingTitle}</div>
+            ${endingDesc ? `<div style="font-size:10px;color:#8b949e;margin-bottom:8px;line-height:1.4;">${endingDesc}</div>` : ''}
+            <button id="dm-new-chapter-btn" onclick="DeathModeUI.confirmTransition(false)" style="width:100%;padding:8px;background:linear-gradient(135deg,#a371f7,#6e40c9);border:none;border-radius:6px;color:white;cursor:pointer;font-size:12px;font-weight:bold;">📖 开启新篇章</button>
+            <div style="font-size:9px;color:#6e7681;margin-top:4px;">将总结本章并生成下一章故事（约30-60秒）</div>
+          </div>`;
+      } else {
+        // 结局未达成：普通样式，提示可主动刷新剧情
+        newChapterHtml = `
+          <div id="dm-new-chapter-box" style="margin-bottom:12px;padding:8px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;">
+            <button id="dm-new-chapter-btn" onclick="DeathModeUI.confirmTransition(true)" style="width:100%;padding:6px;background:#21262d;border:1px solid #6e7681;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:11px;">📖 开启新篇章</button>
+            <div style="font-size:9px;color:#6e7681;margin-top:3px;">不满意当前剧情？主动开启新章节</div>
+          </div>`;
+      }
+
       panel.innerHTML = `
+        ${newChapterHtml}
         <div style="text-align:center;margin-bottom:12px;">
           <div style="font-size:32px;">${char.class_icon || '⚔️'}</div>
           <div style="font-size:15px;font-weight:bold;color:#c9d1d9;margin-top:4px;">${char.name || '无名'}</div>
@@ -482,6 +507,145 @@ const DeathModeUI = {
       // ── 渲染怪物信息栏 ──
       this._renderEnemiesPanel(state);
     } catch (e) {}
+  },
+
+  // ── 新篇章：二次确认 ──
+  confirmTransition(force) {
+    // force=true 表示结局未达成时主动开启
+    const modal = document.createElement('div');
+    modal.id = 'dm-confirm-transition';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+    let title, desc, confirmText, confirmColor;
+    if (force) {
+      // 主动放弃当前剧情
+      title = '⚠️ 主动开启新篇章';
+      desc = '当前隐藏结局尚未达成，主动开启将：<br>• 结束当前章节的故事线（不强制完结）<br>• 生成"未完篇章"过渡叙事<br>• 总结本章并传承到下一章<br>• 生成全新的世界故事和隐藏结局<br><br><span style="color:#d29922;">当前未完成的剧情悬念将被保留在章节总结中，但不会再推进。</span>';
+      confirmText = '确认开启新篇章';
+      confirmColor = 'linear-gradient(135deg,#d29922,#a371f7)';
+    } else {
+      // 结局已达成
+      title = '🏆 开启新篇章';
+      desc = '隐藏结局已达成，即将：<br>• 生成结局叙事（本章终章）<br>• 总结本章并传承到下一章<br>• 生成全新的世界故事和隐藏结局<br><br><span style="color:#3fb950;">角色参数保留，新章节将延续前作故事。</span>';
+      confirmText = '确认开启新篇章';
+      confirmColor = 'linear-gradient(135deg,#a371f7,#6e40c9)';
+    }
+
+    modal.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #a371f7;border-radius:12px;padding:24px;max-width:440px;width:92%;">
+        <div style="color:#a371f7;font-size:15px;font-weight:bold;margin-bottom:12px;">${title}</div>
+        <div style="color:#c9d1d9;font-size:12px;line-height:1.7;margin-bottom:20px;">${desc}</div>
+        <div style="font-size:11px;color:#8b949e;margin-bottom:16px;padding:8px;background:#161b22;border-radius:6px;">⏱️ 处理时间约30-60秒，期间请勿关闭页面</div>
+        <div style="display:flex;gap:12px;">
+          <button id="dm-cancel-transition" style="flex:1;padding:10px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;cursor:pointer;font-size:13px;">取消</button>
+          <button id="dm-confirm-transition-btn" style="flex:1;padding:10px;background:${confirmColor};border:none;border-radius:8px;color:white;cursor:pointer;font-size:13px;font-weight:bold;">${confirmText}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    modal.querySelector('#dm-cancel-transition').addEventListener('click', () => modal.remove());
+    modal.querySelector('#dm-confirm-transition-btn').addEventListener('click', () => {
+      modal.remove();
+      this.transitionChapter(force);
+    });
+  },
+
+  // ── 新篇章：手动触发章节衔接 ──
+  async transitionChapter(force) {
+    const btn = document.getElementById('dm-new-chapter-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '正在生成新章节…（约30-60秒）'; }
+
+    // 进度提示遮罩
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-transition-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #a371f7;border-radius:12px;padding:32px 40px;text-align:center;max-width:380px;">
+        <div style="font-size:32px;margin-bottom:12px;">📖</div>
+        <div style="color:#a371f7;font-size:15px;font-weight:bold;margin-bottom:8px;">正在开启新篇章…</div>
+        <div style="color:#8b949e;font-size:12px;line-height:1.6;">系统正在总结本章故事、生成下一章世界设定和开场叙事，请耐心等待约30-60秒。</div>
+        <div style="margin-top:16px;font-size:20px;color:#a371f7;">⏳</div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    try {
+      const resp = await fetch('/api/death-mode/transition-chapter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: !!force }),
+      });
+      const data = await resp.json();
+      overlay.remove();
+      if (btn) { btn.disabled = false; btn.textContent = '📖 开启新篇章'; }
+
+      if (!resp.ok || data.error) {
+        const errMsg = (data && (data.detail || data.message)) || '章节衔接失败';
+        this._showTransitionResult({ error: true, message: errMsg });
+        return;
+      }
+
+      // 展示衔接结果（结局叙事 + 新章节开场）
+      this._showTransitionResult(data);
+      // 刷新状态面板和日志（新章节已生成）
+      this._renderStatusPanel();
+      this._loadAndRenderLog();
+    } catch (e) {
+      overlay.remove();
+      if (btn) { btn.disabled = false; btn.textContent = '📖 开启新篇章'; }
+      this._showTransitionResult({ error: true, message: e.message || '网络错误' });
+    }
+  },
+
+  _showTransitionResult(data) {
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+    if (data.error) {
+      modal.innerHTML = `
+        <div style="background:#0d1117;border:1px solid #f85149;border-radius:12px;padding:28px;max-width:420px;width:90%;">
+          <div style="color:#f85149;font-size:16px;font-weight:bold;margin-bottom:12px;">❌ 章节衔接失败</div>
+          <div style="color:#c9d1d9;font-size:13px;line-height:1.6;margin-bottom:20px;">${data.message || '未知错误'}</div>
+          <button onclick="this.closest('div[style*=fixed]').remove()" style="width:100%;padding:8px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;">关闭</button>
+        </div>`;
+      document.body.appendChild(modal);
+      return;
+    }
+
+    const completedCh = data.completed_chapter || '?';
+    const newCh = data.new_chapter || '?';
+    const isEndingCompleted = data.is_ending_completed !== false;
+    const headerIcon = isEndingCompleted ? '🏆' : '📖';
+    const headerLabel = isEndingCompleted ? '第' + completedCh + '章完结' : '第' + completedCh + '章暂别';
+    const narrativeLabel = isEndingCompleted ? '📖 结局叙事' : '📖 未完篇章';
+    modal.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #a371f7;border-radius:12px;padding:24px;max-width:520px;width:92%;max-height:85vh;overflow-y:auto;">
+        <div style="text-align:center;margin-bottom:16px;">
+          <div style="font-size:28px;margin-bottom:6px;">${headerIcon}</div>
+          <div style="color:#a371f7;font-size:14px;font-weight:bold;">${headerLabel}</div>
+          <div style="color:#e6edf3;font-size:16px;font-weight:bold;margin-top:4px;">${data.ending_title || '隐藏结局'}</div>
+        </div>
+        ${data.ending_narrative ? `
+          <div style="background:#161b22;border-radius:8px;padding:12px;margin-bottom:16px;border-left:3px solid #a371f7;">
+            <div style="color:#a371f7;font-size:11px;margin-bottom:6px;">${narrativeLabel}</div>
+            <div style="color:#c9d1d9;font-size:13px;line-height:1.7;white-space:pre-wrap;">${data.ending_narrative}</div>
+          </div>` : ''}
+        ${data.chapter_summary ? `
+          <div style="background:#161b22;border-radius:8px;padding:12px;margin-bottom:16px;border-left:3px solid #58a6ff;">
+            <div style="color:#58a6ff;font-size:11px;margin-bottom:6px;">📋 章节总结（传承至下一章）</div>
+            <div style="color:#8b949e;font-size:12px;line-height:1.7;white-space:pre-wrap;">${data.chapter_summary}</div>
+          </div>` : ''}
+        <div style="text-align:center;margin-bottom:16px;padding-top:12px;border-top:1px dashed #30363d;">
+          <div style="font-size:28px;margin-bottom:6px;">✨</div>
+          <div style="color:#3fb950;font-size:14px;font-weight:bold;">第${newCh}章开始</div>
+        </div>
+        ${data.new_chapter_narrative ? `
+          <div style="background:#161b22;border-radius:8px;padding:12px;margin-bottom:16px;border-left:3px solid #3fb950;">
+            <div style="color:#3fb950;font-size:11px;margin-bottom:6px;">🎬 新章节开场</div>
+            <div style="color:#c9d1d9;font-size:13px;line-height:1.7;white-space:pre-wrap;">${data.new_chapter_narrative}</div>
+          </div>` : ''}
+        <button onclick="this.closest('div[style*=fixed]').remove()" style="width:100%;padding:10px;background:#a371f7;border:none;border-radius:8px;color:white;cursor:pointer;font-size:13px;font-weight:bold;">开始新冒险</button>
+      </div>`;
+    document.body.appendChild(modal);
   },
 
   // ── 怪物信息栏 ──

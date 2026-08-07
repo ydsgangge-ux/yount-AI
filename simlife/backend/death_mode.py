@@ -465,6 +465,13 @@ class DeathModeEngine:
             "in_dungeon": state.get("in_dungeon", False),
             "dungeon": self.get_dungeon_info().get("dungeon") if state.get("in_dungeon") else None,
             "party_members": state.get("party_members", []),
+            # ── 隐藏结局待衔接状态（供网页端"新篇章"按钮显示） ──
+            "ending_pending_transition": bool(
+                state.get("hidden_ending", {}).get("pending_transition", False)
+                and not state.get("hidden_ending", {}).get("completed", False)
+            ),
+            "ending_title": state.get("hidden_ending", {}).get("title", ""),
+            "ending_description": state.get("hidden_ending", {}).get("description", ""),
         }
 
     # ── 场景推进 ──────────────────────────────────────────
@@ -1527,15 +1534,25 @@ class DeathModeEngine:
                 if progress.get("stage_advanced"):
                     state["hidden_ending"] = ending.to_dict()
                     if progress.get("ending_ready"):
-                        # 结局条件已满足，标记触发
+                        # 结局条件已满足 → 标记为"待衔接"状态，等玩家下次行动时手动触发
+                        # 开放世界设计：玩家可以先欣赏结局叙事，想继续时再开启新章节
+                        ending.triggered = True  # 标记已触发，避免重复检测
+                        ending.pending_transition = True  # 待衔接标志
+                        state["hidden_ending"] = ending.to_dict()
+                        print(f"[DeathMode] 隐藏结局触发！{ending.title}（等待玩家手动开启新章节）")
                         result["ending_ready"] = True
                         result["ending_message"] = ending.description
-                        print(f"[DeathMode] 隐藏结局触发！{ending.title}")
+                        result["ending_title"] = ending.title
+                        result["ending_pending_transition"] = True  # 通知前端：等待玩家确认
                     else:
                         # 阶段推进（不通知用户，只系统记录）
                         print(f"[DeathMode] 结局阶段推进到 {ending.current_stage}/{len(ending.stages)}")
         except Exception as e:
             print(f"[DeathMode] 结局进度检查失败: {e}")
+
+        # ── 章节衔接：改为网页端"新篇章"按钮手动触发，避免误触发 ──
+        # 此处不再自动衔接，仅保留"待衔接"状态，由 /api/death-mode/transition-chapter 接口处理
+        # 玩家可继续在当前章节探索，准备好后点击网页端"新篇章"按钮开启下一章
 
         self._save()
 
@@ -1750,6 +1767,261 @@ class DeathModeEngine:
             if EnemyAgent.is_unique_enemy(e) and _name_normalized not in unique_list:
                 unique_list.append(_name_normalized)
         state["defeated_unique_enemies"] = unique_list[-50:]  # 保留最近50个特殊敌人
+
+    def trigger_chapter_transition(self, force: bool = False) -> Dict:
+        """网页端"新篇章"按钮入口：手动触发章节衔接
+        - 结局达成（pending_transition=True）：正常衔接，生成完整结局叙事
+        - 主动开启（force=True）：即使结局未达成也可衔接，生成"未完篇章"叙事
+        - 处理：生成结局叙事 + 800字章节总结 + 新章节开场 + 新隐藏结局
+        - 返回衔接结果给前端展示
+        """
+        state = self._load()
+        if not state or not state.get("is_alive"):
+            return {"error": "game_not_active"}
+
+        ending_data = state.get("hidden_ending") or {}
+
+        # 幂等保护：已完成则不再触发
+        if ending_data.get("completed", False):
+            return {"error": "already_completed", "message": "该章节已完成衔接"}
+
+        # 判断是"结局达成衔接"还是"主动放弃衔接"
+        is_ending_completed = ending_data.get("pending_transition", False)
+
+        if is_ending_completed:
+            # 结局已达成，正常衔接
+            ending = HiddenEnding.from_dict(ending_data)
+            print(f"[DeathMode] 网页端触发章节衔接（结局达成）：{ending.title}")
+        else:
+            # 用户主动开启新篇章，当前结局未达成
+            if not force:
+                return {"error": "not_ready", "message": "隐藏结局尚未达成，需确认主动开启新篇章"}
+            # 构造一个"未完篇章"的虚拟ending用于衔接流程
+            ending = HiddenEnding({
+                "ending_id": ending_data.get("ending_id", ""),
+                "title": ending_data.get("title", "未完的篇章"),
+                "description": "冒险者选择了新的方向，前路的故事暂告一段落。",
+                "final_goal": ending_data.get("final_goal", ""),
+                "stages": ending_data.get("stages", []),
+                "current_stage": ending_data.get("current_stage", 0),
+                "triggered": True,
+                "completed": False,
+                "pending_transition": True,  # 标记为待衔接，供后续流程使用
+            })
+            print(f"[DeathMode] 网页端主动触发章节衔接（当前结局未达成）：{ending.title}")
+
+        try:
+            result = self._trigger_chapter_transition(state, ending, is_ending_completed)
+            self._save()
+            # 返回结果给前端展示
+            return {
+                "ok": True,
+                "ending_title": ending.title,
+                "ending_narrative": result.get("ending_narrative", ""),
+                "new_chapter_narrative": result.get("new_chapter_narrative", ""),
+                "new_chapter": result.get("new_chapter", state.get("story", {}).get("current_chapter", 1)),
+                "completed_chapter": result.get("completed_chapter", state.get("story", {}).get("current_chapter", 1) - 1),
+                "chapter_summary": result.get("chapter_summary", ""),
+                "is_ending_completed": is_ending_completed,  # 告知前端是结局达成还是主动放弃
+            }
+        except Exception as e:
+            print(f"[DeathMode] 章节衔接执行失败: {e}")
+            return {"error": "transition_failed", "message": str(e)}
+
+    def _trigger_chapter_transition(self, state: Dict, ending, is_ending_completed: bool = True) -> Dict:
+        """章节衔接：结局达成后保存当前章节存档，生成新结局，开启下一章
+        开放世界设计：角色参数保留，故事总结传承，世界扩展新区域和新剧情线
+        """
+        import time
+        from simlife.backend.ending_system import generate_hidden_ending
+
+        char = state.get("character", {})
+        user_char = state.get("user_character", {})
+        char_name = char.get("name", "无名")
+        user_name = user_char.get("name", "")
+
+        # 1. 生成结局叙事
+        #    - 结局达成：基于结局的 final_goal 和 description 生成完整结局叙事
+        #    - 主动放弃：生成"未完篇章"叙事，描述冒险者选择新方向
+        ending_narrative = ""
+        try:
+            if is_ending_completed:
+                # 结局达成，生成完整结局叙事
+                narrative_prompt = ending.get_ending_narrative_prompt(state)
+                if narrative_prompt:
+                    ending_narrative = self.story_agent.llm.generate(
+                        narrative_prompt, max_tokens=600, temperature=0.8, thinking=False
+                    ).strip()
+            else:
+                # 主动放弃当前剧情，生成"未完篇章"叙事
+                history = state.get("story", {}).get("history", [])
+                recent_text = ""
+                for h in history[-8:]:
+                    recent_text += f"• {h.get('action', '')} → {h.get('summary', '')}\n"
+                pending_prompt = f"""你是死亡模式人生模拟器的叙事Agent。冒险者主动选择结束当前章节，开启新的篇章。
+请生成一段"未完篇章"的过渡叙事（200-300字），要求：
+1. 自然收束当前剧情线，不要强行完结（故事未真正结束，只是冒险者转向了新方向）
+2. 暗示当前世界的某些悬念仍未解开，留待未来
+3. 为新章节的开启做铺垫，氛围从"暂别"转向"新的征途"
+
+【角色】{char_name}（Lv.{char.get('level', 1)}）{f"与同伴{user_name}" if user_name else ""}
+【当前区域】{state.get('story', {}).get('current_location', '未知')}
+
+【最近发生的事】
+{recent_text or '（暂无近期记录）'}
+
+请直接输出叙事文本，不要其他内容。"""
+                ending_narrative = self.story_agent.llm.generate(
+                    pending_prompt, max_tokens=400, temperature=0.7, thinking=False
+                ).strip()
+        except Exception as e:
+            print(f"[DeathMode] 结局叙事生成失败: {e}")
+            if is_ending_completed:
+                ending_narrative = f"历经重重考验，{char_name}终于完成了『{ending.title}』的使命。{ending.description}"
+            else:
+                ending_narrative = f"{char_name}的这段冒险暂告一段落，新的征途即将开始……"
+
+        # 2. 生成当前章节的完整故事总结（传承到下一章）
+        chapter_summary = state.get("story_summary", "")
+        try:
+            history = state.get("story", {}).get("history", [])
+            history_text = ""
+            for h in history[-30:]:
+                _act = h.get("action", "")
+                _sum = h.get("summary", "")
+                history_text += f"• {_act} → {_sum}\n"
+
+            summary_prompt = f"""请把以下整个章节的游戏历史压缩成详细的章节总结（800字左右）。
+保留关键信息：重要NPC名字和身份、地点、获得的道具、完成的任务、关键战斗、剧情转折、角色成长、势力关系变化。
+这是为了传承到下一个章节，让新章节的剧情能延续前作，不要遗漏重要细节。
+
+结局标题：{ending.title}
+结局目标：{ending.final_goal}
+
+最近发生的事：
+{history_text}
+
+已有摘要：{chapter_summary}
+
+请直接输出章节总结文本，不要其他内容。"""
+            chapter_summary = self.story_agent.llm.generate(
+                summary_prompt, max_tokens=1200, temperature=0.3, thinking=False
+            ).strip()
+        except Exception as e:
+            print(f"[DeathMode] 章节总结生成失败: {e}")
+
+        # 3. 保存章节存档到 completed_chapters
+        completed_chapters = state.setdefault("completed_chapters", [])
+        current_chapter_num = state.get("story", {}).get("current_chapter", 1)
+        completed_chapters.append({
+            "chapter": current_chapter_num,
+            "ending_title": ending.title,
+            "ending_description": ending.description,
+            "final_goal": ending.final_goal,
+            "ending_narrative": ending_narrative[:500],
+            "chapter_summary": chapter_summary,
+            "char_level": char.get("level", 1),
+            "char_name": char_name,
+            "user_name": user_name,
+            "completed_at": int(time.time()),
+        })
+        # 保留最近10个章节存档
+        state["completed_chapters"] = completed_chapters[-10:]
+
+        # 4. 标记当前结局已完成
+        ending.completed = True
+        ending.triggered = True
+        state["hidden_ending"] = ending.to_dict()
+
+        # 5. 章节推进
+        state["story"]["current_chapter"] = current_chapter_num + 1
+
+        # 6. 保留角色参数，但重置故事状态（新章节新故事）
+        # 清空当前章节的历史和钩子，但保留 completed_chapters 和 story_summary
+        state["story"]["history"] = []
+        state["story"]["unresolved_hooks"] = []
+        state["story"]["pending_action"] = None
+        state["in_combat"] = False
+        state["enemies"] = []
+        state["spotted_enemies"] = []
+        state["plot_threads"] = []  # 清空剧情线，新章节重新建立
+
+        # 7. story_summary 更新为章节总结（传承到下一章）
+        state["story_summary"] = chapter_summary
+
+        # 8. 恢复角色 HP/MP（新章节开始，状态回满）
+        char["hp"] = char.get("max_hp", char.get("hp", 100))
+        char["mp"] = char.get("max_mp", char.get("mp", 50))
+        if user_char and user_char.get("class_name"):
+            user_char["hp"] = user_char.get("max_hp", user_char.get("hp", 100))
+            user_char["mp"] = user_char.get("max_mp", user_char.get("mp", 50))
+
+        # 9. 生成新的隐藏结局（下一章的世界故事）
+        try:
+            world_setting = state.get("world_setting", {})
+            # 构建章节传承上下文，让新结局能延续前作
+            chapter_context = ""
+            if completed_chapters:
+                last_ch = completed_chapters[-1]
+                chapter_context = f"\n前作结局：{last_ch.get('ending_title', '')}（{last_ch.get('ending_description', '')[:100]}）\n前作总结：{last_ch.get('chapter_summary', '')[:200]}"
+
+            # 临时注入章节上下文到 world_setting
+            original_history = world_setting.get("history", {})
+            if not isinstance(original_history, dict):
+                original_history = {}
+            world_setting["history"] = {
+                **original_history,
+                "current_situation": f"新章节开始。{chapter_context}",
+            }
+
+            new_ending = generate_hidden_ending(world_setting, self.llm, self.world_map)
+            if new_ending:
+                state["hidden_ending"] = new_ending.to_dict()
+                print(f"[DeathMode] 新章节隐藏结局生成：{new_ending.title}（{len(new_ending.stages)}个阶段）")
+            else:
+                print("[DeathMode] 新章节结局生成失败，使用默认")
+        except Exception as e:
+            print(f"[DeathMode] 新章节结局生成失败: {e}")
+
+        # 10. 生成新章节开场叙事
+        new_chapter_narrative = ""
+        try:
+            opening_prompt = f"""你是死亡模式人生模拟器的叙事Agent。一个新的章节即将开始。
+
+【前作传承】
+{chapter_summary}
+
+【当前角色】
+{char_name}（Lv.{char.get('level', 1)}）
+{f"同伴：{user_name}（Lv.{user_char.get('level', 1)}）" if user_name else ""}
+
+【新章节】第{state['story']['current_chapter']}章
+
+请生成一段新章节的开场叙事（150-200字），描述前作结局后世界的变化，以及新的冒险如何开始。
+要求：
+1. 自然衔接前作结局，不要生硬转折
+2. 暗示新的危机或冒险方向，但不透露隐藏结局
+3. 保持开放世界的氛围，角色可以自由探索
+"""
+            new_chapter_narrative = self.story_agent.llm.generate(
+                opening_prompt, max_tokens=400, temperature=0.7, thinking=False
+            ).strip()
+        except Exception as e:
+            print(f"[DeathMode] 新章节开场叙事生成失败: {e}")
+            new_chapter_narrative = f"第{state['story']['current_chapter']}章开始了。{char_name}的冒险还在继续……"
+
+        # 更新场景描述
+        state["story"]["scene_description"] = new_chapter_narrative
+
+        print(f"[DeathMode] 章节衔接完成：第{current_chapter_num}章『{ending.title}』→ 第{state['story']['current_chapter']}章")
+
+        return {
+            "ending_narrative": ending_narrative,
+            "new_chapter_narrative": new_chapter_narrative,
+            "new_chapter": state["story"]["current_chapter"],
+            "completed_chapter": current_chapter_num,
+            "chapter_summary": chapter_summary[:300],
+        }
 
     def _generate_story_summary(self, state: Dict):
         """生成剧情摘要：把最近10条历史压缩成简短摘要，作为长期记忆注入prompt"""

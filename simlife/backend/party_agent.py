@@ -316,6 +316,14 @@ class PartyAgent:
             {"name": "体修铁牛", "class_id": "body cultivator", "class_name": "体修", "icon": "💪",
              "stats": {"strength": 15, "agility": 5, "intelligence": 3, "vitality": 12, "luck": 4}},
         ],
+        "wuxia": [
+            {"name": "剑客柳风", "class_id": "swordsman", "class_name": "剑客", "icon": "🗡️",
+             "stats": {"strength": 13, "agility": 10, "intelligence": 5, "vitality": 8, "luck": 6}},
+            {"name": "拳师铁山", "class_id": "boxer", "class_name": "拳师", "icon": "👊",
+             "stats": {"strength": 14, "agility": 7, "intelligence": 4, "vitality": 11, "luck": 5}},
+            {"name": "医者素心", "class_id": "doctor", "class_name": "医者", "icon": "💊",
+             "stats": {"strength": 4, "agility": 7, "intelligence": 12, "vitality": 8, "luck": 10}},
+        ],
         "post_apocalyptic": [
             {"name": "老兵雷克斯", "class_id": "soldier", "class_name": "士兵", "icon": "🔫",
              "stats": {"strength": 10, "agility": 8, "intelligence": 6, "vitality": 10, "luck": 6}},

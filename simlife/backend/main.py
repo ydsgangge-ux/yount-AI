@@ -1530,6 +1530,22 @@ def api_death_mode_action(data: dict):
     return result
 
 
+@app.post("/api/death-mode/transition-chapter")
+def api_death_mode_transition_chapter(data: dict = None):
+    """网页端"新篇章"按钮：手动触发章节衔接
+    - 结局已达成（pending_transition=True）：正常衔接，生成完整结局叙事
+    - force=True：即使结局未达成也可主动衔接，生成"未完篇章"叙事
+    会生成800字章节总结、新章节开场叙事、新隐藏结局，耗时较长（可能30-60秒）。
+    """
+    from simlife.backend.death_mode import DeathModeEngine
+    force = bool((data or {}).get("force", False))
+    engine = DeathModeEngine()
+    result = engine.trigger_chapter_transition(force=force)
+    if "error" in result:
+        raise HTTPException(400, result.get("message", result["error"]))
+    return result
+
+
 @app.get("/api/death-mode/hall")
 def api_death_mode_hall():
     """获取死亡名人堂"""

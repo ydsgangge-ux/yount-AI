@@ -992,6 +992,25 @@ class FloatingWindow(QWidget):
         if result.get("character_died"):
             parts.append(f"☠️ 阵亡：{result.get('death_description', '')}")
 
+        # ── 隐藏结局达成 + 章节衔接 ──
+        if result.get("ending_ready"):
+            ending_title = result.get("ending_title", "隐藏结局")
+            ending_msg = result.get("ending_message", "")
+            parts.append(f"──── 🏆 隐藏结局达成：{ending_title} ────")
+            if ending_msg:
+                parts.append(ending_msg)
+            if result.get("ending_pending_transition"):
+                parts.append("📖 前往网页端（8769）点击「开启新篇章」按钮开启下一章节…")
+
+        ct = result.get("chapter_transition")
+        if ct:
+            parts.append(f"──── 📖 第{ct.get('completed_chapter','?')}章完结 ────")
+            if ct.get("ending_narrative"):
+                parts.append(ct["ending_narrative"])
+            parts.append(f"──── ✨ 第{ct.get('new_chapter','?')}章开始 ────")
+            if ct.get("new_chapter_narrative"):
+                parts.append(ct["new_chapter_narrative"])
+
         try:
             import urllib.request, json
             url2 = "http://127.0.0.1:8769/api/death-mode/state"

@@ -33,6 +33,14 @@ CLASS_TEMPLATES = {
         "talisman_cultivator": {"name": "符修", "icon": "📜", "description": "符箓之道，攻守兼备，变化多端", "base_stats": {"strength": 7, "agility": 10, "intelligence": 15, "vitality": 8, "luck": 12}, "base_hp": 85, "base_mp": 85, "starting_skills": ["雷符", "护身符"]},
         "soul_cultivator": {"name": "魂修", "icon": "👻", "description": "修炼神魂，精神攻击，诡异莫测", "base_stats": {"strength": 5, "agility": 10, "intelligence": 18, "vitality": 6, "luck": 10}, "base_hp": 75, "base_mp": 110, "starting_skills": ["神识刺", "摄魂术"]},
     },
+    # ── 武侠江湖 ──
+    "wuxia": {
+        "swordsman": {"name": "剑客", "icon": "🗡️", "description": "剑法精湛，攻击凌厉，以快制胜", "base_stats": {"strength": 15, "agility": 13, "intelligence": 6, "vitality": 10, "luck": 8}, "base_hp": 120, "base_mp": 40, "starting_skills": ["剑法·劈刺", "剑气"]},
+        "boxer": {"name": "拳师", "icon": "👊", "description": "拳掌功夫，内外兼修，近战王者", "base_stats": {"strength": 16, "agility": 10, "intelligence": 5, "vitality": 12, "luck": 5}, "base_hp": 150, "base_mp": 30, "starting_skills": ["铁拳", "擒拿手"]},
+        "assassin": {"name": "刺客", "icon": "🗡️", "description": "暗器百发百中，轻功来去如风", "base_stats": {"strength": 8, "agility": 18, "intelligence": 8, "vitality": 8, "luck": 10}, "base_hp": 90, "base_mp": 50, "starting_skills": ["飞镖", "轻功"]},
+        "doctor": {"name": "医者", "icon": "💊", "description": "悬壶济世，精通医毒，救人亦能伤敌", "base_stats": {"strength": 5, "agility": 8, "intelligence": 14, "vitality": 10, "luck": 12}, "base_hp": 100, "base_mp": 70, "starting_skills": ["金针术", "药粉"]},
+        "scholar": {"name": "文人", "icon": "🎵", "description": "琴棋书画皆可杀人，内力深厚", "base_stats": {"strength": 6, "agility": 10, "intelligence": 16, "vitality": 8, "luck": 10}, "base_hp": 85, "base_mp": 80, "starting_skills": ["琴音攻击", "内力护体"]},
+    },
     # ── 末世废土 ──
     "post_apocalyptic": {
         "esper": {"name": "异能者", "icon": "⚡", "description": "觉醒超能力，远程能量攻击", "base_stats": {"strength": 8, "agility": 10, "intelligence": 16, "vitality": 8, "luck": 8}, "base_hp": 90, "base_mp": 90, "starting_skills": ["念动力", "能量护盾"]},
@@ -71,6 +79,8 @@ def _get_world_type_from_setting(world_setting: Dict) -> str:
     # 模糊匹配
     if "xianxia" in wtype or "仙" in str(world_setting.get("world_name", "")):
         return "xianxia"
+    if "wuxia" in wtype or "武" in str(world_setting.get("world_name", "")) or "江湖" in str(world_setting.get("world_name", "")):
+        return "wuxia"
     if "apocal" in wtype or "末" in str(world_setting.get("world_name", "")):
         return "post_apocalyptic"
     if "modern" in wtype or "超" in str(world_setting.get("world_name", "")):
