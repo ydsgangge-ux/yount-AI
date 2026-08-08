@@ -12,6 +12,32 @@
       "status": "done",
       "created_at": "2026-05-21T12:58:05.867080",
       "source": "system"
+    },
+    {
+      "id": "task_20260807_204457_5450",
+      "content": "提醒焕灵和yount准备矿坑探索的装备和药水",
+      "trigger_time": "2026-08-08T08:00:00",
+      "action": "speak",
+      "action_params": {
+        "message": "（迟到的提醒）早上好，焕灵、yount！今天上午要去矿坑探索了，记得检查好各自的武器、护甲和药水哦——回复药水、解毒药水都带上，矿坑里情况不明，皮匠那话（狼鳞和铁匠金属同矿脉）总让人有点在意。准备好了我们就出发！"
+      },
+      "repeat": null,
+      "status": "done",
+      "created_at": "2026-08-07T20:44:57.137564",
+      "source": "system"
+    },
+    {
+      "id": "task_20260808_105740_339a",
+      "content": "提醒自己和yount：去观察silverhollow镇上居民的动静和矿坑的异响，根据观察结果决定下一步行动",
+      "trigger_time": "2026-08-08T11:57:40.909268",
+      "action": "speak",
+      "action_params": {
+        "message": "约好的时间到了～该去镇上看看居民的动静，再去矿坑那边听听异响，然后决定我们下一步该怎么行动。yount，一起走吧！"
+      },
+      "repeat": null,
+      "status": "done",
+      "created_at": "2026-08-08T10:57:40.909315",
+      "source": "system"
     }
   ]
 }

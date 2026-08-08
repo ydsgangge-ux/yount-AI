@@ -1506,7 +1506,6 @@ class DeathModeEngine:
                 try:
                     ending_data = state.get("hidden_ending")
                     if ending_data and not ending_data.get("triggered", False):
-                        from simlife.backend.ending_system import HiddenEnding
                         ending = HiddenEnding.from_dict(ending_data)
                         ending_hint_for_quest = ending.get_stage_hint_for_quest()
                 except Exception:
@@ -1849,7 +1848,7 @@ class DeathModeEngine:
                 # 结局达成，生成完整结局叙事
                 narrative_prompt = ending.get_ending_narrative_prompt(state)
                 if narrative_prompt:
-                    ending_narrative = self.story_agent.llm.generate(
+                    ending_narrative = self.llm.generate(
                         narrative_prompt, max_tokens=600, temperature=0.8, thinking=False
                     ).strip()
             else:
@@ -1871,7 +1870,7 @@ class DeathModeEngine:
 {recent_text or '（暂无近期记录）'}
 
 请直接输出叙事文本，不要其他内容。"""
-                ending_narrative = self.story_agent.llm.generate(
+                ending_narrative = self.llm.generate(
                     pending_prompt, max_tokens=400, temperature=0.7, thinking=False
                 ).strip()
         except Exception as e:
@@ -1904,7 +1903,7 @@ class DeathModeEngine:
 已有摘要：{chapter_summary}
 
 请直接输出章节总结文本，不要其他内容。"""
-            chapter_summary = self.story_agent.llm.generate(
+            chapter_summary = self.llm.generate(
                 summary_prompt, max_tokens=1200, temperature=0.3, thinking=False
             ).strip()
         except Exception as e:
@@ -2003,7 +2002,7 @@ class DeathModeEngine:
 2. 暗示新的危机或冒险方向，但不透露隐藏结局
 3. 保持开放世界的氛围，角色可以自由探索
 """
-            new_chapter_narrative = self.story_agent.llm.generate(
+            new_chapter_narrative = self.llm.generate(
                 opening_prompt, max_tokens=400, temperature=0.7, thinking=False
             ).strip()
         except Exception as e:
@@ -2059,7 +2058,7 @@ class DeathModeEngine:
 请直接输出摘要文本，不要其他内容。"""
 
         try:
-            summary = self.story_agent.llm.generate(prompt, max_tokens=400, temperature=0.3, thinking=False)
+            summary = self.llm.generate(prompt, max_tokens=400, temperature=0.3, thinking=False)
             summary = summary.strip()
             if summary:
                 state["story_summary"] = summary
