@@ -507,6 +507,42 @@ class StoryAgent:
             recent_defeated = defeated_unique[-15:]  # 最近15个特殊敌人
             defeated_ctx = f"【已击败的特殊敌人·绝不能复活】以下精英/Boss已被击败并死亡，叙事中绝不能让它们再次出现、还活着或重新战斗：{', '.join(recent_defeated)}\n"
 
+        # ── 已死亡NPC记录（坏人路线核心：杀死的NPC绝不能复活）──
+        npc_death_records = state.get("npc_death_records", [])
+        npc_death_ctx = ""
+        if npc_death_records:
+            recent_dead = npc_death_records[-10:]  # 最近10个死亡NPC
+            dead_lines = []
+            for r in recent_dead:
+                _name = r.get("name", "?")
+                _role = r.get("role", "?")
+                _cause = r.get("cause", "未知")
+                _killer = r.get("killer", "未知")
+                dead_lines.append(f"  ▸ {_name}（{_role}）— 死因：{_cause}，凶手：{_killer}")
+            npc_death_ctx = "【已死亡NPC·绝不能复活】以下NPC已被杀死，叙事中绝不能让他们再次出现、还活着、说话或交互。如果角色试图与这些NPC对话或交易，应描述'此人已死'或'尸体还在那里'：\n" + "\n".join(dead_lines) + "\n"
+
+        # ── 当前区域活着的NPC列表（坏人路线核心：让LLM知道有哪些NPC可被攻击）──
+        alive_npc_ctx = ""
+        try:
+            _npc_sys_data = state.get("npc_system", {})
+            _all_npcs = _npc_sys_data.get("npcs", {}) if isinstance(_npc_sys_data, dict) else {}
+            _cur_loc = state.get("story", {}).get("current_location", "")
+            _alive_lines = []
+            for _nid, _ndata in _all_npcs.items():
+                if not _ndata.get("alive", True):
+                    continue
+                _n_name = _ndata.get("name", "?")
+                _n_role = _ndata.get("role", "?")
+                _n_loc = _ndata.get("location", "")
+                # 列出所有活着的NPC（不限区域，因为用户可能跨区域指名攻击）
+                _alive_lines.append(f"  ▸ {_n_name}（{_n_role}）@ {_n_loc or '未知'}")
+            if _alive_lines:
+                alive_npc_ctx = ("【本世界活着的NPC·可交互/可攻击】以下NPC目前活着，角色可以与他们对话、交易，也可以攻击他们。"
+                                 "当角色说'杀死/攻击/抢劫XX'且XX在此列表中时，必须把XX填入 spotted_enemies 让战斗系统处理：\n"
+                                 + "\n".join(_alive_lines) + "\n")
+        except Exception:
+            pass
+
         # ── 剧情线（Plot Threads）：跟踪关键剧情设定，防止前后矛盾 ──
         plot_threads = state.get("plot_threads", [])
         plot_ctx = ""
@@ -627,7 +663,7 @@ class StoryAgent:
 {char_ctx}
 
 {history_ctx}
-{hooks_ctx}{defeated_ctx}{plot_ctx}{summary_ctx}
+{hooks_ctx}{defeated_ctx}{alive_npc_ctx}{npc_death_ctx}{plot_ctx}{summary_ctx}
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}
@@ -657,6 +693,14 @@ class StoryAgent:
 14. 【行动连续性·最重要】必须参考【最近行动记录】，当前行动是之前行动的延续。NPC名字、地点、对话内容必须与之前一致。如果之前在跟某个NPC对话，当前必须还是那个NPC。如果之前在某个地点，当前必须还在那个地点（除非行动明确涉及移动）。
 15. 【战斗状态感知·关键】如果【角色状态】中标注了【战斗中】，说明战斗正在进行：叙事必须描述战斗交锋过程，绝不能生成新敌人（spotted_enemies 填 null），绝不能切换地点（new_location 填 null）。如果【最近行动记录】中有[战斗胜利]，说明战斗刚结束：叙事应描述战后的短暂喘息或清理战场，不要假装敌人还活着。
 16. 【角色名约束·最严格】叙事中只能使用以下角色名：{char.get('name', 'AI')}（系统角色）和{user_char.get('name', '用户')}（用户角色）。绝不能编造其他角色名（如 turent、张三等），绝不能把技能或攻击归属到不存在的角色身上。
+17. 【攻击NPC·坏人路线·最严格】当角色攻击、杀害、抢劫、袭击任何有名字的人物（如"杀掉旅店老板""攻击镇长""抢劫商人""杀死莱恩""干掉药剂师"）时：
+    - 必须在 spotted_enemies 中填入该人物的名称（如 [{{"name": "旅店老板", "count": 1}}] 或 [{{"name": "莱恩", "count": 1}}]），让战斗系统处理战斗
+    - 无论该人物是否在上方NPC列表中，只要行动明确涉及攻击某个有名字的角色，就必须填入 spotted_enemies
+    - outcome_type 填 "combat_success" 或 "combat_fail"
+    - 叙事只描述冲突开始的过程（拔刀、对峙、NPC反抗），绝不能直接写"你杀死了XX"——生死由战斗系统判定
+    - 绝不能把攻击NPC的行动转成攻击区域怪物（如用户说"杀死莱恩"时，不能生成"侵蚀守卫"作为敌人）
+    - 如果上方【已死亡NPC·绝不能复活】列表中已包含该NPC，说明NPC已死，不能再被攻击或交互，叙事应描述"尸体还在那里"或类似内容
+18. 【已死亡NPC交互】如果角色试图与【已死亡NPC·绝不能复活】列表中的NPC对话、交易或交互，叙事应明确描述该NPC已死（如"你走到旅店老板的尸体旁，他已经无法回答任何问题"），outcome_type 填 "nothing"，不要生成新的 spotted_enemies
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
@@ -839,6 +883,16 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
         story_summary = state.get("story_summary", "")
         summary_ctx = f"【剧情摘要】\n{story_summary}\n" if story_summary else ""
 
+        # ── 已死亡NPC记录（坏人路线：战斗叙事中也不能让死去的NPC复活）──
+        npc_death_records = state.get("npc_death_records", [])
+        npc_death_ctx = ""
+        if npc_death_records:
+            recent_dead = npc_death_records[-10:]
+            dead_lines = []
+            for r in recent_dead:
+                dead_lines.append(f"  ▸ {r.get('name', '?')}（{r.get('role', '?')}）— {r.get('cause', '未知')}")
+            npc_death_ctx = "【已死亡NPC·绝不能复活】以下NPC已被杀死，叙事中绝不能让他们出现或还活着：\n" + "\n".join(dead_lines) + "\n"
+
         # ── 构建战斗日志摘要 ──
         combat_log = combat_result.get("combat_log", [])
         victory = combat_result.get("victory", False)
@@ -874,7 +928,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
 {char_ctx}
 
 {history_ctx}
-{plot_ctx}{summary_ctx}
+{npc_death_ctx}{plot_ctx}{summary_ctx}
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（战斗中）'}

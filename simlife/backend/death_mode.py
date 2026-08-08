@@ -588,6 +588,95 @@ class DeathModeEngine:
         if not action:
             return {"error": "no_action"}
 
+        # ── 坏人路线·NPC怜悯暂停处理 ──
+        # 战斗中NPC敌人残血时暂停，用户明确说"杀死/处决/了结"才执行最后一击
+        _mercy_pause = state.get("npc_mercy_pause")
+        if _mercy_pause and state.get("in_combat"):
+            _kill_keywords = ("杀死", "杀掉", "处决", "了结", "终结", "结果", "送死", "下杀手",
+                              "补刀", "致命一击", "最后一击", "kill", "execute", "finish")
+            _spare_keywords = ("放过", "饶", "留命", "不杀", "停手", "算了", "收手", "放过他",
+                               "饶命", "spare", "mercy")
+            _action_lower = action.lower()
+
+            if any(k in _action_lower for k in _kill_keywords):
+                # 执行最后一击：将残血NPC敌人HP置0，走正常战斗胜利流程
+                _npc_names = _mercy_pause.get("npc_names", [])
+                _npc_ids = _mercy_pause.get("npc_ids", [])
+                enemies = state.get("enemies", [])
+                _killed = []
+                for e in enemies:
+                    if e.get("is_npc") and e.get("hp", 0) > 0:
+                        e["hp"] = 0
+                        _killed.append(e.get("name", "?"))
+                # 清除暂停状态和最后一击标志
+                state.pop("npc_mercy_pause", None)
+                state.pop("_npc_finish_blow", None)
+
+                # 走战斗胜利流程
+                char = state["character"]
+                total_exp = sum(e.get("exp_reward", 10) for e in enemies)
+                total_gold = sum(e.get("gold_reward", 5) for e in enemies)
+                char["gold"] += total_gold
+                state["kill_count"] += len(enemies)
+                combat_result = {
+                    "victory": True,
+                    "enemies_defeated": [e.get("name", "") for e in enemies],
+                    "combat_log": [f"💀 致命一击：{', '.join(_killed)}已被处决"],
+                    "exp_reward": total_exp,
+                    "gold_reward": total_gold,
+                    "drops": [],
+                }
+
+                # 记录NPC死亡 + 任务断裂处理
+                _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                _killed_npcs = self._record_npc_kills(state, _killed, killer=_killer)
+
+                # 经验/金币奖励
+                result = {
+                    "narrative": f"你举起了武器，对身受重伤的{'、'.join(_killed)}给出了致命一击。对方倒地不起，再无声息。",
+                    "combat_result": combat_result,
+                    "gold_gained": total_gold,
+                    "exp_gained": total_exp,
+                    "in_combat": False,
+                    "npcs_killed": _killed_npcs,
+                }
+                char["world_type"] = state.get("world_type", "fantasy")
+                growth_result = GrowthSystem.gain_exp(char, total_exp, state.get("growth_mode", "normal"))
+                if growth_result["leveled_up"]:
+                    result["leveled_up"] = True
+                    result["new_level"] = growth_result["new_level"]
+                    result["new_skills"] = growth_result.get("new_skills", [])
+
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                self._record_defeated(state, enemies)
+                self._record_history_and_save(state, action, result["narrative"], "combat_success", combat_result, result)
+                return result
+
+            elif any(k in _action_lower for k in _spare_keywords):
+                # 放过NPC：解除战斗状态，NPC保持残血存活
+                _npc_names = _mercy_pause.get("npc_names", [])
+                state.pop("npc_mercy_pause", None)
+                state.pop("_npc_finish_blow", None)
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                _spare_narrative = f"你收起了武器，放过了身受重伤的{'、'.join(_npc_names)}。对方瘫倒在地，生死未卜。"
+                self._record_history_and_save(state, action, _spare_narrative, "social_response", None, {"narrative": _spare_narrative})
+                return {
+                    "narrative": _spare_narrative,
+                    "in_combat": False,
+                    "npc_spared": _npc_names,
+                }
+            else:
+                # 其他行动：解除暂停状态，让用户行动正常处理（战斗状态保留，用户可继续战斗或做别的）
+                # 如果是攻击行动，设置 _npc_finish_blow 允许下一回合战斗击杀
+                _attack_keywords = ("攻击", "打", "继续战斗", "继续打", "出手", "动手", "attack")
+                if any(k in _action_lower for k in _attack_keywords):
+                    state["_npc_finish_blow"] = True  # 临时允许击杀
+                state.pop("npc_mercy_pause", None)
+
         # ── 扫荡模式检测 ──
         # 1) 战斗中 + 扫荡关键词 → 直接结算
         # 2) 战斗中 + 敌人远弱 → 自动扫荡
@@ -611,6 +700,9 @@ class DeathModeEngine:
         if _has_restore_intent:
             # 有恢复意图，跳过扫荡检测
             pass
+        elif in_combat and enemies and any(e.get("is_npc") for e in enemies):
+            # 坏人路线：敌人中有NPC时禁止扫荡，避免直接秒杀跳过残血怜悯环节
+            is_sweep = False
         elif in_combat and enemies and self._is_sweep_action(action):
             is_sweep = True
         elif in_combat and enemies and self._should_auto_sweep(state, enemies):
@@ -697,6 +789,12 @@ class DeathModeEngine:
                 # 记录已击败的特殊敌人（小怪不屏蔽，允许重复出现）
                 self._record_defeated(state, enemies)
 
+                # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡（只处理is_npc敌人）
+                _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies if e.get("is_npc")], killer=_killer)
+                if _killed_npcs:
+                    result["npcs_killed"] = _killed_npcs
+
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
                     clear_result = self.clear_dungeon_room()
@@ -720,9 +818,63 @@ class DeathModeEngine:
             char = state["character"]
             risk_level = "low"  # 扫荡默认生成低风险小怪
             # 优先用叙事中提到的敌人（spotted_enemies），否则随机生成
+            state["_current_action"] = action  # 临时存储，供敌人生成时判断坏人路线
             enemies_list = self._generate_enemies_with_spotted(state, risk_level)
+            state.pop("_current_action", None)
             state["enemies"] = enemies_list
             state["in_combat"] = True
+
+            # 坏人路线：NPC敌人不走扫荡，强制走逐回合（让残血怜悯暂停生效）
+            _has_npc_enemy = any(e.get("is_npc") for e in enemies_list)
+            if _has_npc_enemy:
+                # 不走扫荡，标记为非扫荡，让后面的逐回合逻辑处理
+                is_new_sweep = False
+                is_sweep = False
+                in_combat = True
+                # 直接走逐回合战斗
+                combat_result = self._combat_round(state, enemies_list, action_text=action, sender=sender)
+                result["combat_result"] = combat_result
+                alive_enemies = [e for e in enemies_list if e.get("hp", 0) > 0]
+                if not alive_enemies or combat_result.get("victory"):
+                    # 战斗胜利
+                    state["in_combat"] = False
+                    state["enemies"] = []
+                    state["spotted_enemies"] = []
+                    result["in_combat"] = False
+                    result["exp_gained"] = sum(e.get("exp_reward", 10) for e in enemies_list)
+                    result["gold_gained"] = sum(e.get("gold_reward", 5) for e in enemies_list)
+                    char["gold"] += result["gold_gained"]
+                    state["kill_count"] += len(enemies_list)
+                    self._record_defeated(state, enemies_list)
+                    _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                    _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies_list if e.get("is_npc")], killer=_killer)
+                    if _killed_npcs:
+                        result["npcs_killed"] = _killed_npcs
+                    growth_result = GrowthSystem.gain_exp(char, result["exp_gained"], state.get("growth_mode", "normal"))
+                    if growth_result["leveled_up"]:
+                        result["leveled_up"] = True
+                        result["new_level"] = growth_result["new_level"]
+                        result["new_skills"] = growth_result.get("new_skills", [])
+                    self._record_history_and_save(state, action, result.get("narrative", ""), "combat_success", combat_result, result)
+                    return result
+                elif state.get("npc_mercy_pause"):
+                    # NPC怜悯暂停
+                    result["in_combat"] = True
+                    result["enemies"] = alive_enemies
+                    _pause_info = state.get("npc_mercy_pause", {})
+                    _pause_names = "、".join(_pause_info.get("npc_names", [])) or "NPC"
+                    result["npc_mercy_pause"] = True
+                    result["narrative"] = (result.get("narrative", "") +
+                                          f"\n\n💔 {_pause_names}已身受重伤，倒地不起。是否给予致命一击？\n"
+                                          "回复「杀死/处决/了结」执行最后一击，或「放过」饶其一命。")
+                    self._record_history_and_save(state, action, result["narrative"], "combat_pause", combat_result, result)
+                    return result
+                else:
+                    # 战斗继续
+                    result["in_combat"] = True
+                    result["enemies"] = alive_enemies
+                    self._record_history_and_save(state, action, result.get("narrative", ""), "combat_ongoing", combat_result, result)
+                    return result
 
             sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender,
                                               stop_condition=self._parse_sweep_condition(action))
@@ -789,6 +941,12 @@ class DeathModeEngine:
                 # 记录已击败的特殊敌人（小怪不屏蔽）
                 self._record_defeated(state, enemies_list)
 
+                # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡
+                _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies_list if e.get("is_npc")], killer=_killer)
+                if _killed_npcs:
+                    result["npcs_killed"] = _killed_npcs
+
                 # ── 地下城：清除房间 ──
                 if state.get("in_dungeon"):
                     clear_result = self.clear_dungeon_room()
@@ -798,8 +956,21 @@ class DeathModeEngine:
                         if clear_result.get("loot"):
                             result["dungeon_loot"] = clear_result["loot"]
             else:
-                result["in_combat"] = True
-                result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
+                # 坏人路线：NPC怜悯暂停 → 不结算经验金币，保留战斗状态
+                if sweep_result.get("npc_mercy_pause") or state.get("npc_mercy_pause"):
+                    result["in_combat"] = True
+                    result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
+                    result["exp_gained"] = 0
+                    result["gold_gained"] = 0
+                    result["npc_mercy_pause"] = True
+                    _pause_info = state.get("npc_mercy_pause", {})
+                    _pause_names = "、".join(_pause_info.get("npc_names", [])) or "NPC"
+                    result["narrative"] = (sweep_result.get("narrative", "") +
+                                          f"\n\n💔 {_pause_names}已身受重伤，倒地不起。是否给予致命一击？\n"
+                                          "回复「杀死/处决/了结」执行最后一击，或「放过」饶其一命。")
+                else:
+                    result["in_combat"] = True
+                    result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
 
             self._log_sweep_action(action, result)
             self._save()
@@ -889,6 +1060,12 @@ class DeathModeEngine:
 
                 # 记录已击败的特殊敌人
                 self._record_defeated(state, _enemies_now)
+
+                # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡
+                _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in _enemies_now if e.get("is_npc")], killer=_killer)
+                if _killed_npcs:
+                    result["npcs_killed"] = _killed_npcs
 
                 # 地下城：清除房间
                 if state.get("in_dungeon"):
@@ -1156,9 +1333,18 @@ class DeathModeEngine:
                     state["enemies"] = []
                     state["spotted_enemies"] = []  # 清理已实体化的敌人
                     result["in_combat"] = False
+                    # 清理怜悯暂停状态（战斗已结束）
+                    state.pop("npc_mercy_pause", None)
+                    state.pop("_npc_finish_blow", None)
 
                     # 记录已击败的特殊敌人（小怪不屏蔽）
                     self._record_defeated(state, enemies)
+
+                    # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡
+                    _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                    _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies if e.get("is_npc")], killer=_killer)
+                    if _killed_npcs:
+                        result["npcs_killed"] = _killed_npcs
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1173,6 +1359,14 @@ class DeathModeEngine:
                     state["in_combat"] = True
                     result["in_combat"] = True
                     result["enemies"] = alive_enemies
+                    # 坏人路线：如果是NPC怜悯暂停，提示用户
+                    if combat_result.get("npc_mercy_pause") or state.get("npc_mercy_pause"):
+                        _pause_info = state.get("npc_mercy_pause", {})
+                        _pause_names = "、".join(_pause_info.get("npc_names", [])) or "NPC"
+                        result["npc_mercy_pause"] = True
+                        result["narrative"] = (result.get("narrative", "") +
+                                              f"\n\n💔 {_pause_names}已身受重伤，倒地不起。是否给予致命一击？\n"
+                                              "回复「杀死/处决/了结」执行最后一击，或「放过」饶其一命。")
 
         else:
             # ── 非战斗状态：正常处理选择 ──
@@ -1189,12 +1383,16 @@ class DeathModeEngine:
             # 战斗触发（进入战斗状态）
             if action_type_value == "combat" or (outcome_type.startswith("combat") and action_type_value != "rest"):
                 # 生成敌人列表：优先用叙事中提到的敌人（spotted_enemies），否则随机生成
+                state["_current_action"] = action  # 临时存储，供敌人生成时判断坏人路线
                 enemies_list = self._generate_enemies_with_spotted(state, risk_level)
+                state.pop("_current_action", None)
                 state["enemies"] = enemies_list
                 state["in_combat"] = True
 
                 # ── 扫荡模式：新战斗触发时，如果含扫荡关键词或敌人远弱 → 快速结算 ──
-                if self._is_sweep_action(action) or self._should_auto_sweep(state, enemies_list):
+                # 坏人路线：NPC敌人不走扫荡
+                _has_npc_enemy = any(e.get("is_npc") for e in enemies_list)
+                if not _has_npc_enemy and (self._is_sweep_action(action) or self._should_auto_sweep(state, enemies_list)):
                     sweep_result = self._quick_combat(state, enemies_list, action_text=action, sender=sender,
                                                       stop_condition=self._parse_sweep_condition(action))
                     result["combat_result"] = sweep_result
@@ -1254,6 +1452,12 @@ class DeathModeEngine:
 
                         # 记录已击败的特殊敌人（小怪不屏蔽）
                         self._record_defeated(state, enemies_list)
+
+                        # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡
+                        _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                        _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies_list if e.get("is_npc")], killer=_killer)
+                        if _killed_npcs:
+                            result["npcs_killed"] = _killed_npcs
                     else:
                         result["in_combat"] = True
                         result["enemies"] = [e for e in enemies_list if e.get("hp", 0) > 0]
@@ -1305,6 +1509,12 @@ class DeathModeEngine:
 
                     # 记录已击败的特殊敌人（小怪不屏蔽）
                     self._record_defeated(state, enemies_list)
+
+                    # 坏人路线：检查被击败的敌人是否是NPC，如果是则记录死亡
+                    _killer = state.get("user_character", {}).get("name", "用户") if sender == "user" else char.get("name", "AI")
+                    _killed_npcs = self._record_npc_kills(state, [e.get("name", "") for e in enemies_list if e.get("is_npc")], killer=_killer)
+                    if _killed_npcs:
+                        result["npcs_killed"] = _killed_npcs
 
                     # ── 地下城：清除房间 ──
                     if state.get("in_dungeon"):
@@ -1767,6 +1977,50 @@ class DeathModeEngine:
                 unique_list.append(_name_normalized)
         state["defeated_unique_enemies"] = unique_list[-50:]  # 保留最近50个特殊敌人
 
+    def _record_npc_kills(self, state: Dict, defeated_enemy_names: list, killer: str = "未知"):
+        """战斗胜利后，检查被击败的敌人是否匹配NPC，如果是则记录NPC死亡。
+        这解决了'坏人路线'的核心问题：杀NPC后NPC在剧情中仍然出现。
+        支持模糊匹配和动态注册（NPC不在npc_system中时自动创建）。
+        """
+        if not self.npc_system or not defeated_enemy_names:
+            return []
+
+        killed_npc_names = []
+        for enemy_name in defeated_enemy_names:
+            if not enemy_name:
+                continue
+            # 去除编号后缀（如"旅店老板1"→"旅店老板"）用于匹配
+            base_name = re.sub(r'\d+$', '', enemy_name).strip()
+            _matched = False
+            for npc in self.npc_system.npcs.values():
+                if not npc.alive:
+                    continue
+                _npc_lower = npc.name.lower()
+                _en_lower = enemy_name.lower()
+                _bn_lower = base_name.lower()
+                # 精确匹配、基础名匹配 或 包含匹配
+                if (_npc_lower == _en_lower or _npc_lower == _bn_lower
+                        or (_npc_lower and _npc_lower in _en_lower)
+                        or (_npc_lower and _npc_lower in _bn_lower)
+                        or (_en_lower and _en_lower in _npc_lower)):
+                    self.npc_system.kill_npc(npc.npc_id, f"被{killer}击杀", killer=killer)
+                    killed_npc_names.append(npc.name)
+                    try:
+                        from simlife.backend.quest_system import QuestSystem
+                        QuestSystem.on_npc_killed(state, npc.name)
+                    except Exception:
+                        pass
+                    _matched = True
+                    break
+            # 未匹配上已注册NPC的敌人一律视为普通怪物，不动态注册、不记录死亡。
+            # （敌人生成时已通过名称匹配给 is_npc 打标记，只有 is_npc=True 才会进入本方法）
+
+        if killed_npc_names:
+            state["npc_system"] = self.npc_system.to_dict()
+            state["npc_death_records"] = self.npc_system.death_records
+            print(f"[DeathMode] NPC死亡记录: {', '.join(killed_npc_names)}（凶手：{killer}）")
+        return killed_npc_names
+
     def trigger_chapter_transition(self, force: bool = False) -> Dict:
         """网页端"新篇章"按钮入口：手动触发章节衔接
         - 结局达成（pending_transition=True）：正常衔接，生成完整结局叙事
@@ -2164,6 +2418,47 @@ class DeathModeEngine:
                     # 用叙事中提到的名字覆盖
                     if name:
                         enemy["name"] = name if count == 1 else f"{name}{i+1}"
+                    # 坏人路线：敌人名匹配NPC → 标记 is_npc，残血时触发怜悯暂停
+                    if self.npc_system:
+                        _base_name = re.sub(r'\d+$', '', enemy["name"]).strip()
+                        for _n in self.npc_system.npcs.values():
+                            if not _n.alive:
+                                continue
+                            # 精确匹配 或 包含匹配（"药剂师莱恩"包含"莱恩"，或反之）
+                            _en_lower = enemy["name"].lower()
+                            _bn_lower = _base_name.lower()
+                            _npc_lower = _n.name.lower()
+                            if (_npc_lower == _en_lower or _npc_lower == _bn_lower
+                                    or (_npc_lower and _npc_lower in _en_lower)
+                                    or (_npc_lower and _npc_lower in _bn_lower)
+                                    or (_en_lower and _en_lower in _npc_lower)):
+                                enemy["is_npc"] = True
+                                enemy["npc_id"] = _n.npc_id
+                                # 用NPC的真实名字（避免"药剂师莱恩"和"莱恩"不一致）
+                                enemy["name"] = _n.name if count == 1 else f"{_n.name}{i+1}"
+                                # NPC作为敌人通常更强（有名字的角色）
+                                enemy["max_hp"] = int(enemy.get("max_hp", 50) * 1.5)
+                                enemy["hp"] = enemy["max_hp"]
+                                break
+
+                    # 坏人路线兜底：NPC不在npc_system中，但从action_text可判断是攻击有名字的角色
+                    if not enemy.get("is_npc"):
+                        _action_text = state.get("_current_action", "") or ""
+                        _attack_kw = ("杀死", "杀掉", "攻击", "袭击", "干掉", "除掉", "了结",
+                                      "处决", "抢劫", "击杀", "kill", "attack", "murder")
+                        _monster_kw = ("史莱姆", "哥布林", "守卫", "卫兵", "骷髅", "蜘蛛", "蝙蝠",
+                                       "狼", "元素", "蘑菇", "水晶", "藤蔓", "slime", "goblin",
+                                       "skeleton", "guard", "soldier", "wolf", "elemental")
+                        _bn_lower = _base_name.lower()
+                        _is_monster_name = any(k in _bn_lower for k in _monster_kw)
+                        _is_attack_action = any(k in _action_text.lower() for k in _attack_kw)
+                        _name_in_action = _base_name and _base_name in _action_text
+                        # 用户行动含"杀死XX"且敌人名XX不是怪物名 → 标记为NPC
+                        if _is_attack_action and _name_in_action and not _is_monster_name:
+                            enemy["is_npc"] = True
+                            enemy["npc_id"] = ""  # 动态注册时填充
+                            enemy["max_hp"] = int(enemy.get("max_hp", 50) * 1.5)
+                            enemy["hp"] = enemy["max_hp"]
                     enemies.append(enemy)
             if enemies:
                 # 清理 spotted_enemies（已实体化）
@@ -2551,6 +2846,32 @@ class DeathModeEngine:
                     _check_drop(target, attacker.get("stats", {}))
                     continue
 
+                # ── 消耗品使用（药水/恢复品）：回HP/MP，不攻击，从背包移除 ──
+                _consumable_name = cmd.get(f"{role}_use_consumable")
+                if _consumable_name:
+                    shared_inv = state.get("shared_inventory", [])
+                    _used_item = None
+                    for _idx, _it in enumerate(shared_inv):
+                        if isinstance(_it, dict) and _it.get("type") == "consumable" and _it.get("name") == _consumable_name:
+                            _used_item = shared_inv.pop(_idx)
+                            break
+                    if _used_item:
+                        _heal_hp = _used_item.get("heal_hp", 0)
+                        _heal_mp = _used_item.get("heal_mp", 0)
+                        if _heal_hp:
+                            _max_hp = attacker.get("max_hp", 50)
+                            attacker["hp"] = min(_max_hp, attacker.get("hp", 0) + _heal_hp)
+                        if _heal_mp:
+                            _max_mp = attacker.get("max_mp", 20)
+                            attacker["mp"] = min(_max_mp, attacker.get("mp", 0) + _heal_mp)
+                        _log_parts = []
+                        if _heal_hp:
+                            _log_parts.append(f"+{_heal_hp}HP")
+                        if _heal_mp:
+                            _log_parts.append(f"+{_heal_mp}MP")
+                        round_log.append(f"🧪 {attacker.get('name','?')}使用【{_consumable_name}】{'·'.join(_log_parts)}")
+                        continue
+
                 # ── 辅助技能（heal/buff/utility）：走 resolve_skill，不攻击敌人 ──
                 _support_skill_id = cmd.get(f"{role}_support_skill")
                 if _support_skill_id:
@@ -2831,6 +3152,19 @@ class DeathModeEngine:
                 total_combat_log.append(f"⚠️ HP危险（焕灵{int(ai_hp_ratio*100)}%，yount{int(user_hp_ratio*100)}%），战斗中断")
                 break
 
+            # ── 坏人路线·NPC怜悯暂停：有名字的NPC敌人HP≤20%时停止战斗 ──
+            # 用户需明确说"杀死/处决/了结"才执行最后一击，避免误杀剧情NPC
+            _npc_low_hp = [e for e in enemies if e.get("is_npc") and e.get("hp", 0) > 0
+                           and e.get("hp", 0) / max(1, e.get("max_hp", 1)) <= 0.2]
+            if _npc_low_hp and not state.get("_npc_finish_blow"):
+                _npc_names = "、".join(e.get("name", "?") for e in _npc_low_hp)
+                total_combat_log.append(f"💔 {_npc_names}已身受重伤，摇摇欲坠（HP≤20%）——是否给予致命一击？")
+                state["npc_mercy_pause"] = {
+                    "npc_names": [e.get("name", "") for e in _npc_low_hp],
+                    "npc_ids": [e.get("npc_id", "") for e in _npc_low_hp],
+                }
+                break
+
             # ── 记录本子回合（带回合标记） ──
             if round_log:
                 total_combat_log.append(f"[第{sub_round}轮] " + "；".join(round_log))
@@ -2859,6 +3193,7 @@ class DeathModeEngine:
             "player_died": False,
             "combat_log": total_combat_log,
             "drops": drops,
+            "npc_mercy_pause": bool(state.get("npc_mercy_pause")),
         }
 
     def _quick_combat(self, state: Dict, enemies: list, action_text: str = "",
@@ -2978,6 +3313,14 @@ class DeathModeEngine:
             alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
             if not alive_enemies:
                 stopped_at = "enemies_defeated"
+                break
+
+            # ── 坏人路线：NPC怜悯暂停检查 ──
+            if state.get("npc_mercy_pause"):
+                stopped_at = "npc_mercy"
+                _pause_names = "、".join(state["npc_mercy_pause"].get("npc_names", []))
+                key_events.append(f"NPC怜悯暂停：{_pause_names}已身受重伤")
+                all_combat_logs.append(f"💔 {_pause_names}已身受重伤，摇摇欲坠（HP≤20%）——是否给予致命一击？")
                 break
 
             # ── HP阈值检查：任一角色HP<20%时自动停止扫荡，切换到逐回合模式 ──
@@ -3167,6 +3510,10 @@ class DeathModeEngine:
                 narrative = f"经过{rounds}回合的战斗，双方魔力耗尽，普攻难以造成有效伤害，{_alive_names}仍未被击败。需要恢复魔力后再战。"
             else:
                 narrative = f"经过{rounds}回合的战斗，伤害输出持续不足，难以击破{_alive_names}的防御，扫荡被迫中止。建议调整策略或恢复状态后再战。"
+        elif not victory and stopped_at == "npc_mercy":
+            # 坏人路线：NPC怜悯暂停 → 不结算经验金币
+            _alive_names = "、".join([e.get("name", "?") for e in enemies if e.get("hp", 0) > 0])
+            narrative = f"经过{rounds}回合的战斗，{_alive_names}已身受重伤，摇摇欲坠。是否给予致命一击？"
 
         # ── 精简战斗日志（只保留关键事件+首尾回合）──
         concise_log = []
@@ -3184,6 +3531,8 @@ class DeathModeEngine:
                 concise_log.append(f"⚡ 扫荡中止 — 共{rounds}回合，伤害不足")
             elif stopped_at == "low_hp":
                 concise_log.append(f"⚡ 扫荡中止 — 共{rounds}回合，HP危险")
+            elif stopped_at == "npc_mercy":
+                concise_log.append(f"💔 NPC残血暂停 — 共{rounds}回合，等待致命一击")
             else:
                 concise_log.append(f"⚡ 扫荡结束 — 共{rounds}回合")
 
@@ -3201,6 +3550,7 @@ class DeathModeEngine:
             "key_events": key_events[:8],
             "narrative": narrative,
             "stopped_at": stopped_at,
+            "npc_mercy_pause": stopped_at == "npc_mercy",
         }
 
     @staticmethod
@@ -3235,10 +3585,14 @@ class DeathModeEngine:
         """判断是否应该自动触发扫荡（直接计算到战斗结束）
         条件：非BOSS/非精英怪 → 直接扫荡（省token）
         BOSS/精英怪 → 逐回合叙事
+        坏人路线：NPC敌人 → 不扫荡（需要残血怜悯暂停）
         """
         for enemy in enemies:
             # BOSS和精英怪走逐回合叙事
             if enemy.get("type") == "boss" or enemy.get("type") == "elite":
+                return False
+            # 坏人路线：NPC敌人不走扫荡
+            if enemy.get("is_npc"):
                 return False
 
         # 普通怪直接扫荡
@@ -3266,6 +3620,8 @@ class DeathModeEngine:
             "tactic": None,
             "initiative_order": None,  # 口令指定的出手顺序
             "tank_role": None,  # 坦克角色: "ai" / "user" / None
+            "ai_use_consumable": None,  # AI角色使用的消耗品名
+            "user_use_consumable": None,  # 用户角色使用的消耗品名
         }
 
         # ── 先手/出手顺序 ──
@@ -3370,7 +3726,7 @@ class DeathModeEngine:
 
         # ── 攻击类型 ──
         magic_keywords = ("魔法", "法术", "术", "魔攻", "火球", "冰", "雷", "闪电", "风刃",
-                          "陨石", "毒", "暗影", "神圣", "治愈", "治疗")
+                          "陨石", "毒", "暗影", "神圣")
         if any(k in t for k in magic_keywords):
             # 判断是谁用魔法
             if mentions_ai and not mentions_user:
@@ -3412,6 +3768,38 @@ class DeathModeEngine:
         # 有明确角色子句时按角色匹配，否则用全文
         _ai_search = " ".join(_ai_text + _general_text) if (_ai_text or _user_text) else t
         _user_search = " ".join(_user_text + _general_text) if (_ai_text or _user_text) else t
+
+        # ── 消耗品使用识别（药水/恢复品等）──
+        use_item_keywords = ("使用", "喝", "服用", "嗑", "吃", "灌", "吞")
+        if any(k in t for k in use_item_keywords):
+            shared_inv = state.get("shared_inventory", [])
+            consumables = [it for it in shared_inv if isinstance(it, dict) and it.get("type") == "consumable"]
+            if consumables:
+                def _match_consumable(search_text, cons_list):
+                    for c in cons_list:
+                        if c.get("name") and c["name"] in search_text:
+                            return c
+                    for c in cons_list:
+                        c_name = c.get("name", "")
+                        if c_name:
+                            _core = c_name
+                            for suffix in ("药水", "药剂", "药丸", "药膏"):
+                                _core = _core.replace(suffix, "")
+                            if _core and len(_core) >= 2 and _core in search_text:
+                                return c
+                    return None
+                if mentions_ai or (sender == "ai" and mentions_self):
+                    _mc = _match_consumable(_ai_search, consumables)
+                    if _mc:
+                        result["ai_use_consumable"] = _mc.get("name")
+                if mentions_self or (sender == "user" and not mentions_ai):
+                    _mc = _match_consumable(_user_search, consumables)
+                    if _mc:
+                        result["user_use_consumable"] = _mc.get("name")
+                if not result["ai_use_consumable"] and not result["user_use_consumable"]:
+                    _mc = _match_consumable(t, consumables)
+                    if _mc:
+                        result["user_use_consumable"] = _mc.get("name")
 
         # AI角色技能匹配
         ai_skills = ai_char.get("skills", [])

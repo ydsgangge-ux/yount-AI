@@ -823,3 +823,58 @@ class QuestSystem:
         # 按 series_order 排序
         result.sort(key=lambda x: x.get("series_order", 0))
         return result
+
+    # ── 坏人路线：NPC被杀时处理任务断裂 ──
+    @classmethod
+    def on_npc_killed(cls, state: Dict, npc_name: str) -> List[str]:
+        """当NPC被玩家杀死时，处理相关任务：
+        1. talk_npc类型目标涉及该NPC的进行中任务 → 标记失败
+        2. 从待接委托中移除涉及该NPC的offer
+        返回受影响的任务标题列表。
+        """
+        cls._ensure_state(state)
+        affected = []
+        npc_lower = npc_name.lower()
+
+        # 1. 进行中任务：talk_npc目标涉及该NPC → 失败
+        active = state["quests"]["active"]
+        for quest in active:
+            if quest.get("status") != QUEST_ACTIVE:
+                continue
+            for obj in quest.get("objectives", []):
+                if obj.get("type") == "talk_npc" and obj.get("progress", 0) < obj.get("count", 1):
+                    kw = str(obj.get("target_keyword", "")).lower()
+                    if kw and (kw in npc_lower or npc_lower in kw):
+                        quest["status"] = QUEST_FAILED
+                        affected.append(f"{quest['title']}(NPC已死，任务失败)")
+                        break
+
+        # 2. 待接委托：涉及该NPC的offer → 移除
+        offers = state["quests"].get("available_offers", [])
+        before = len(offers)
+        state["quests"]["available_offers"] = [
+            o for o in offers
+            if not any(
+                str(o.get("quest_giver", "")).lower() in npc_lower or npc_lower in str(o.get("quest_giver", "")).lower()
+                for _ in [1]
+            )
+        ]
+        # 检查offer的objectives中是否涉及该NPC
+        remaining_offers = []
+        for o in state["quests"]["available_offers"]:
+            has_dead_npc = False
+            for obj in o.get("objectives", []):
+                if obj.get("type") == "talk_npc":
+                    kw = str(obj.get("target_keyword", "")).lower()
+                    if kw and (kw in npc_lower or npc_lower in kw):
+                        has_dead_npc = True
+                        break
+            if not has_dead_npc:
+                remaining_offers.append(o)
+            else:
+                affected.append(f"委托『{o.get('title', '?')}』(NPC已死，委托消失)")
+        state["quests"]["available_offers"] = remaining_offers
+
+        if affected:
+            print(f"[QuestSystem] NPC『{npc_name}』被杀，影响任务: {', '.join(affected)}")
+        return affected

@@ -125,9 +125,23 @@ class GrowthSystem:
             return False, f"属性点不足，剩余{available}点"
 
         stats = character.get("stats", {})
+        _hp_bonus = 0
+        _mp_bonus = 0
         for k, v in allocations.items():
             if k in valid_stats and k in stats and v > 0:
                 stats[k] += v
+                # vitality 增加max_hp，intelligence 增加 max_mp
+                if k == "vitality":
+                    _hp_bonus += v * 15
+                elif k == "intelligence":
+                    _mp_bonus += v * 10
+        # 应用体质/智力带来的max_hp/max_mp提升，并同步当前HP/MP
+        if _hp_bonus:
+            character["max_hp"] = character.get("max_hp", 0) + _hp_bonus
+            character["hp"] = min(character.get("max_hp", 0), character.get("hp", 0) + _hp_bonus)
+        if _mp_bonus:
+            character["max_mp"] = character.get("max_mp", 0) + _mp_bonus
+            character["mp"] = min(character.get("max_mp", 0), character.get("mp", 0) + _mp_bonus)
 
         character["stat_points"] = available - total_request
         return True, f"成功分配{total_request}点属性"

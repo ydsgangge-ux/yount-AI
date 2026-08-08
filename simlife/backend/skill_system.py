@@ -1017,9 +1017,6 @@ class SkillSystem:
         elif effect_type == EffectType.HEAL:
             total_heal = 0
             for t in target_list:
-                # 治疗量基于智力
-                heal_stat = caster.get("stats", {}).get("intelligence", 5)
-                heal_amount = int(heal_stat * 3 * effect.value)
                 # 如果是MP恢复（通过stat="mp"标记）
                 if effect.stat == "mp":
                     mp_recover = int(t.get("max_mp", 50) * effect.value)
@@ -1027,7 +1024,10 @@ class SkillSystem:
                     result["log"].append(f"恢复{t.get('name','?')}{mp_recover}MP")
                     total_heal += mp_recover
                 else:
+                    # HP治疗：基于目标max_hp百分比 + 智力加成
                     max_hp = t.get("max_hp", 50)
+                    heal_stat = caster.get("stats", {}).get("intelligence", 5)
+                    heal_amount = int(max_hp * effect.value * (1 + heal_stat * 0.02))
                     t["hp"] = min(max_hp, t.get("hp", 0) + heal_amount)
                     total_heal += heal_amount
                     result["log"].append(f"治疗{t.get('name','?')}{heal_amount}点HP")
