@@ -2744,7 +2744,10 @@ class DeathModeEngine:
             for e in enemies if e.get("hp", 0) > 0
         )
         # 实力悬殊（我方碾压）→ 少打几轮快速结束；势均力敌/劣势 → 多打几轮有来有回
-        if _party_power >= _enemy_power * 2.0:
+        # 指定具体技能时强制单回合，确保精确执行用户指令
+        if cmd.get("has_specific_skill", False):
+            max_sub_rounds = 1
+        elif _party_power >= _enemy_power * 2.0:
             max_sub_rounds = 1
         elif _party_power >= _enemy_power * 1.3:
             max_sub_rounds = 2
@@ -3698,7 +3701,8 @@ class DeathModeEngine:
         mentions_user = any(k in t for k in user_name_kw)
         mentions_both = any(k in t for k in ("一起", "合力", "共同", "联手", "合击", "配合"))
         # "我"在口令中：user发的"我"=用户，ai发的"我"=AI
-        mentions_self = "我" in t
+        # sender="user"时，用户用自己的名字提到自己也算 mentions_self
+        mentions_self = "我" in t or (sender == "user" and user_name and user_name in t)
 
         if mentions_both:
             # 明确说了"一起"→两人都行动
@@ -3814,6 +3818,7 @@ class DeathModeEngine:
         for skill_id in ai_skills:
             skill = SkillSystem.get_skill(skill_id)
             if skill and skill.name in _ai_search:
+                result["has_specific_skill"] = True
                 if skill.type in ("heal", "buff", "utility"):
                     # 辅助技能：走 resolve_skill 路径，不当攻击用
                     mp_cost = skill.mp_cost
@@ -3840,6 +3845,7 @@ class DeathModeEngine:
         for skill_id in user_skills:
             skill = SkillSystem.get_skill(skill_id)
             if skill and skill.name in _user_search:
+                result["has_specific_skill"] = True
                 if skill.type in ("heal", "buff", "utility"):
                     # 辅助技能：走 resolve_skill 路径，不当攻击用
                     mp_cost = skill.mp_cost
@@ -3901,10 +3907,23 @@ class DeathModeEngine:
                             break
                 break
 
-        # ── 自动选择技能（用户未指定技能时，自动使用已学技能）──
-        # 优先级：用户口令明确指定 > 自动选择已学技能 > 普通攻击
+        # ── 智能自动选择技能（用户未指定技能时）──
+        # 优先级：用户口令明确指定 > 智能选择（治疗/辅助优先保命，输出按效率+随机）> 普通攻击
+        # 收集所有友军（AI角色、用户角色、队友），用于判断是否需要治疗
+        _all_allies = []
+        if ai_char.get("hp", 0) > 0:
+            _all_allies.append(ai_char)
+        if user_char.get("hp", 0) > 0:
+            _all_allies.append(user_char)
+        for _pm in state.get("party_members", []):
+            if _pm.get("is_alive", True) and _pm.get("hp", 0) > 0:
+                _all_allies.append(_pm)
+        _enemy_count = sum(1 for e in enemies if e.get("hp", 0) > 0)
+
         for role_name, role_char in [("ai", ai_char), ("user", user_char)]:
             if result.get(f"{role_name}_skill"):  # 用户口令已指定技能，跳过
+                continue
+            if result.get(f"{role_name}_support_skill"):  # 已选辅助技能，跳过
                 continue
             if role_char.get("hp", 0) <= 0:
                 continue
@@ -3912,22 +3931,102 @@ class DeathModeEngine:
             if not learned:
                 continue
             mp = role_char.get("mp", 0)
-            # 筛选有MP可用的伤害技能
-            usable = []
+            max_mp = role_char.get("max_mp", 1) or 1
+            max_hp = role_char.get("max_hp", 1) or 1
+            hp_pct = role_char.get("hp", 0) / max_hp
+
+            # 判断是否为治疗/辅助职业：class_id=cleric 或技能列表中含heal类技能
+            _is_support = (role_char.get("class_id") == "cleric"
+                           or role_char.get("class_name", "") in ("牧师", "德鲁伊", "祭司", "萨满"))
+
+            # 分类技能
+            _dmg_skills = []    # 伤害类
+            _heal_skills = []   # 治疗类
+            _buff_skills = []   # 增益类
             for sid in learned:
                 sk = SkillSystem.get_skill(sid)
-                if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
-                    usable.append(sk)
-            if not usable:
-                continue
-            # 随机选一个技能
-            sk = random.choice(usable)
-            is_magic = sk.type == "magic"
-            result[f"{role_name}_is_magic"] = is_magic
-            result[f"{role_name}_skill_mult"] = sk.effects[0].value if sk.effects else 1.0
-            result[f"{role_name}_skill"] = sk.id
-            # 消耗MP
-            role_char["mp"] = mp - sk.mp_cost
+                if not sk or sk.mp_cost > mp:
+                    continue
+                if sk.type in ("physical", "magic"):
+                    _dmg_skills.append(sk)
+                elif sk.type == "heal":
+                    _heal_skills.append(sk)
+                elif sk.type == "buff":
+                    _buff_skills.append(sk)
+
+            _chosen = None  # 最终选中的Skill对象
+
+            # ── 策略1：治疗/辅助职业优先保命 ──
+            if _is_support:
+                # 自己或队友有残血(<60%)且能用治疗技能 → 优先治疗
+                _needs_heal = any(
+                    (a.get("hp", 0) / (a.get("max_hp", 1) or 1)) < 0.6
+                    for a in _all_allies
+                )
+                if _needs_heal and _heal_skills:
+                    # 选治疗量最高的（按effect.value）
+                    _heal_skills.sort(
+                        key=lambda s: max((e.value for e in s.effects if e.type == "heal"), default=0),
+                        reverse=True
+                    )
+                    _chosen = _heal_skills[0]
+                    # 走辅助技能路径（resolve_skill），不当攻击用
+                    result[f"{role_name}_support_skill"] = _chosen.id
+                    role_char["mp"] = mp - _chosen.mp_cost
+                    continue
+                # HP健康但有buff技能且队友未满状态 → 50%概率上buff（不要每次都buff）
+                if _buff_skills and not _needs_heal and random.random() < 0.5:
+                    _chosen = _buff_skills[0]
+                    result[f"{role_name}_support_skill"] = _chosen.id
+                    role_char["mp"] = mp - _chosen.mp_cost
+                    continue
+
+            # ── 策略2：输出技能智能选择 ──
+            if _dmg_skills:
+                # MP紧张（<20%）→ 优先低消耗技能，留MP给关键时刻
+                if mp / max_mp < 0.2:
+                    _dmg_skills.sort(key=lambda s: s.mp_cost)
+                    # 80%概率用最低消耗，20%概率普攻省MP
+                    if random.random() < 0.8:
+                        _chosen = _dmg_skills[0]
+                # 多敌人(≥2)且自己HP不紧张 → 优先AOE技能
+                elif _enemy_count >= 2 and hp_pct > 0.3:
+                    _aoe = [s for s in _dmg_skills
+                            if any(e.target == "all_enemies" for e in s.effects)]
+                    if _aoe:
+                        # 按倍率排序选最高，加20%随机性
+                        _aoe.sort(key=lambda s: s.effects[0].value if s.effects else 1.0, reverse=True)
+                        _chosen = _aoe[0] if random.random() < 0.8 else random.choice(_aoe)
+                # 残血(<30%) → 优先带吸血/护盾的技能保命
+                elif hp_pct < 0.3:
+                    _survival = [s for s in _dmg_skills
+                                 if any(e.type in ("life_steal", "heal") for e in s.effects)]
+                    if _survival:
+                        _chosen = random.choice(_survival)
+
+                # 默认：按伤害倍率/MP效率加权随机（不每次都用最强，避免单调）
+                if not _chosen:
+                    def _score(s):
+                        mult = s.effects[0].value if s.effects else 1.0
+                        # 效率 = 倍率 / (MP消耗+1)，MP越低效率越高
+                        return mult / (s.mp_cost + 1)
+                    _dmg_skills.sort(key=_score, reverse=True)
+                    # 70%选Top1，20%选Top2，10%随机
+                    _r = random.random()
+                    if _r < 0.7 and _dmg_skills:
+                        _chosen = _dmg_skills[0]
+                    elif _r < 0.9 and len(_dmg_skills) > 1:
+                        _chosen = _dmg_skills[1]
+                    elif _dmg_skills:
+                        _chosen = random.choice(_dmg_skills)
+
+            # 应用选中的技能
+            if _chosen:
+                is_magic = _chosen.type == "magic"
+                result[f"{role_name}_is_magic"] = is_magic
+                result[f"{role_name}_skill_mult"] = _chosen.effects[0].value if _chosen.effects else 1.0
+                result[f"{role_name}_skill"] = _chosen.id
+                role_char["mp"] = mp - _chosen.mp_cost
 
         return result
 
