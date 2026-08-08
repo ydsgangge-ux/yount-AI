@@ -821,6 +821,8 @@ const DeathModeUI = {
       game_start:   { icon: '⚔️', color: '#58a6ff', label: '冒险开始' },
       scene:        { icon: '📖', color: '#8b949e', label: '场景' },
       action:       { icon: '🎯', color: '#c9d1d9', label: '行动' },
+      combat_round: { icon: '⚔️', color: '#d29922', label: '战斗' },
+      death_pending:{ icon: '☠️', color: '#f85149', label: '生死' },
       move:         { icon: '🗺️', color: '#3fb950', label: '移动' },
       npc_interact: { icon: '💬', color: '#d29922', label: 'NPC交互' },
     };
@@ -841,9 +843,16 @@ const DeathModeUI = {
           return `<div style="font-size:11px;color:#8b949e;padding:2px 0;">→ ${c.text} <span style="color:${riskColor};font-size:10px;">${c.risk||''}</span></div>`;
         }).join('')}</div>` : ''}`;
     }
-    else if (type === 'action') {
-      const actionLabel = d.action || '未知行动';
+    else if (type === 'action' || type === 'combat_round' || type === 'death_pending') {
+      const actionLabel = d.action || (type === 'combat_round' ? '战斗回合' : (type === 'death_pending' ? '生死抉择' : '未知行动'));
       const outcome = d.outcome || '';
+
+      // death_pending 类型：显示临终遗言
+      if (type === 'death_pending') {
+        content = `<div style="color:#f85149;font-size:13px;font-weight:600;">☠️ ${d.name || '角色'} 阵亡</div>
+          <div style="font-size:12px;color:#8b949e;margin-top:2px;">死因：${this._replaceYou(d.cause || '')}</div>
+          ${d.last_words ? `<div style="font-size:12px;color:#d29922;font-style:italic;margin-top:4px;padding:6px;background:#2d0d0d;border-radius:4px;">「${this._replaceYou(d.last_words)}」</div>` : ''}`;
+      }
 
       // 战斗结果
       let combatHtml = '';
@@ -935,10 +944,12 @@ const DeathModeUI = {
         </div>`;
       }
 
-      content = `
-        <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
-        ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.narrative)}</div>` : ''}
-        ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
+      if (!content) {
+        content = `
+          <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
+          ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.narrative)}</div>` : ''}
+          ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
+      }
     }
     else if (type === 'move') {
       content = `<div style="color:#3fb950;">🗺️ 从 ${d.from} 前往 ${d.to}</div>

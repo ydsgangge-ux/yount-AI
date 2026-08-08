@@ -1957,6 +1957,14 @@ class DeathModeEngine:
         else:
             result["next_scene"] = False
 
+        # 将 combat_result 映射为前端期望的 combat 字段
+        if result.get("combat_result") and not result.get("combat"):
+            _cr = result["combat_result"]
+            result["combat"] = {
+                "victory": _cr.get("victory", False),
+                "enemy_names": _cr.get("enemies_defeated", []),
+                "combat_log": _cr.get("combat_log", []),
+            }
         self._log_action("combat_round", result)
         self._save()
 
