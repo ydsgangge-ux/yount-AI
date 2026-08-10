@@ -1103,6 +1103,51 @@ class DeathModeEngine:
             except Exception:
                 pass
 
+        # ── 离开区域的后端兜底逻辑 ──
+        # LLM经常在用户说"离开"时只生成叙事而不设置new_location，导致位置不变
+        # 后端检测到"离开"关键词且LLM未移动时，自动接管并移动到相邻区域
+        try:
+            _action = (action or "").strip()
+            _cur_loc = state.get("story", {}).get("current_location", "")
+            _leave_keywords = ("离开", "离去", "出城", "出镇", "出村", "北上", "南下", "东行", "西行", "前往", "去", "出发", "启程", "上路")
+            _is_leave_action = any(kw in _action for kw in _leave_keywords)
+
+            if _is_leave_action and _cur_loc and self.world_map:
+                # 检查LLM是否真正移动了位置（new_location非空且不等于当前地点）
+                _llm_moved = bool(new_location and isinstance(new_location, str)
+                                  and new_location.strip() and new_location.strip() != _cur_loc)
+                if not _llm_moved:
+                    # LLM没有移动 → 后端自动接管
+                    _current_wm_region = self.world_map.get_current_region()
+                    if _current_wm_region:
+                        _adjacent = self.world_map.get_adjacent_regions()
+                        if _adjacent:
+                            # 优先选野外区域，其次 dungeon，最后任意
+                            _target = None
+                            for r in _adjacent:
+                                if r.region_type == "wild":
+                                    _target = r
+                                    break
+                            if not _target:
+                                for r in _adjacent:
+                                    if r.region_type != "town":
+                                        _target = r
+                                        break
+                            if not _target:
+                                _target = _adjacent[0]
+                            # 执行移动
+                            self.world_map.current_region_id = _target.region_id
+                            _target.explored = True
+                            state["story"]["current_location"] = _target.name
+                            state["story"]["scene_description"] = _target.description
+                            print(f"[DeathMode] LLM未移动，后端自动接管：{_cur_loc} → {_target.name}")
+                            # 更新叙事（添加一段到达描述）
+                            _arrival_note = f"\n\n两人策马前行，{_cur_loc}的轮廓在身后渐渐模糊。前方出现了新的景象——{_target.description}"
+                            narrative += _arrival_note
+                            agent_result["narrative"] = narrative
+        except Exception as e:
+            print(f"[DeathMode] 离开区域检测异常: {e}")
+
         # 任务进度：与NPC对话触发（从用户行动和叙事文本中提取NPC名）
         try:
             _talk_keywords = ("对话", "找", "问", "打听", "聊天", "交谈", "拜访", "见面",
