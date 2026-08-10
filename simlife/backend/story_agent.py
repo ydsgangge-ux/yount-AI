@@ -510,6 +510,33 @@ class StoryAgent:
                 _defeated = "、".join(_last["combat_result"].get("enemies_defeated", [])) or "所有敌人"
                 history_ctx = f"⚠️【重要·上一回合战斗结果】{_defeated} 已在上一回合被全部击败并死亡。叙事中绝不能让这些已死亡的敌人再次出现或还活着，应描述战后的场景（清理战场、休整、推进剧情、引出新威胁）。\n\n" + history_ctx
 
+        # ── 重复行动检测：连续3次做同一类事 → 强制收尾 ──
+        repeat_action_hint = ""
+        try:
+            _actions_in_history = [h.get("action", "") for h in recent_history if h.get("action")]
+            _current_action = (action or "").strip()
+            if len(_actions_in_history) >= 3 and _current_action:
+                # 取当前行动的前几个字符作为关键词（如"继续封印"→"封印"）
+                import re
+                _current_keywords = re.findall(r'[\u4e00-\u9fff]{2,}', _current_action)  # 提取中文词
+                _similar_count = 0
+                for _past in _actions_in_history[-3:]:
+                    _past_keywords = set(re.findall(r'[\u4e00-\u9fff]{2,}', _past))
+                    if _current_keywords and _past_keywords:
+                        # 检查是否有共同的关键词
+                        _common = set(_current_keywords) & _past_keywords
+                        if _common:
+                            _similar_count += 1
+                if _similar_count >= 2:
+                    repeat_action_hint = (
+                        "\n⚠️【重复行动警告·关键】用户已经连续{0}次做同一类行动（{1}）。"
+                        "这条剧情线必须在此回合自然收尾，不能再留悬念，不能再生成新的转折或意外。"
+                        "叙事应直接描述行动的结果——成功或失败，然后让场景切换或推进到下一步。"
+                        "绝不能再生成类似'但暗处还有东西在动'、'似乎还未完全解决'、'某种力量仍在涌动'等延续性描述。\n"
+                    ).format(_similar_count + 1, "、".join(_current_keywords[:2]))
+        except Exception:
+            pass
+
         # 未解决的剧情钩子
         hooks = state.get("story", {}).get("unresolved_hooks", [])
         hooks_ctx = ""
@@ -703,7 +730,7 @@ class StoryAgent:
 
 {("【当前任务】" + chr(10) + quest_summary) if quest_summary else ""}
 【已有待接任务委托】{offers_count} 个
-{ending_hint}{ending_region_hint}{region_completed_hint}
+{ending_hint}{ending_region_hint}{region_completed_hint}{repeat_action_hint}
 【设计原则】
 1. 叙事要简短有力（3-5句话），描述行动的结果
 2. 不要替数值系统做判定（不要说"你赢了"或"你死了"），只描述过程
