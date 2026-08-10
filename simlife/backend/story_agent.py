@@ -367,6 +367,19 @@ class StoryAgent:
         except Exception:
             pass
 
+        # ── 区域完成状态约束 ──
+        region_completed_hint = ""
+        try:
+            wm_data = state.get("world_map", {})
+            wm_regions = wm_data.get("regions", {})
+            cur_region_id = wm_data.get("current_region_id", "")
+            if cur_region_id and cur_region_id in wm_regions:
+                rdata = wm_regions[cur_region_id]
+                if rdata.get("completed", False):
+                    region_completed_hint = f"\n【区域已完成】当前区域『{rdata.get('name', '')}』的探索已经完成。场景不应在此区域生成新的冲突或任务，叙事应自然收尾并引导角色前往其他区域。\n"
+        except Exception:
+            pass
+
         prompt = f"""你是死亡模式人生模拟器的叙事Agent。请为角色生成下一段场景。
 
 【世界观】
@@ -387,6 +400,8 @@ class StoryAgent:
 
 {ending_region_hint}
 
+{region_completed_hint}
+
 【设计原则】
 1. 场景必须有明确的地点名称，地点要在世界观范围内，不能随意跳跃
 2. 场景要有紧张感和危险可能，但不一定每场都战斗
@@ -402,6 +417,7 @@ class StoryAgent:
 11. 如果地图信息中有NPC，场景中可以包含与NPC互动的选项
 12. 如果地图信息中有怪物，场景中可以包含战斗或躲避的选项
 13. 如果地图信息中有BOSS，高风险选项可以触发BOSS战
+14. 【剧情终点约束】每个区域和剧情线都应有自然终点。如果区域已完成或主线线索已明朗，场景不应生成新的分支冲突或任务，而应让故事自然收尾并引导角色前往最终方向。不要为了延续而无限生成新内容。
 
 返回JSON格式：
 {{
@@ -644,6 +660,18 @@ class StoryAgent:
                             ending_region_hint = f"\n【命运指向】未探索的{type_label}区域中隐藏着关键线索。\n"
         except Exception:
             pass
+        # ── 区域完成状态约束 ──
+        region_completed_hint = ""
+        try:
+            wm_data = state.get("world_map", {})
+            wm_regions = wm_data.get("regions", {})
+            cur_region_id = wm_data.get("current_region_id", "")
+            if cur_region_id and cur_region_id in wm_regions:
+                rdata = wm_regions[cur_region_id]
+                if rdata.get("completed", False):
+                    region_completed_hint = f"\n【区域已完成】当前区域『{rdata.get('name', '')}』的探索已经完成。叙事不应在此区域生成新的冲突或任务，应自然收尾并引导角色前往其他区域。\n"
+        except Exception:
+            pass
         # 玩家等级影响难度
         char_level = char.get("level", 1)
         # 玩家最近是否在和 NPC 对话 / 看告示板 / 听传闻
@@ -675,7 +703,7 @@ class StoryAgent:
 
 {("【当前任务】" + chr(10) + quest_summary) if quest_summary else ""}
 【已有待接任务委托】{offers_count} 个
-{ending_hint}{ending_region_hint}
+{ending_hint}{ending_region_hint}{region_completed_hint}
 【设计原则】
 1. 叙事要简短有力（3-5句话），描述行动的结果
 2. 不要替数值系统做判定（不要说"你赢了"或"你死了"），只描述过程
@@ -701,6 +729,7 @@ class StoryAgent:
     - 绝不能把攻击NPC的行动转成攻击区域怪物（如用户说"杀死莱恩"时，不能生成"侵蚀守卫"作为敌人）
     - 如果上方【已死亡NPC·绝不能复活】列表中已包含该NPC，说明NPC已死，不能再被攻击或交互，叙事应描述"尸体还在那里"或类似内容
 18. 【已死亡NPC交互】如果角色试图与【已死亡NPC·绝不能复活】列表中的NPC对话、交易或交互，叙事应明确描述该NPC已死（如"你走到旅店老板的尸体旁，他已经无法回答任何问题"），outcome_type 填 "nothing"，不要生成新的 spotted_enemies
+19. 【剧情终点约束】每个区域和剧情线都应有自然终点。如果区域已完成或主线线索已明朗，叙事不应生成新的分支冲突或任务，而应让故事自然收尾并引导角色前往最终方向。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：

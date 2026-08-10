@@ -31,6 +31,8 @@ class WorldRegion:
         self.explored = False                  # 是否已被探索
         self.boss_defeated = False             # BOSS是否已被击败
         self.discoveries: List[Dict] = []      # 可发现的物品/事件
+        self.completion_condition: str = ""    # 区域完成条件，如"boss_defeated: 矿脉之心"
+        self.completed: bool = False            # 区域是否已完成（完成后LLM不再续写新内容）
 
     def to_dict(self) -> Dict:
         return {
@@ -46,6 +48,8 @@ class WorldRegion:
             "explored": self.explored,
             "boss_defeated": self.boss_defeated,
             "discoveries": self.discoveries,
+            "completion_condition": self.completion_condition,
+            "completed": self.completed,
         }
 
     @classmethod
@@ -64,6 +68,8 @@ class WorldRegion:
         r.explored = data.get("explored", False)
         r.boss_defeated = data.get("boss_defeated", False)
         r.discoveries = data.get("discoveries", [])
+        r.completion_condition = data.get("completion_condition", "")
+        r.completed = data.get("completed", False)
         return r
 
 
