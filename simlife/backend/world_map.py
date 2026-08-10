@@ -14,17 +14,20 @@ from datetime import datetime
 
 
 class WorldRegion:
-    """单个区域"""
+    """单个区域（方格坐标版）"""
 
     def __init__(self, region_id: str, name: str, description: str,
                  danger_level: int = 1, region_type: str = "wild",
-                 connections: List[str] = None):
+                 connections: List[str] = None,
+                 x: int = 0, y: int = 0):
         self.region_id = region_id
         self.name = name
         self.description = description
         self.danger_level = danger_level  # 1-5，越高越危险
         self.region_type = region_type    # wild/town/dungeon/boss_lair/secret
         self.connections = connections or []  # 相连区域的ID列表
+        self.x = x  # 方格坐标X（正方向为东）
+        self.y = y  # 方格坐标Y（正方向为南）
         self.monsters: List[Dict] = []        # 该区域的怪物模板
         self.boss: Optional[Dict] = None      # 区域BOSS
         self.npcs: List[str] = []             # 该区域出现的NPC ID列表
@@ -42,6 +45,8 @@ class WorldRegion:
             "danger_level": self.danger_level,
             "region_type": self.region_type,
             "connections": self.connections,
+            "x": self.x,
+            "y": self.y,
             "monsters": self.monsters,
             "boss": self.boss,
             "npcs": self.npcs,
@@ -61,6 +66,8 @@ class WorldRegion:
             danger_level=data.get("danger_level", 1),
             region_type=data.get("region_type", "wild"),
             connections=data.get("connections", []),
+            x=data.get("x", 0),
+            y=data.get("y", 0),
         )
         r.monsters = data.get("monsters", [])
         r.boss = data.get("boss")
@@ -112,21 +119,34 @@ class WorldMap:
         if region:
             region.boss_defeated = True
 
+    @staticmethod
+    def _get_direction_label(from_x: int, from_y: int, to_x: int, to_y: int) -> str:
+        """根据坐标计算真实方向（8方向）"""
+        dx = to_x - from_x
+        dy = to_y - from_y
+        if dx == 0 and dy < 0: return "北"
+        if dx > 0 and dy < 0: return "东北"
+        if dx > 0 and dy == 0: return "东"
+        if dx > 0 and dy > 0: return "东南"
+        if dx == 0 and dy > 0: return "南"
+        if dx < 0 and dy > 0: return "西南"
+        if dx < 0 and dy == 0: return "西"
+        if dx < 0 and dy < 0: return "西北"
+        return "?"
+
     def get_map_display(self, region_id: str = None) -> Dict:
-        """获取前端地图显示数据，为相邻区域分配方向标签"""
+        """获取前端地图显示数据，根据坐标计算真实方向"""
         rid = region_id or self.current_region_id
         current = self.regions.get(rid) if rid else None
         if not current:
             return {"current": None, "adjacent": []}
 
-        # 8个方向，按顺序分配给相邻区域
-        directions = ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
         adjacent = []
-        for i, cid in enumerate(current.connections):
+        for cid in current.connections:
             region = self.regions.get(cid)
             if not region:
                 continue
-            dir_label = directions[i % len(directions)] if i < len(directions) else "?"
+            dir_label = self._get_direction_label(current.x, current.y, region.x, region.y)
             adjacent.append({
                 "region_id": cid,
                 "name": region.name if region.explored else "未知",
@@ -134,6 +154,8 @@ class WorldMap:
                 "explored": region.explored,
                 "danger_level": region.danger_level if region.explored else 0,
                 "region_type": region.region_type if region.explored else "unknown",
+                "x": region.x,
+                "y": region.y,
             })
 
         return {
@@ -144,6 +166,8 @@ class WorldMap:
                 "danger_level": current.danger_level,
                 "region_type": current.region_type,
                 "explored": current.explored,
+                "x": current.x,
+                "y": current.y,
             },
             "adjacent": adjacent,
         }
@@ -174,9 +198,94 @@ class WorldMap:
 
 
 class MapGenerator:
-    """根据世界观自动生成地图"""
+    """根据世界观自动生成地图（方格坐标版）"""
 
-    # 世界类型 → 区域模板
+    # 世界类型 → 区域模板（带坐标）
+    GRID_LAYOUTS = {
+        "fantasy": [
+            #  列0   列1   列2   列3   列4
+            #  guild village plains forest mines
+            #                    |       |
+            #                  swamp   ruins
+            #                    |
+            #                 mountain
+            #                    |
+            #               dark_castle
+            #  sacred_grove 连接 swamp
+            {"id": "guild", "name": "冒险者公会", "type": "town", "danger": 0, "desc": "冒险者聚集之地，可以接取任务", "x": 0, "y": 0},
+            {"id": "village", "name": "起始村庄", "type": "town", "danger": 0, "desc": "宁静的小村庄，冒险者的起点", "x": 1, "y": 0},
+            {"id": "plains", "name": "广阔平原", "type": "wild", "danger": 1, "desc": "一望无际的草原，偶有低级魔物出没", "x": 2, "y": 0},
+            {"id": "forest", "name": "暗影森林", "type": "wild", "danger": 2, "desc": "茂密的古树遮天蔽日，充满未知的危险", "x": 3, "y": 0},
+            {"id": "mines", "name": "废弃矿洞", "type": "dungeon", "danger": 3, "desc": "曾经繁华的矿场，如今被怪物占据", "x": 4, "y": 0},
+            {"id": "swamp", "name": "毒沼泽地", "type": "wild", "danger": 3, "desc": "瘴气弥漫的沼泽，暗藏杀机", "x": 2, "y": 1},
+            {"id": "ruins", "name": "古代遗迹", "type": "dungeon", "danger": 4, "desc": "远古文明的遗迹，守护着强大的力量", "x": 3, "y": 1},
+            {"id": "mountain", "name": "龙脊山脉", "type": "wild", "danger": 4, "desc": "险峻的山脉，传说巨龙栖息于此", "x": 2, "y": 2},
+            {"id": "dark_castle", "name": "暗黑城堡", "type": "boss_lair", "danger": 5, "desc": "魔王盘踞的城堡，黑暗力量的中心", "x": 2, "y": 3},
+            {"id": "sacred_grove", "name": "圣灵秘境", "type": "secret", "danger": 2, "desc": "隐藏在森林深处的神圣之地", "x": 1, "y": 2},
+        ],
+        "xianxia": [
+            {"id": "market", "name": "仙市坊", "type": "town", "danger": 0, "desc": "修仙者交易之地，丹药法器齐全", "x": 0, "y": 0},
+            {"id": "village", "name": "凡人小镇", "type": "town", "danger": 0, "desc": "凡人聚居之地，修仙者下山的起点", "x": 1, "y": 0},
+            {"id": "outer_sect", "name": "外门区域", "type": "wild", "danger": 1, "desc": "宗门外门弟子修炼之地", "x": 2, "y": 0},
+            {"id": "bamboo_forest", "name": "幽竹秘境", "type": "wild", "danger": 2, "desc": "青竹如海，灵气充沛", "x": 3, "y": 0},
+            {"id": "cave", "name": "灵矿洞府", "type": "dungeon", "danger": 3, "desc": "蕴含灵石的矿洞，妖兽出没", "x": 4, "y": 0},
+            {"id": "blood_wasteland", "name": "血荒原", "type": "wild", "danger": 3, "desc": "上古战场遗迹，阴气森森", "x": 2, "y": 1},
+            {"id": "inner_sect", "name": "内门禁地", "type": "dungeon", "danger": 4, "desc": "宗门核心区域，藏有上古传承", "x": 3, "y": 1},
+            {"id": "lotus_pond", "name": "碧莲池", "type": "secret", "danger": 2, "desc": "传说中洗髓伐毛的圣池", "x": 1, "y": 1},
+            {"id": "thunder_peak", "name": "雷劫峰", "type": "wild", "danger": 4, "desc": "雷云密布，渡劫圣地", "x": 2, "y": 2},
+            {"id": "demon_realm", "name": "魔域深渊", "type": "boss_lair", "danger": 5, "desc": "魔尊盘踞之地，修仙者的终焉", "x": 2, "y": 3},
+        ],
+        "wuxia": [
+            {"id": "market", "name": "集市", "type": "town", "danger": 0, "desc": "江湖人士聚集交易之地，消息灵通", "x": 0, "y": 0},
+            {"id": "village", "name": "新手村", "type": "town", "danger": 0, "desc": "偏僻的小村庄，武林新人的起点", "x": 1, "y": 0},
+            {"id": "provincial_road", "name": "官道", "type": "wild", "danger": 1, "desc": "连接各大城镇的官道，偶有山贼出没", "x": 2, "y": 0},
+            {"id": "bamboo_forest", "name": "翠竹林", "type": "wild", "danger": 2, "desc": "茂密的竹林深处，常有武林人士切磋", "x": 3, "y": 0},
+            {"id": "ancient_tomb", "name": "古墓秘境", "type": "dungeon", "danger": 3, "desc": "前朝高手的陵墓，藏有绝世武学", "x": 4, "y": 0},
+            {"id": "bandit_fort", "name": "山寨", "type": "wild", "danger": 3, "desc": "山贼盘踞的寨子，祸害一方", "x": 2, "y": 1},
+            {"id": "sect", "name": "武林门派", "type": "dungeon", "danger": 4, "desc": "隐世门派的驻地，藏有武林秘辛", "x": 3, "y": 1},
+            {"id": "waterfall", "name": "瀑布秘境", "type": "secret", "danger": 2, "desc": "瀑布后的隐秘洞穴，内有前辈遗刻", "x": 1, "y": 1},
+            {"id": "ice_peak", "name": "冰封雪峰", "type": "wild", "danger": 4, "desc": "终年积雪的险峰，传说有绝世高手隐居", "x": 2, "y": 2},
+            {"id": "dark_palace", "name": "魔教总坛", "type": "boss_lair", "danger": 5, "desc": "魔教盘踞之地，武林浩劫的根源", "x": 2, "y": 3},
+        ],
+        "post_apocalyptic": [
+            {"id": "shelter", "name": "地下避难所", "type": "town", "danger": 0, "desc": "幸存者的庇护所，相对安全", "x": 0, "y": 0},
+            {"id": "trading_post", "name": "交易站", "type": "town", "danger": 0, "desc": "各路幸存者的交易点", "x": 1, "y": 0},
+            {"id": "ruins_city", "name": "废弃城区", "type": "wild", "danger": 1, "desc": "残破的摩天楼，搜刮物资的好去处", "x": 2, "y": 0},
+            {"id": "subway", "name": "地铁隧道", "type": "dungeon", "danger": 2, "desc": "黑暗的地下通道，变异生物出没", "x": 3, "y": 0},
+            {"id": "toxic_zone", "name": "辐射污染区", "type": "wild", "danger": 3, "desc": "高辐射区域，危险但资源丰富", "x": 2, "y": 1},
+            {"id": "bandit_camp", "name": "掠夺者营地", "type": "wild", "danger": 3, "desc": "暴徒据点，物资充裕", "x": 3, "y": 1},
+            {"id": "lab", "name": "生化实验室", "type": "dungeon", "danger": 4, "desc": "灾难的源头，隐藏着变异的真相", "x": 4, "y": 1},
+            {"id": "bunker", "name": "秘密地堡", "type": "secret", "danger": 2, "desc": "军方遗留的秘密设施", "x": 1, "y": 1},
+            {"id": "no_mans_land", "name": "无人区", "type": "wild", "danger": 4, "desc": "最危险的荒原，顶级变异体出没", "x": 2, "y": 2},
+            {"id": "hive", "name": "虫巢母穴", "type": "boss_lair", "danger": 5, "desc": "变异虫族的女王巢穴", "x": 2, "y": 3},
+        ],
+        "modern_power": [
+            {"id": "academy", "name": "能力者学院", "type": "town", "danger": 0, "desc": "培养能力者的机构", "x": 0, "y": 0},
+            {"id": "downtown", "name": "城市中心", "type": "town", "danger": 0, "desc": "繁华的都市，能力者的日常", "x": 1, "y": 0},
+            {"id": "old_district", "name": "旧城区", "type": "wild", "danger": 1, "desc": "老旧的街区，暗流涌动", "x": 2, "y": 0},
+            {"id": "dark_alley", "name": "暗巷", "type": "wild", "danger": 2, "desc": "信息交易的黑市", "x": 3, "y": 0},
+            {"id": "abandoned_factory", "name": "废弃工厂区", "type": "wild", "danger": 3, "desc": "犯罪组织的据点", "x": 2, "y": 1},
+            {"id": "underground", "name": "地下竞技场", "type": "dungeon", "danger": 2, "desc": "能力者比武的地下场所", "x": 3, "y": 1},
+            {"id": "research_center", "name": "超能研究所", "type": "dungeon", "danger": 3, "desc": "能力者实验的秘密基地", "x": 4, "y": 1},
+            {"id": "rooftop", "name": "天台瞭望点", "type": "secret", "danger": 1, "desc": "城市最高点，俯瞰全局", "x": 1, "y": 1},
+            {"id": "mountain_temple", "name": "深山古寺", "type": "wild", "danger": 4, "desc": "隐世高手修炼之地", "x": 2, "y": 2},
+            {"id": "demon_gate", "name": "魔门总坛", "type": "boss_lair", "danger": 5, "desc": "暗势力的大本营", "x": 2, "y": 3},
+        ],
+        "scifi": [
+            {"id": "bar", "name": "星际酒吧", "type": "town", "danger": 0, "desc": "各类旅客的社交场所", "x": 0, "y": 0},
+            {"id": "station", "name": "太空站核心区", "type": "town", "danger": 0, "desc": "空间站的中心，居民聚集地", "x": 1, "y": 0},
+            {"id": "docking_bay", "name": "停靠港", "type": "wild", "danger": 1, "desc": "飞船停靠区，各类人等混杂", "x": 2, "y": 0},
+            {"id": "cargo_hold", "name": "货舱区", "type": "wild", "danger": 2, "desc": "物资仓储区，走私者活跃", "x": 3, "y": 0},
+            {"id": "maintenance", "name": "维护通道", "type": "dungeon", "danger": 2, "desc": "复杂的管道系统，常有故障机器人", "x": 2, "y": 1},
+            {"id": "lab_deck", "name": "实验层", "type": "dungeon", "danger": 3, "desc": "生物实验区，变异体出没", "x": 3, "y": 1},
+            {"id": "ai_core", "name": "AI核心区", "type": "dungeon", "danger": 4, "desc": "中央AI控制区，安保森严", "x": 4, "y": 1},
+            {"id": "escape_pod", "name": "逃生舱区", "type": "secret", "danger": 1, "desc": "隐藏的紧急逃生通道", "x": 1, "y": 1},
+            {"id": "outer_hull", "name": "外层甲板", "type": "wild", "danger": 4, "desc": "太空行走区域，极度危险", "x": 2, "y": 2},
+            {"id": "command_bridge", "name": "指挥舰桥", "type": "boss_lair", "danger": 5, "desc": "被叛变AI占据的指挥中心", "x": 2, "y": 3},
+        ],
+    }
+
+    # 旧版模板（兼容，无坐标，用于 LLM 生成后分配坐标）
     REGION_TEMPLATES = {
         "fantasy": [
             {"id": "village", "name": "起始村庄", "type": "town", "danger": 0, "desc": "宁静的小村庄，冒险者的起点"},
@@ -259,17 +368,21 @@ class MapGenerator:
     def generate(world_setting: Dict, llm_client=None) -> WorldMap:
         """根据世界观生成地图。优先用LLM生成，失败则用模板。"""
         world_type = world_setting.get("world_type", "fantasy")
-        templates = MapGenerator.REGION_TEMPLATES.get(world_type, MapGenerator.REGION_TEMPLATES["fantasy"])
+        # 优先使用方格坐标模板
+        grid_templates = MapGenerator.GRID_LAYOUTS.get(world_type, MapGenerator.GRID_LAYOUTS["fantasy"])
 
         # 尝试 LLM 生成
         if llm_client:
             try:
-                return MapGenerator._generate_with_llm(world_setting, llm_client)
+                wm = MapGenerator._generate_with_llm(world_setting, llm_client)
+                # LLM 生成后自动分配方格坐标
+                MapGenerator._assign_llm_grid_positions(wm)
+                return wm
             except Exception as e:
                 print(f"[WorldMap] LLM生成失败，使用模板: {e}")
 
-        # 模板生成
-        return MapGenerator._generate_from_template(templates, world_setting)
+        # 模板生成（使用方格坐标版）
+        return MapGenerator._generate_from_grid(grid_templates, world_setting)
 
     @staticmethod
     def _generate_from_template(templates: List[Dict], world_setting: Dict) -> WorldMap:
@@ -314,6 +427,91 @@ class MapGenerator:
         MapGenerator._build_connections(wm)
 
         return wm
+
+    @staticmethod
+    def _generate_from_grid(grid_templates: List[Dict], world_setting: Dict) -> WorldMap:
+        """从方格坐标模板生成地图（带坐标区域）"""
+        wm = WorldMap()
+        monster_types = []
+        if world_setting:
+            dangers = world_setting.get("dangers", {})
+            monster_types = dangers.get("monster_types", [])
+
+        for t in grid_templates:
+            region = WorldRegion(
+                region_id=t["id"],
+                name=t["name"],
+                description=t["desc"],
+                danger_level=t["danger"],
+                region_type=t["type"],
+                x=t["x"],
+                y=t["y"],
+            )
+            if t["danger"] > 0 and t["type"] != "town":
+                region.monsters = MapGenerator._assign_monsters(
+                    t["danger"], monster_types, world_setting
+                )
+            if t["type"] == "boss_lair":
+                region.boss = MapGenerator._generate_boss(
+                    t["danger"], monster_types, world_setting
+                )
+            wm.add_region(region)
+            if t["type"] == "town" and wm.start_region_id is None:
+                wm.start_region_id = t["id"]
+                wm.current_region_id = t["id"]
+                region.explored = True
+
+        # 根据坐标自动建立连接（相邻格子互连）
+        MapGenerator._build_grid_connections(wm)
+        return wm
+
+    @staticmethod
+    def _build_grid_connections(wm: WorldMap):
+        """根据方格坐标自动建立相邻区域的连接（上下左右四个方向）"""
+        regions = list(wm.regions.values())
+        for r in regions:
+            for other in regions:
+                if r.region_id == other.region_id:
+                    continue
+                dx = abs(r.x - other.x)
+                dy = abs(r.y - other.y)
+                # 曼哈顿距离=1 视为相邻（上下左右）
+                if (dx == 1 and dy == 0) or (dx == 0 and dy == 1):
+                    if other.region_id not in r.connections:
+                        r.connections.append(other.region_id)
+                    if r.region_id not in other.connections:
+                        other.connections.append(r.region_id)
+
+    @staticmethod
+    def _assign_llm_grid_positions(wm: WorldMap):
+        """LLM生成的地图坐标分配：用BFS分配坐标，起始点在(0,0)"""
+        if not wm.start_region_id or wm.start_region_id not in wm.regions:
+            return
+        # 先清除已有坐标
+        for r in wm.regions.values():
+            r.x = 0
+            r.y = 0
+        # BFS分配坐标
+        visited = set()
+        from collections import deque
+        q = deque()
+        q.append((wm.start_region_id, 0, 0))
+        visited.add(wm.start_region_id)
+        # 方向：东、南、西、北
+        dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        while q:
+            rid, cx, cy = q.popleft()
+            region = wm.regions[rid]
+            region.x = cx
+            region.y = cy
+            d_idx = 0
+            for cid in region.connections:
+                if cid in wm.regions and cid not in visited:
+                    visited.add(cid)
+                    # 按方向队列分配相邻坐标
+                    dx, dy = dirs[d_idx % 4]
+                    q.append((cid, cx + dx, cy + dy))
+                    d_idx += 1
 
     @staticmethod
     def _generate_with_llm(world_setting: Dict, llm_client) -> WorldMap:

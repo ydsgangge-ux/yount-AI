@@ -315,6 +315,14 @@ class QuestSystem:
             if not norm_objs:
                 continue
 
+            # 获取当前区域ID（用于到达新区域时过滤旧区域任务）
+            _current_region = ""
+            try:
+                _wm = state.get("world_map") or {}
+                _current_region = str(_wm.get("current_region_id", "") or "").strip()
+            except Exception:
+                pass
+
             # 生成唯一 id
             base = "dyn_" + "".join(c if c.isalnum() else "_" for c in title.lower())[:20]
             qid = base
@@ -345,6 +353,7 @@ class QuestSystem:
                 "auto_complete": bool(offer.get("auto_complete", True)),
                 "source": "dynamic",  # 标记为 LLM 动态生成
                 "world_id": cls._current_world_id(state),  # 记录所属世界，切世界后过滤
+                "region_id": _current_region,  # 记录当前区域，换区域后过滤
             }
 
             # 如果是系列任务，记录系列元信息
@@ -383,14 +392,26 @@ class QuestSystem:
     def get_available_offers(cls, state: Dict) -> List[Dict]:
         """获取所有动态生成的任务 offer（未接受）
         按当前世界过滤：只返回属于当前世界的 offer；旧数据无 world_id 的视为当前世界
+        按当前区域过滤：只返回属于当前区域的 offer；旧数据无 region_id 的视为当前区域
         """
         cls._ensure_state(state)
         cur_world = cls._current_world_id(state)
+        # 获取当前区域ID
+        cur_region = ""
+        try:
+            _wm = state.get("world_map") or {}
+            cur_region = str(_wm.get("current_region_id", "") or "").strip()
+        except Exception:
+            pass
         offers = []
         for o in state["quests"]["available_offers"]:
             ow = str(o.get("world_id", "") or "").strip()
             # 无 world_id 的旧数据 → 视为当前世界（保留兼容）；有则必须匹配当前世界
             if ow and cur_world and ow != cur_world:
+                continue
+            # 区域过滤：有 region_id 的必须匹配当前区域
+            ori = str(o.get("region_id", "") or "").strip()
+            if ori and cur_region and ori != cur_region:
                 continue
             offers.append(o)
         return offers
@@ -701,6 +722,51 @@ class QuestSystem:
         if items_gain:
             msg += f" 物品：{', '.join(it.get('name','?') for it in items_gain)}"
         return True, msg, rewards
+
+    # ── 清理旧区域任务委托 ──
+    @classmethod
+    def cleanup_offers_by_region(cls, state: Dict) -> int:
+        """当玩家进入新区域时，清理属于旧区域的可接任务委托。
+        返回被移除的 offer 数量。
+        """
+        cls._ensure_state(state)
+        cur_region = ""
+        try:
+            _wm = state.get("world_map") or {}
+            cur_region = str(_wm.get("current_region_id", "") or "").strip()
+        except Exception:
+            pass
+        if not cur_region:
+            return 0
+        before = len(state["quests"]["available_offers"])
+        state["quests"]["available_offers"] = [
+            o for o in state["quests"]["available_offers"]
+            if not str(o.get("region_id", "") or "").strip()  # 无 region_id 的不清理（旧数据兼容）
+            or str(o.get("region_id", "") or "").strip() == cur_region  # 属于当前区域的保留
+        ]
+        removed = before - len(state["quests"]["available_offers"])
+        if removed > 0:
+            print(f"[QuestSystem] 区域变更，清理 {removed} 个旧区域任务委托")
+        return removed
+
+    # ── 放弃任务 ──
+    @classmethod
+    def abandon_quest(cls, state: Dict, quest_id: str) -> Tuple[bool, str]:
+        """放弃进行中的任务：从 active 移除，加入 failed_ids"""
+        cls._ensure_state(state)
+        active = state["quests"]["active"]
+        quest = None
+        for i, q in enumerate(active):
+            if q["id"] == quest_id:
+                quest = q
+                active.pop(i)
+                break
+        if not quest:
+            return False, "任务不在进行中"
+        # 加入失败列表（后续不再显示）
+        state["quests"]["failed_ids"].append(quest_id)
+        # 如果是系列任务，不影响系列进度（只是当前任务放弃）
+        return True, f"已放弃任务「{quest['title']}」"
 
     # ── 系列任务信息 ──
     @classmethod

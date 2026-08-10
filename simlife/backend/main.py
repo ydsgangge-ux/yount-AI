@@ -2256,6 +2256,28 @@ def api_death_mode_turn_in_quest(data: dict):
     return {"success": True, "message": msg, "rewards": rewards}
 
 
+@app.post("/api/death-mode/quests/abandon")
+def api_death_mode_abandon_quest(data: dict):
+    """放弃任务 data: {"quest_id": "..."}"""
+    from simlife.backend.death_mode import DeathModeEngine
+    from simlife.backend.quest_system import QuestSystem
+
+    quest_id = data.get("quest_id", "").strip()
+    if not quest_id:
+        raise HTTPException(400, "请指定任务ID")
+
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        raise HTTPException(400, "游戏未开始")
+
+    ok, msg = QuestSystem.abandon_quest(state, quest_id)
+    if not ok:
+        raise HTTPException(400, msg)
+    engine._save()
+    return {"success": True, "message": msg}
+
+
 @app.get("/api/death-mode/quests/series")
 def api_death_mode_quest_series():
     """获取系列任务总览"""

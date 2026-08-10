@@ -1945,7 +1945,10 @@ const DeathModeUI = {
             <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
             ${objectives}
             <div style="font-size:9px;color:#d29922;margin-top:4px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}${(q.rewards||{}).items ? ' · 物品' : ''}</div>
-            ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="margin-top:6px;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
+            <div style="margin-top:6px;display:flex;gap:6px;">
+              ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
+              ${!allDone ? `<button onclick="DeathModeUI._abandonQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#3a1a1a;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:11px;">放弃任务</button>` : ''}
+            </div>
           </div>`;
         }
       }
@@ -2020,6 +2023,27 @@ const DeathModeUI = {
       this.refresh();
     } catch (e) {
       alert('交付失败: ' + e.message);
+    }
+  },
+
+  async _abandonQuest(questId) {
+    if (!confirm('确定放弃这个任务吗？')) return;
+    try {
+      const resp = await fetch('/api/death-mode/quests/abandon', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quest_id: questId }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('放弃失败: ' + (err.detail || err.message || '未知错误'));
+        return;
+      }
+      const data = await resp.json();
+      alert(data.message);
+      this.showQuestPanel();
+      this.refresh();
+    } catch (e) {
+      alert('放弃失败: ' + e.message);
     }
   },
 
