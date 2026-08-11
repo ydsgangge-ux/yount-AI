@@ -821,8 +821,6 @@ const DeathModeUI = {
       game_start:   { icon: '⚔️', color: '#58a6ff', label: '冒险开始' },
       scene:        { icon: '📖', color: '#8b949e', label: '场景' },
       action:       { icon: '🎯', color: '#c9d1d9', label: '行动' },
-      combat_round: { icon: '⚔️', color: '#d29922', label: '战斗' },
-      death_pending:{ icon: '☠️', color: '#f85149', label: '生死' },
       move:         { icon: '🗺️', color: '#3fb950', label: '移动' },
       npc_interact: { icon: '💬', color: '#d29922', label: 'NPC交互' },
     };
@@ -843,16 +841,9 @@ const DeathModeUI = {
           return `<div style="font-size:11px;color:#8b949e;padding:2px 0;">→ ${c.text} <span style="color:${riskColor};font-size:10px;">${c.risk||''}</span></div>`;
         }).join('')}</div>` : ''}`;
     }
-    else if (type === 'action' || type === 'combat_round' || type === 'death_pending') {
-      const actionLabel = d.action || (type === 'combat_round' ? '战斗回合' : (type === 'death_pending' ? '生死抉择' : '未知行动'));
+    else if (type === 'action') {
+      const actionLabel = d.action || '未知行动';
       const outcome = d.outcome || '';
-
-      // death_pending 类型：显示临终遗言
-      if (type === 'death_pending') {
-        content = `<div style="color:#f85149;font-size:13px;font-weight:600;">☠️ ${d.name || '角色'} 阵亡</div>
-          <div style="font-size:12px;color:#8b949e;margin-top:2px;">死因：${this._replaceYou(d.cause || '')}</div>
-          ${d.last_words ? `<div style="font-size:12px;color:#d29922;font-style:italic;margin-top:4px;padding:6px;background:#2d0d0d;border-radius:4px;">「${this._replaceYou(d.last_words)}」</div>` : ''}`;
-      }
 
       // 战斗结果
       let combatHtml = '';
@@ -944,12 +935,10 @@ const DeathModeUI = {
         </div>`;
       }
 
-      if (!content) {
-        content = `
-          <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
-          ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.narrative)}</div>` : ''}
-          ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
-      }
+      content = `
+        <div style="color:#c9d1d9;font-size:13px;font-weight:600;">${actionLabel}</div>
+        ${d.narrative ? `<div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.narrative)}</div>` : ''}
+        ${combatHtml}${rewardHtml}${levelHtml}${dropHtml}${tradeHtml}${deathHtml}`;
     }
     else if (type === 'move') {
       content = `<div style="color:#3fb950;">🗺️ 从 ${d.from} 前往 ${d.to}</div>
@@ -1960,10 +1949,7 @@ const DeathModeUI = {
             <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
             ${objectives}
             <div style="font-size:9px;color:#d29922;margin-top:4px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}${(q.rewards||{}).items ? ' · 物品' : ''}</div>
-            <div style="margin-top:6px;display:flex;gap:6px;">
-              ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
-              ${!allDone ? `<button onclick="DeathModeUI._abandonQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#3a1a1a;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:11px;">放弃任务</button>` : ''}
-            </div>
+            ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="margin-top:6px;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
           </div>`;
         }
       }
@@ -2038,27 +2024,6 @@ const DeathModeUI = {
       this.refresh();
     } catch (e) {
       alert('交付失败: ' + e.message);
-    }
-  },
-
-  async _abandonQuest(questId) {
-    if (!confirm('确定放弃这个任务吗？')) return;
-    try {
-      const resp = await fetch('/api/death-mode/quests/abandon', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quest_id: questId }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json();
-        alert('放弃失败: ' + (err.detail || err.message || '未知错误'));
-        return;
-      }
-      const data = await resp.json();
-      alert(data.message);
-      this.showQuestPanel();
-      this.refresh();
-    } catch (e) {
-      alert('放弃失败: ' + e.message);
     }
   },
 
