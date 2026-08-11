@@ -1267,7 +1267,7 @@ const DeathModeUI = {
           <span style="font-size:10px;color:#58a6ff;">🗺️ 地图 ${coord}</span>
           <span onclick="DeathModeUI.showFullMap()" style="font-size:8px;color:#58a6ff;cursor:pointer;text-decoration:underline;">🌐 全图</span>
         </div>
-        <div style="display:flex;flex-wrap:wrap;width:100%;gap:2px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2px;width:100%;">
           ${cells}
         </div>
         <div style="font-size:7px;color:#484f58;text-align:center;margin-top:4px;">
