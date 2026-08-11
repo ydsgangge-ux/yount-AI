@@ -1278,8 +1278,19 @@ const DeathModeUI = {
       </div>`;
   },
 
-  showFullMap() {
-    const md = this._state?.map_display;
+  async showFullMap() {
+    // 从 API 获取最新数据，确保地图信息是最新的
+    let md = this._state?.map_display;
+    try {
+      const resp = await fetch('/api/death-mode/state');
+      const freshState = await resp.json();
+      if (freshState.active && freshState.map_display) {
+        md = freshState.map_display;
+        this._state = freshState; // 同步缓存
+      }
+    } catch (e) {
+      // 使用已有缓存
+    }
     if (!md || !md.current) return;
 
     const gridSize = md.grid_size || 10;
@@ -1306,16 +1317,8 @@ const DeathModeUI = {
       return '#3fb950';
     }
 
-    // 找到已探索区域的边界（减少空白网格）
+    // 全图始终显示完整 gridSize×gridSize 网格
     let minX = 0, maxX = gridSize - 1, minY = 0, maxY = gridSize - 1;
-    if (allRegions.length > 0) {
-      minX = Math.min(...allRegions.map(r => r.x)) - 1;
-      maxX = Math.max(...allRegions.map(r => r.x)) + 1;
-      minY = Math.min(...allRegions.map(r => r.y)) - 1;
-      maxY = Math.max(...allRegions.map(r => r.y)) + 1;
-      minX = Math.max(0, minX); maxX = Math.min(gridSize - 1, maxX);
-      minY = Math.max(0, minY); maxY = Math.min(gridSize - 1, maxY);
-    }
 
     // 生成网格HTML
     let gridHtml = '';
