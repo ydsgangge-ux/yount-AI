@@ -293,6 +293,8 @@ const DeathModeUI = {
       const state = await resp.json();
       if (!state.active) return;
 
+      this._state = state;  // 更新缓存，供 showFullMap 等使用
+
       const char = state.character || {};
       const stats = char.stats || {};
       const hpPct = char.max_hp > 0 ? (char.hp / char.max_hp * 100) : 0;
