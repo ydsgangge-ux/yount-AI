@@ -1328,12 +1328,21 @@ const DeathModeUI = {
             <span style="font-size:7px;color:#3fb950;font-weight:bold;text-align:center;max-width:36px;word-break:break-all;">${current.name}</span>
           </div>`;
         } else if (r) {
-          const color = dangerColor(r.danger_level);
-          const icon = regionIcon(r.region_type);
-          gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#161b22;border-radius:4px;border:1px solid ${color}40;">
-            <span style="font-size:14px;">${icon}</span>
-            <span style="font-size:6px;color:${color};text-align:center;max-width:36px;word-break:break-all;line-height:1.1;">${r.name}</span>
-          </div>`;
+          if (r.explored) {
+            // 已探索：显示图标+名称+危险色边框
+            const color = dangerColor(r.danger_level);
+            const icon = regionIcon(r.region_type);
+            gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#161b22;border-radius:4px;border:1px solid ${color}40;">
+              <span style="font-size:14px;">${icon}</span>
+              <span style="font-size:6px;color:${color};text-align:center;max-width:36px;word-break:break-all;line-height:1.1;">${r.name}</span>
+            </div>`;
+          } else {
+            // 未探索（已知存在但未去过）：显示❓+暗色
+            gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0d1117;border-radius:4px;border:1px dashed #30363d;opacity:0.6;">
+              <span style="font-size:14px;">❓</span>
+              <span style="font-size:6px;color:#484f58;text-align:center;">未知</span>
+            </div>`;
+          }
         } else {
           gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;align-items:center;justify-content:center;background:#0d1117;border-radius:4px;border:1px solid #161b22;">
             <span style="font-size:8px;color:#21262d;">·</span>
@@ -1365,6 +1374,12 @@ const DeathModeUI = {
         </div>
         <div style="font-size:8px;color:#484f58;margin-top:8px;text-align:center;">
           📍当前位置 · ${current.name} (${current.x},${current.y})
+        </div>
+        <div style="font-size:7px;color:#484f58;margin-top:4px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+          <span>📍 当前</span>
+          <span>🏘️🌲🕳️ 已探索</span>
+          <span>❓ 已知未探索</span>
+          <span>· 未发现</span>
         </div>
       </div>`;
   },
