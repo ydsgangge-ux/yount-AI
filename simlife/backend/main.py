@@ -1571,6 +1571,15 @@ def api_death_mode_move(data: dict):
     return engine.move_to_region(target_id)
 
 
+@app.post("/api/death-mode/move-direction")
+def api_death_mode_move_direction(data: dict):
+    """按方向移动（北/南/东/西，支持空白格子生成）"""
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    direction = data.get("direction", "")
+    return engine.move_by_direction_api(direction)
+
+
 # ── 地下城API ──
 @app.post("/api/death-mode/dungeon-move")
 def api_death_mode_dungeon_move(data: dict):

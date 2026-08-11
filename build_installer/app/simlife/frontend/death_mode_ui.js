@@ -1130,6 +1130,9 @@ const DeathModeUI = {
     const current = md.current;
     const gridSize = md.grid_size || 10;
 
+    // 是否可移动（非战斗、非地下城）
+    const canMove = !state.in_combat && !state.in_dungeon;
+
     // 方向 → 3x3 grid 位置（仅4方向，无对角线）
     const dirMap = {
       '北': '0,1',
@@ -1196,28 +1199,45 @@ const DeathModeUI = {
           </div>`;
         } else if (cell.type === 'blank') {
           // 空白格子（可前往探索，到达时自动生成）
-          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;">
-            <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
-            <span style="font-size:14px;margin:1px 0;">🌫️</span>
-            <span style="font-size:6px;color:#484f58;text-align:center;">可探索</span>
-          </div>`;
+          if (canMove) {
+            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.background='#161b22';" onmouseout="this.style.background='#0d1117';">
+              <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
+              <span style="font-size:14px;margin:1px 0;">🌫️</span>
+              <span style="font-size:6px;color:#484f58;text-align:center;">可探索</span>
+            </div>`;
+          } else {
+            cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;opacity:0.4;">
+              <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
+              <span style="font-size:14px;margin:1px 0;">🌫️</span>
+              <span style="font-size:6px;color:#484f58;text-align:center;">🔒</span>
+            </div>`;
+          }
         } else {
           // 已有区域
           const arrow = dirArrow[cell.direction] || '?';
           const color = cell.explored ? dangerColor(cell.danger) : '#484f58';
           const icon = cell.explored ? regionIcon(cell.regionType) : '❓';
           const name = cell.explored ? cell.name : '未知';
-          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};">
-            <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
-            <span style="font-size:14px;margin:1px 0;">${icon}</span>
-            <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">${name}</span>
-          </div>`;
+          if (canMove) {
+            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};cursor:pointer;" onmouseover="this.style.borderColor='#58a6ff';" onmouseout="this.style.borderColor='${cell.explored ? '#21262d' : '#161b22'}';">
+              <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
+              <span style="font-size:14px;margin:1px 0;">${icon}</span>
+              <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">${name}</span>
+            </div>`;
+          } else {
+            cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};opacity:0.4;">
+              <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
+              <span style="font-size:14px;margin:1px 0;">${icon}</span>
+              <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">🔒</span>
+            </div>`;
+          }
         }
       }
     }
 
     // 坐标显示
     const coord = `(${current.x},${current.y})`;
+    const moveHint = canMove ? '点击相邻区域移动' : '🔒 战斗/地下城中无法移动';
 
     return `
       <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #30363d;">
@@ -1225,10 +1245,25 @@ const DeathModeUI = {
         <div style="display:flex;flex-wrap:wrap;width:100%;gap:2px;">
           ${cells}
         </div>
-        <div style="font-size:8px;color:#484f58;text-align:center;margin-top:4px;">
-          ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}
+        <div style="font-size:7px;color:#484f58;text-align:center;margin-top:4px;">
+          ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}<br>${moveHint}
         </div>
       </div>`;
+  },
+
+  async moveByDirection(direction) {
+    try {
+      const resp = await fetch('/api/death-mode/move-direction', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({direction: direction}),
+      });
+      const data = await resp.json();
+      if (data.error) {
+        alert(data.message || data.error);
+        return;
+      }
+      await this._renderStatusPanel();
+    } catch(e) { console.error('move direction:', e); }
   },
 
   // ── 地下城探索 UI ──────────────────────────────────

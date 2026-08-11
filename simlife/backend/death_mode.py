@@ -4433,26 +4433,29 @@ class DeathModeEngine:
     # ── 地图与NPC ──────────────────────────────────────────
 
     def move_to_region(self, target_region_id: str) -> Dict:
-        """移动到指定区域"""
+        """移动到指定区域（坐标制：检查坐标相邻）"""
         state = self._load()
         if not state or not state.get("is_alive"):
             return {"error": "game_not_active"}
         if state.get("in_combat"):
             return {"error": "in_combat", "message": "战斗中无法移动"}
+        if state.get("in_dungeon"):
+            return {"error": "in_dungeon", "message": "地下城中无法直接移动到区域"}
         if not self.world_map:
             return {"error": "no_map"}
 
-        # 检查是否可以移动
+        # 检查是否可以移动（坐标制）
         current = self.world_map.get_current_region()
         if not current:
             return {"error": "no_current_region"}
 
-        if target_region_id not in current.connections:
-            return {"error": "not_adjacent", "message": f"无法从{current.name}到达该区域"}
-
         target = self.world_map.get_region(target_region_id)
         if not target:
             return {"error": "region_not_found"}
+
+        # 坐标相邻检查（曼哈顿距离=1）
+        if not self.world_map.can_move_to(target_region_id):
+            return {"error": "not_adjacent", "message": f"无法从{current.name}到达{target.name}（不相邻）"}
 
         # 移动
         self.world_map.current_region_id = target_region_id
@@ -4829,6 +4832,59 @@ class DeathModeEngine:
         self._log_action("dismiss", {"member_id": member_id})
         self._save()
         return {"success": True, "party_members": state["party_members"]}
+
+    def move_by_direction_api(self, direction: str) -> Dict:
+        """方向移动API（供前端点击调用）：北/南/东/西，支持空白格子生成"""
+        state = self._load()
+        if not state or not state.get("is_alive"):
+            return {"error": "game_not_active"}
+        if state.get("in_combat"):
+            return {"error": "in_combat", "message": "战斗中无法移动"}
+        if state.get("in_dungeon"):
+            return {"error": "in_dungeon", "message": "地下城中无法移动到区域"}
+        if not self.world_map or not self.region_agent:
+            return {"error": "no_map"}
+
+        result = self.region_agent.move_by_direction(direction)
+        if not result.get("moved"):
+            return {"error": "move_failed", "message": result.get("reason", ""),
+                    "available_directions": result.get("available_directions", [])}
+
+        target = result["region"]
+        old_name = result.get("old_region_name", "")
+        state["story"]["current_location"] = target.name
+        state["story"]["scene_description"] = target.description
+
+        # 清理旧区域任务委托
+        QuestSystem.cleanup_offers_by_region(state)
+
+        # 任务进度
+        try:
+            QuestSystem.record_progress(state, "visit_location",
+                                         location=target.name,
+                                         narrative=target.description)
+        except Exception:
+            pass
+
+        self._save()
+
+        self._log_action("move", {
+            "direction": direction,
+            "from": old_name,
+            "to": target.name,
+            "coords": f"({target.x},{target.y})",
+        })
+
+        return {
+            "success": True,
+            "region_name": target.name,
+            "description": target.description,
+            "danger_level": target.danger_level,
+            "region_type": target.region_type,
+            "direction": direction,
+            "from": old_name,
+            "coords": f"({target.x},{target.y})",
+        }
 
     def get_map_info(self) -> Dict:
         """获取当前地图信息"""
