@@ -481,6 +481,20 @@ class StoryAgent:
         current_location = state.get("story", {}).get("current_location", "")
         choices = state.get("story", {}).get("choices", [])
 
+        # 构建可移动方向上下文（供LLM知道哪些方向可走）
+        _avail_dirs = state.get("story", {}).get("available_directions", [])
+        directions_ctx = ""
+        if _avail_dirs:
+            _dir_parts = []
+            for _d in _avail_dirs:
+                if _d.get("has_region") and _d.get("explored"):
+                    _dir_parts.append(f"{_d['direction']}→{_d['region_name']}")
+                elif _d.get("has_region"):
+                    _dir_parts.append(f"{_d['direction']}→未探索")
+                else:
+                    _dir_parts.append(f"{_d['direction']}→未知区域")
+            directions_ctx = f"可移动方向：{'、'.join(_dir_parts)}（移动由系统自动处理，你只需描述当前区域内的行动）"
+
         # ── 构建最近行动历史（让LLM知道之前发生了什么）──
         history = state.get("story", {}).get("history", [])
         recent_history = history[-5:] if history else []  # 最近5条
@@ -722,6 +736,7 @@ class StoryAgent:
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}
+{directions_ctx}
 
 【角色行动】
 {action_desc}
@@ -739,7 +754,7 @@ class StoryAgent:
 5. 如果是社交行动，描述对方反应
 6. 保持紧张感，但不透露具体数值
 7. 结尾留下"接下来会发生什么"的悬念
-8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。区域切换由系统自动管理，你不需要在输出中指定 new_location。叙事应自然描述在当前区域内的行动经过。
+8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。区域移动由后端系统自动处理——如果用户想移动到其他区域，系统会自动执行移动并更新位置，你不需要也不能在叙事中描述角色移动到其他区域。你只需要描述当前区域内的行动和场景。
 11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
 12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力）。
 13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。

@@ -1102,30 +1102,35 @@ class DeathModeEngine:
             self._record_history_and_save(state, action, narrative, outcome_type, combat_result, result)
             return result
 
-        # 1. 非战斗回合：Agent 生成叙事（不含数值结果）
-        agent_result = self.agent.process_action(state, action, action_type, sender=sender)
-        narrative = agent_result.get("narrative", "")
-        outcome_type = agent_result.get("outcome_type", "nothing")
-        next_tension = agent_result.get("next_tension", "medium")
-
-        # ── 方向移动/区域管理：RegionAgent 接管 ──
-        # RegionAgent 负责：
-        # 1. 从用户行动中提取方向关键词（"南下"/"北上"/"东行"/"西行"等）
-        # 2. 根据方格坐标计算新区域，更新 current_region_id
-        # 3. 加载区域文件数据，供后续使用
-        # 4. 接收 StoryAgent 的 region_story_updates 写回
+        # 1. 非战斗回合：先检测移动，再生成叙事
+        # 移动检测必须在StoryAgent之前：避免LLM在不知道能不能走的情况下编造移动叙事
         _region_moved = False
         _region_move_result = None
+        _move_blocked = False
+        _move_blocked_msg = ""
         try:
             _action = (action or "").strip()
-            _dir_map = {"北上": "北", "南下": "南", "东行": "东", "西行": "西", "北": "北", "南": "南", "东": "东", "西": "西",
-                        "东北": "东北", "西北": "西北", "东南": "东南", "西南": "西南"}
+            # 方向关键词（多字符优先，避免"东北"被"北"截获）
+            _dir_patterns = [
+                ("东北", "东北"), ("西北", "西北"), ("东南", "东南"), ("西南", "西南"),
+                ("北上", "北"), ("南下", "南"), ("东行", "东"), ("西行", "西"),
+                ("向北", "北"), ("向南", "南"), ("向东", "东"), ("向西", "西"),
+                ("往北", "北"), ("往南", "南"), ("往东", "东"), ("往西", "西"),
+                ("北方", "北"), ("南方", "南"), ("东方", "东"), ("西方", "西"),
+                ("北", "北"), ("南", "南"), ("东", "东"), ("西", "西"),
+            ]
             _wanted_dir = ""
-            for _kw, _d in _dir_map.items():
-                if _kw in _action:
-                    _wanted_dir = _d
+            for _pattern, _dir in _dir_patterns:
+                if _pattern in _action:
+                    _wanted_dir = _dir
                     break
+
+            # "离开"类关键词（无明确方向时列出可用方向）
+            _leave_keywords = ("离开", "离去", "出城", "出镇", "出村", "出发", "启程", "上路")
+            _is_leave = any(kw in _action for kw in _leave_keywords)
+
             if _wanted_dir and self.region_agent:
+                # 有明确方向 → 尝试移动
                 _move_result = self.region_agent.move_by_direction(_wanted_dir)
                 if _move_result.get("moved"):
                     _region_moved = True
@@ -1136,22 +1141,104 @@ class DeathModeEngine:
                     state["story"]["scene_description"] = _target.description
                     # 清理旧区域任务委托
                     QuestSystem.cleanup_offers_by_region(state)
-                    print(f"[DeathMode] RegionAgent 方向移动：{_original_location} → {_target.name}（方向={_wanted_dir}）")
-                    # 更新叙事（添加一段到达描述）
-                    _arrival_note = f"\n\n两人策马前行，{_original_location}的轮廓在身后渐渐模糊。前方出现了新的景象——{_target.description}"
-                    narrative += _arrival_note
-                    agent_result["narrative"] = narrative
-                    # 任务进度：到达新区域触发
-                    try:
-                        QuestSystem.record_progress(state, "visit_location",
-                                                     location=_target.name,
-                                                     narrative=narrative, action_text=action)
-                    except Exception:
-                        pass
+                    print(f"[DeathMode] 方向移动：{_original_location} → {_target.name}（方向={_wanted_dir}）")
+                else:
+                    # 移动失败 → 返回可用方向
+                    _move_blocked = True
+                    _avail = _move_result.get("available_directions", [])
+                    if _avail:
+                        _dir_parts = []
+                        for _d in _avail:
+                            if _d.get("has_region") and _d.get("explored"):
+                                _dir_parts.append(f"{_d['direction']}（{_d['region_name']}）")
+                            elif _d.get("has_region"):
+                                _dir_parts.append(f"{_d['direction']}（未探索）")
+                            else:
+                                _dir_parts.append(f"{_d['direction']}（未知区域）")
+                        _move_blocked_msg = f"该方向没有路可走。可选择：{'、'.join(_dir_parts)}"
+                    else:
+                        _move_blocked_msg = "该方向没有路可走。"
+                    print(f"[DeathMode] 移动失败：{_wanted_dir}，原因：{_move_result.get('reason')}")
+            elif _is_leave and self.region_agent:
+                # "离开"但无方向 → 列出可用方向
+                _avail = self.world_map.get_available_directions() if self.world_map else []
+                if _avail:
+                    _dir_parts = []
+                    for _d in _avail:
+                        if _d.get("has_region") and _d.get("explored"):
+                            _dir_parts.append(f"{_d['direction']}（{_d['region_name']}）")
+                        elif _d.get("has_region"):
+                            _dir_parts.append(f"{_d['direction']}（未探索）")
+                        else:
+                            _dir_parts.append(f"{_d['direction']}（未知区域）")
+                    _move_blocked = True
+                    _move_blocked_msg = f"你想离开这里。可以选择：{'、'.join(_dir_parts)}"
+                else:
+                    _move_blocked = True
+                    _move_blocked_msg = "你已经在地图边缘，没有可离开的方向。"
         except Exception as e:
-            print(f"[DeathMode] RegionAgent 方向移动异常: {e}")
+            print(f"[DeathMode] 方向移动检测异常: {e}")
 
-        # ── 区域状态更新：StoryAgent 写回 region_story_updates ──
+        # 注入可用方向到state（供StoryAgent使用）
+        if self.world_map:
+            try:
+                state["story"]["available_directions"] = self.world_map.get_available_directions()
+            except Exception:
+                pass
+
+        # 2. 如果移动被阻挡 → 直接返回，不调用StoryAgent
+        if _move_blocked:
+            _blocked_result = {
+                "narrative": _move_blocked_msg,
+                "combat_result": None,
+                "leveled_up": False,
+                "new_skills": [],
+                "character_died": False,
+                "death_description": None,
+                "exp_gained": 0,
+                "gold_gained": 0,
+            }
+            # 记录历史
+            _history_entry = {
+                "chapter": state["story"]["current_chapter"],
+                "summary": _move_blocked_msg[:200],
+                "action": action,
+                "outcome": "nothing",
+                "location": state["story"].get("current_location", ""),
+            }
+            state["story"]["history"].append(_history_entry)
+            self._save()
+            self._log_action("action", {
+                "action": action,
+                "action_type": action_type,
+                "outcome": "nothing",
+                "narrative": _move_blocked_msg[:300],
+            })
+            return _blocked_result
+
+        # 3. 非移动 或 移动成功 → 调用StoryAgent生成叙事
+        agent_result = self.agent.process_action(state, action, action_type, sender=sender)
+        narrative = agent_result.get("narrative", "")
+        outcome_type = agent_result.get("outcome_type", "nothing")
+        next_tension = agent_result.get("next_tension", "medium")
+
+        # 4. 如果移动成功 → 在叙事后添加到达描述
+        if _region_moved and _region_move_result:
+            _target = _region_move_result["region"]
+            _original = _region_move_result.get("old_region_name", "")
+            _arrival_dir = _region_move_result.get("direction", "")
+            _arrival_note = f"\n\n两人离开{_original}，向{_arrival_dir}方前行。前方出现了新的景象——{_target.description}"
+            narrative += _arrival_note
+            agent_result["narrative"] = narrative
+            # 任务进度：到达新区域触发
+            try:
+                QuestSystem.record_progress(state, "visit_location",
+                                             location=_target.name,
+                                             narrative=narrative, action_text=action)
+            except Exception:
+                pass
+
+        # 5. 区域状态更新（仅非移动时）
         if not _region_moved:
             try:
                 _region_updates = agent_result.get("region_story_updates")

@@ -39,7 +39,37 @@
         "danger_level_description": "1=安全 2=低危 3=中危 4=高危 5=禁地",
         "local_specialties": ["当地特产/资源"]
       }
-    ]
+    ],
+    "grid": {
+      "_description": "10x10方格地图，只标注主要区域（3-6个），空白格子由游戏运行时RegionAgent动态生成",
+      "size": 10,
+      "main_regions": [
+        {
+          "region_id": "英文蛇形id",
+          "name": "区域中文名",
+          "x": 0,
+          "y": 0,
+          "region_type": "town",
+          "danger_level": 0,
+          "description": "2-3句话描述",
+          "is_start": true,
+          "is_main_quest": true,
+          "completion_condition": "可选，如 boss_defeated:BOSS名 或 explore_complete"
+        },
+        {
+          "region_id": "boss_lair_id",
+          "name": "BOSS区域名",
+          "x": 5,
+          "y": 5,
+          "region_type": "boss_lair",
+          "danger_level": 5,
+          "description": "BOSS区域描述",
+          "is_start": false,
+          "is_main_quest": true,
+          "completion_condition": "boss_defeated:BOSS名"
+        }
+      ]
+    }
   },
 
   "races": [

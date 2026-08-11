@@ -36,6 +36,7 @@ class WorldRegion:
         self.discoveries: List[Dict] = []      # 可发现的物品/事件
         self.completion_condition: str = ""    # 区域完成条件，如"boss_defeated: 矿脉之心"
         self.completed: bool = False            # 区域是否已完成（完成后LLM不再续写新内容）
+        self.is_blank: bool = False             # 是否为空白区域（待LLM生成）
 
     def to_dict(self) -> Dict:
         return {
@@ -55,6 +56,7 @@ class WorldRegion:
             "discoveries": self.discoveries,
             "completion_condition": self.completion_condition,
             "completed": self.completed,
+            "is_blank": self.is_blank,
         }
 
     @classmethod
@@ -77,16 +79,18 @@ class WorldRegion:
         r.discoveries = data.get("discoveries", [])
         r.completion_condition = data.get("completion_condition", "")
         r.completed = data.get("completed", False)
+        r.is_blank = data.get("is_blank", False)
         return r
 
 
 class WorldMap:
-    """世界地图"""
+    """世界地图（10x10方格坐标版）"""
 
     def __init__(self):
         self.regions: Dict[str, WorldRegion] = {}
         self.current_region_id: Optional[str] = None  # 玩家当前所在区域
         self.start_region_id: Optional[str] = None     # 出生点
+        self.grid_size: int = 10                        # 方格地图大小
 
     def add_region(self, region: WorldRegion):
         self.regions[region.region_id] = region
@@ -99,13 +103,61 @@ class WorldMap:
             return self.regions.get(self.current_region_id)
         return None
 
+    def get_region_at(self, x: int, y: int) -> Optional[WorldRegion]:
+        """获取指定坐标的区域"""
+        for r in self.regions.values():
+            if r.x == x and r.y == y:
+                return r
+        return None
+
     def get_adjacent_regions(self, region_id: str = None) -> List[WorldRegion]:
-        """获取相邻区域（已探索的显示详情，未探索的只显示名称）"""
+        """获取相邻区域（基于坐标，曼哈顿距离=1，上下左右四方向）"""
         rid = region_id or self.current_region_id
         region = self.regions.get(rid) if rid else None
         if not region:
             return []
-        return [self.regions[c] for c in region.connections if c in self.regions]
+        result = []
+        for other in self.regions.values():
+            if other.region_id == region.region_id:
+                continue
+            dx = abs(other.x - region.x)
+            dy = abs(other.y - region.y)
+            if (dx == 1 and dy == 0) or (dx == 0 and dy == 1):
+                result.append(other)
+        return result
+
+    def can_move_direction(self, direction: str) -> bool:
+        """检查指定方向是否可移动（在grid范围内）"""
+        current = self.get_current_region()
+        if not current:
+            return False
+        deltas = {"北": (0, -1), "南": (0, 1), "东": (1, 0), "西": (-1, 0)}
+        dx, dy = deltas.get(direction, (0, 0))
+        new_x = current.x + dx
+        new_y = current.y + dy
+        return 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size
+
+    def get_available_directions(self) -> List[Dict]:
+        """获取当前可移动的方向（4方向，包含空白格子信息）"""
+        current = self.get_current_region()
+        if not current:
+            return []
+        deltas = [("北", 0, -1), ("南", 0, 1), ("东", 1, 0), ("西", -1, 0)]
+        result = []
+        for dir_name, dx, dy in deltas:
+            new_x = current.x + dx
+            new_y = current.y + dy
+            if 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size:
+                region = self.get_region_at(new_x, new_y)
+                result.append({
+                    "direction": dir_name,
+                    "target_x": new_x,
+                    "target_y": new_y,
+                    "has_region": region is not None,
+                    "region_name": region.name if region else "未知",
+                    "explored": region.explored if region else False,
+                })
+        return result
 
     def explore_region(self, region_id: str):
         """标记区域为已探索"""
@@ -121,7 +173,7 @@ class WorldMap:
 
     @staticmethod
     def _get_direction_label(from_x: int, from_y: int, to_x: int, to_y: int) -> str:
-        """根据坐标计算真实方向（8方向）"""
+        """根据坐标计算真实方向（8方向，用于显示）"""
         dx = to_x - from_x
         dy = to_y - from_y
         if dx == 0 and dy < 0: return "北"
@@ -135,28 +187,42 @@ class WorldMap:
         return "?"
 
     def get_map_display(self, region_id: str = None) -> Dict:
-        """获取前端地图显示数据，根据坐标计算真实方向"""
+        """获取前端地图显示数据（基于坐标，包含空白格子）"""
         rid = region_id or self.current_region_id
         current = self.regions.get(rid) if rid else None
         if not current:
-            return {"current": None, "adjacent": []}
+            return {"current": None, "adjacent": [], "grid_size": self.grid_size}
 
+        deltas = [("北", 0, -1), ("南", 0, 1), ("东", 1, 0), ("西", -1, 0)]
         adjacent = []
-        for cid in current.connections:
-            region = self.regions.get(cid)
-            if not region:
-                continue
-            dir_label = self._get_direction_label(current.x, current.y, region.x, region.y)
-            adjacent.append({
-                "region_id": cid,
-                "name": region.name if region.explored else "未知",
-                "direction": dir_label,
-                "explored": region.explored,
-                "danger_level": region.danger_level if region.explored else 0,
-                "region_type": region.region_type if region.explored else "unknown",
-                "x": region.x,
-                "y": region.y,
-            })
+        for dir_name, dx, dy in deltas:
+            new_x = current.x + dx
+            new_y = current.y + dy
+            if 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size:
+                region = self.get_region_at(new_x, new_y)
+                if region:
+                    adjacent.append({
+                        "region_id": region.region_id,
+                        "name": region.name if region.explored else "未知",
+                        "direction": dir_name,
+                        "explored": region.explored,
+                        "danger_level": region.danger_level if region.explored else 0,
+                        "region_type": region.region_type if region.explored else "unknown",
+                        "x": region.x,
+                        "y": region.y,
+                    })
+                else:
+                    # 空白格子（可前往，到达时由RegionAgent生成）
+                    adjacent.append({
+                        "region_id": "",
+                        "name": "未知",
+                        "direction": dir_name,
+                        "explored": False,
+                        "danger_level": 0,
+                        "region_type": "unknown",
+                        "x": new_x,
+                        "y": new_y,
+                    })
 
         return {
             "current": {
@@ -170,21 +236,27 @@ class WorldMap:
                 "y": current.y,
             },
             "adjacent": adjacent,
+            "grid_size": self.grid_size,
         }
 
     def can_move_to(self, target_id: str) -> bool:
-        """检查是否可以移动到目标区域（必须相邻且已探索）"""
+        """检查是否可以移动到目标区域（必须坐标相邻）"""
         current = self.get_current_region()
         if not current:
             return False
-        # 可以移动到相邻区域，或已探索的相邻区域
-        return target_id in current.connections and target_id in self.regions
+        target = self.regions.get(target_id)
+        if not target:
+            return False
+        dx = abs(target.x - current.x)
+        dy = abs(target.y - current.y)
+        return (dx == 1 and dy == 0) or (dx == 0 and dy == 1)
 
     def to_dict(self) -> Dict:
         return {
             "regions": {rid: r.to_dict() for rid, r in self.regions.items()},
             "current_region_id": self.current_region_id,
             "start_region_id": self.start_region_id,
+            "grid_size": self.grid_size,
         }
 
     @classmethod
@@ -194,6 +266,7 @@ class WorldMap:
             wm.regions[rid] = WorldRegion.from_dict(rdata)
         wm.current_region_id = data.get("current_region_id")
         wm.start_region_id = data.get("start_region_id")
+        wm.grid_size = data.get("grid_size", 10)
         return wm
 
 
@@ -364,25 +437,94 @@ class MapGenerator:
     # 区域连接图（每个世界类型通用的连接逻辑）
     # town → wild → dungeon → wild → boss_lair
     # 分支：secret 从某些 wild/dungeon 可达
+    # 中文世界类型 → 英文key映射
+    WORLD_TYPE_MAP = {
+        "奇幻魔法": "fantasy", "仙侠修真": "xianxia", "武侠江湖": "wuxia",
+        "末世废土": "post_apocalyptic", "现世超武": "modern_power", "科幻未来": "scifi",
+    }
+
     @staticmethod
     def generate(world_setting: Dict, llm_client=None) -> WorldMap:
-        """根据世界观生成地图。优先用LLM生成，失败则用模板。"""
-        world_type = world_setting.get("world_type", "fantasy")
-        # 优先使用方格坐标模板
-        grid_templates = MapGenerator.GRID_LAYOUTS.get(world_type, MapGenerator.GRID_LAYOUTS["fantasy"])
+        """根据世界观生成地图。优先从世界设定的grid字段初始化。"""
+        # 优先从世界设定的 grid 字段生成（10x10方格，只放主要区域）
+        grid_config = world_setting.get("geography", {}).get("grid", {})
+        if grid_config and grid_config.get("main_regions"):
+            wm = MapGenerator._generate_from_world_grid(grid_config, world_setting)
+            print(f"[WorldMap] 从世界设定grid生成地图：{len(wm.regions)}个主要区域，grid_size={wm.grid_size}")
+            return wm
 
-        # 尝试 LLM 生成
+        # 兼容旧版：尝试 LLM 生成
         if llm_client:
             try:
                 wm = MapGenerator._generate_with_llm(world_setting, llm_client)
-                # LLM 生成后自动分配方格坐标
                 MapGenerator._assign_llm_grid_positions(wm)
+                wm.grid_size = 10
                 return wm
             except Exception as e:
                 print(f"[WorldMap] LLM生成失败，使用模板: {e}")
 
-        # 模板生成（使用方格坐标版）
-        return MapGenerator._generate_from_grid(grid_templates, world_setting)
+        # 最终回退：模板生成
+        world_type = world_setting.get("world_type", "fantasy")
+        world_type = MapGenerator.WORLD_TYPE_MAP.get(world_type, world_type)
+        grid_templates = MapGenerator.GRID_LAYOUTS.get(world_type, MapGenerator.GRID_LAYOUTS["fantasy"])
+        wm = MapGenerator._generate_from_grid(grid_templates, world_setting)
+        wm.grid_size = 10
+        return wm
+
+    @staticmethod
+    def _generate_from_world_grid(grid_config: Dict, world_setting: Dict) -> WorldMap:
+        """从世界设定的 grid 配置生成地图（10x10方格，只放置主要区域，空白格子在游戏中动态生成）"""
+        wm = WorldMap()
+        wm.grid_size = grid_config.get("size", 10)
+        monster_types = world_setting.get("dangers", {}).get("monster_types", [])
+
+        for r_def in grid_config.get("main_regions", []):
+            region = WorldRegion(
+                region_id=r_def["region_id"],
+                name=r_def["name"],
+                description=r_def.get("description", ""),
+                danger_level=r_def.get("danger_level", 1),
+                region_type=r_def.get("region_type", "wild"),
+                x=r_def.get("x", 0),
+                y=r_def.get("y", 0),
+            )
+            # 分配怪物
+            if region.danger_level > 0 and region.region_type != "town":
+                region.monsters = MapGenerator._assign_monsters(
+                    region.danger_level, monster_types, world_setting
+                )
+            # BOSS区域
+            if region.region_type == "boss_lair":
+                region.boss = MapGenerator._generate_boss(
+                    region.danger_level, monster_types, world_setting
+                )
+            # 完成条件
+            if r_def.get("completion_condition"):
+                region.completion_condition = r_def["completion_condition"]
+
+            wm.add_region(region)
+
+            # 起始点
+            if r_def.get("is_start"):
+                wm.start_region_id = region.region_id
+                wm.current_region_id = region.region_id
+                region.explored = True
+
+        # 如果没有标记起始点，用第一个town
+        if not wm.start_region_id and wm.regions:
+            for r in wm.regions.values():
+                if r.region_type == "town":
+                    wm.start_region_id = r.region_id
+                    wm.current_region_id = r.region_id
+                    r.explored = True
+                    break
+            if not wm.start_region_id:
+                first = next(iter(wm.regions.values()))
+                wm.start_region_id = first.region_id
+                wm.current_region_id = first.region_id
+                first.explored = True
+
+        return wm
 
     @staticmethod
     def _generate_from_template(templates: List[Dict], world_setting: Dict) -> WorldMap:

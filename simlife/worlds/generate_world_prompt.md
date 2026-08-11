@@ -23,6 +23,12 @@
 4. 数量适当：区域4-8个，种族3-6个，势力3-5个，副本3-5个，传说物品3-5个
 5. 所有名称要有风格统一性：同一世界的命名体系应一致
 6. 力量体系要有明确的规则和限制，不能是万能的
+7. 【方格地图·重要】在 geography.grid 中标注3-6个主要区域在10x10方格地图上的坐标：
+   - size 固定为 10
+   - main_regions 数组中每个区域必须有：region_id（英文蛇形）、name、x（0-9）、y（0-9）、region_type、danger_level、description、is_start
+   - 起始城镇放在 (0,0) 附近，BOSS区域放在 (5-9, 5-9) 附近，保证有足够的探索距离
+   - 只标注主要区域（城镇、BOSS巢穴、关键地下城），中间的空白格子由游戏运行时动态生成
+   - 区域之间的距离通过坐标间隔体现：相邻坐标差1=直接相邻可移动
 
 【输出格式】
 严格按照下面的 JSON 格式输出，不要添加任何其他文字说明。确保 JSON 格式正确，可以直接解析。
@@ -60,7 +66,36 @@
         "danger_level_description": "等级说明",
         "local_specialties": ["特产"]
       }
-    ]
+    ],
+    "grid": {
+      "size": 10,
+      "main_regions": [
+        {
+          "region_id": "english_id",
+          "name": "区域中文名",
+          "x": 0,
+          "y": 0,
+          "region_type": "town",
+          "danger_level": 0,
+          "description": "2-3句话描述",
+          "is_start": true,
+          "is_main_quest": true,
+          "completion_condition": "可选：如 boss_defeated:BOSS名"
+        },
+        {
+          "region_id": "boss_id",
+          "name": "BOSS区域名",
+          "x": 7,
+          "y": 7,
+          "region_type": "boss_lair",
+          "danger_level": 5,
+          "description": "BOSS区域描述",
+          "is_start": false,
+          "is_main_quest": true,
+          "completion_condition": "boss_defeated:BOSS名"
+        }
+      ]
+    }
   },
 
   "races": [
