@@ -1144,11 +1144,11 @@ const DeathModeUI = {
     // 是否可移动（非战斗、非地下城）
     const canMove = !state.in_combat && !state.in_dungeon;
 
-    // 方向 → 3x3 grid 位置（仅4方向，无对角线）
+    // 8方向 → 3x3 grid 位置
     const dirMap = {
-      '北': '0,1',
+      '西北': '0,0', '北': '0,1', '东北': '0,2',
       '西': '1,0', '中': '1,1', '东': '1,2',
-      '南': '2,1',
+      '西南': '2,0', '南': '2,1', '东南': '2,2',
     };
 
     // 构建3x3网格
@@ -1160,11 +1160,11 @@ const DeathModeUI = {
     }
     grid['1,1'] = { type: 'center', name: current.name };
 
-    // 填入相邻区域（含空白格子）
+    // 填入相邻区域（含空白格子、对角线）
     for (const adj of md.adjacent) {
       const pos = dirMap[adj.direction];
       if (pos) {
-        const isBlank = !adj.region_id;  // 空白格子（未生成区域）
+        const isBlank = !adj.region_id;
         grid[pos] = {
           type: isBlank ? 'blank' : 'adjacent',
           direction: adj.direction,
@@ -1173,12 +1173,13 @@ const DeathModeUI = {
           danger: adj.danger_level,
           regionType: adj.region_type,
           regionId: adj.region_id,
+          canMoveDir: adj.can_move !== false,
         };
       }
     }
 
     // 方向标签箭头
-    const dirArrow = { '北': '↑', '东': '→', '南': '↓', '西': '←' };
+    const dirArrow = { '北': '↑', '东北': '↗', '东': '→', '东南': '↘', '南': '↓', '西南': '↙', '西': '←', '西北': '↖' };
 
     // 危险色
     function dangerColor(d) {
@@ -1199,7 +1200,6 @@ const DeathModeUI = {
       for (let c = 0; c < 3; c++) {
         const cell = grid[`${r},${c}`];
         if (!cell) {
-          // 对角线空位（不可达）
           cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:#21262d;">·</div>`;
           continue;
         }
@@ -1208,8 +1208,19 @@ const DeathModeUI = {
             <span style="font-size:14px;">📍</span>
             <span style="font-size:7px;color:#3fb950;font-weight:bold;text-align:center;line-height:1.2;max-width:100%;word-break:break-all;">${cell.name}</span>
           </div>`;
+        } else if (!cell.canMoveDir) {
+          // 对角线方向（显示但不可直接到达）
+          const arrow = dirArrow[cell.direction] || '?';
+          const color = cell.explored ? dangerColor(cell.danger) : '#484f58';
+          const icon = cell.explored ? regionIcon(cell.regionType) : '🌫️';
+          const name = cell.explored ? cell.name : (cell.type === 'blank' ? '未探索' : '未知');
+          cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px solid #21262d;opacity:0.5;">
+            <span style="font-size:7px;color:#484f58;">${arrow}</span>
+            <span style="font-size:12px;margin:1px 0;opacity:0.6;">${icon}</span>
+            <span style="font-size:6px;color:#484f58;text-align:center;line-height:1.1;max-width:100%;word-break:break-all;padding:0 1px;">${name}</span>
+          </div>`;
         } else if (cell.type === 'blank') {
-          // 空白格子（可前往探索，到达时自动生成）
+          // 空白格子（可前往探索）
           if (canMove) {
             cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.background='#161b22';" onmouseout="this.style.background='#0d1117';">
               <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
@@ -1224,7 +1235,7 @@ const DeathModeUI = {
             </div>`;
           }
         } else {
-          // 已有区域
+          // 已有区域（可移动）
           const arrow = dirArrow[cell.direction] || '?';
           const color = cell.explored ? dangerColor(cell.danger) : '#484f58';
           const icon = cell.explored ? regionIcon(cell.regionType) : '❓';
@@ -1252,12 +1263,108 @@ const DeathModeUI = {
 
     return `
       <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #30363d;">
-        <div style="font-size:10px;color:#58a6ff;margin-bottom:4px;text-align:center;">🗺️ 地图 ${coord}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <span style="font-size:10px;color:#58a6ff;">🗺️ 地图 ${coord}</span>
+          <span onclick="DeathModeUI.showFullMap()" style="font-size:8px;color:#58a6ff;cursor:pointer;text-decoration:underline;">🌐 全图</span>
+        </div>
         <div style="display:flex;flex-wrap:wrap;width:100%;gap:2px;">
           ${cells}
         </div>
         <div style="font-size:7px;color:#484f58;text-align:center;margin-top:4px;">
           ${current.name} · 危险度${'★'.repeat(current.danger_level) || '安全'}<br>${moveHint}
+        </div>
+      </div>`;
+  },
+
+  showFullMap() {
+    const md = this._state?.map_display;
+    if (!md || !md.current) return;
+
+    const gridSize = md.grid_size || 10;
+    const allRegions = md.all_regions || [];
+    const current = md.current;
+
+    // 构建坐标→区域映射
+    const regionMap = {};
+    for (const r of allRegions) {
+      regionMap[`${r.x},${r.y}`] = r;
+    }
+
+    // 区域类型图标
+    function regionIcon(type) {
+      const icons = { town: '🏘️', wild: '🌲', dungeon: '🕳️', boss_lair: '👑', secret: '✨', unknown: '❓' };
+      return icons[type] || '📍';
+    }
+
+    // 危险色
+    function dangerColor(d) {
+      if (d >= 4) return '#f85149';
+      if (d >= 3) return '#d29922';
+      if (d >= 2) return '#58a6ff';
+      return '#3fb950';
+    }
+
+    // 找到已探索区域的边界（减少空白网格）
+    let minX = 0, maxX = gridSize - 1, minY = 0, maxY = gridSize - 1;
+    if (allRegions.length > 0) {
+      minX = Math.min(...allRegions.map(r => r.x)) - 1;
+      maxX = Math.max(...allRegions.map(r => r.x)) + 1;
+      minY = Math.min(...allRegions.map(r => r.y)) - 1;
+      maxY = Math.max(...allRegions.map(r => r.y)) + 1;
+      minX = Math.max(0, minX); maxX = Math.min(gridSize - 1, maxX);
+      minY = Math.max(0, minY); maxY = Math.min(gridSize - 1, maxY);
+    }
+
+    // 生成网格HTML
+    let gridHtml = '';
+    const cellSize = 40;
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const r = regionMap[`${x},${y}`];
+        const isCurrent = current.x === x && current.y === y;
+        if (isCurrent) {
+          gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a3a1a;border-radius:4px;border:2px solid #3fb950;">
+            <span style="font-size:16px;">📍</span>
+            <span style="font-size:7px;color:#3fb950;font-weight:bold;text-align:center;max-width:36px;word-break:break-all;">${current.name}</span>
+          </div>`;
+        } else if (r) {
+          const color = dangerColor(r.danger_level);
+          const icon = regionIcon(r.region_type);
+          gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#161b22;border-radius:4px;border:1px solid ${color}40;">
+            <span style="font-size:14px;">${icon}</span>
+            <span style="font-size:6px;color:${color};text-align:center;max-width:36px;word-break:break-all;line-height:1.1;">${r.name}</span>
+          </div>`;
+        } else {
+          gridHtml += `<div style="width:${cellSize}px;height:${cellSize}px;display:flex;align-items:center;justify-content:center;background:#0d1117;border-radius:4px;border:1px solid #161b22;">
+            <span style="font-size:8px;color:#21262d;">·</span>
+          </div>`;
+        }
+      }
+    }
+
+    const gridCols = maxX - minX + 1;
+
+    // 创建或更新弹窗
+    let overlay = document.getElementById('fullmap-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'fullmap-overlay';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+      document.body.appendChild(overlay);
+    }
+
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:16px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <span style="font-size:14px;color:#58a6ff;">🗺️ 全地图 (${gridSize}×${gridSize})</span>
+          <span onclick="document.getElementById('fullmap-overlay').remove()" style="font-size:18px;color:#8b949e;cursor:pointer;">✕</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(${gridCols},auto);gap:2px;justify-content:center;">
+          ${gridHtml}
+        </div>
+        <div style="font-size:8px;color:#484f58;margin-top:8px;text-align:center;">
+          📍当前位置 · ${current.name} (${current.x},${current.y})
         </div>
       </div>`;
   },

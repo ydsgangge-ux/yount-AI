@@ -187,15 +187,20 @@ class WorldMap:
         return "?"
 
     def get_map_display(self, region_id: str = None) -> Dict:
-        """获取前端地图显示数据（基于坐标，包含空白格子）"""
+        """获取前端地图显示数据（3x3九宫格 + 全图数据）"""
         rid = region_id or self.current_region_id
         current = self.regions.get(rid) if rid else None
         if not current:
-            return {"current": None, "adjacent": [], "grid_size": self.grid_size}
+            return {"current": None, "adjacent": [], "grid_size": self.grid_size, "all_regions": []}
 
-        deltas = [("北", 0, -1), ("南", 0, 1), ("东", 1, 0), ("西", -1, 0)]
+        # 8方向：4个直向（可移动）+ 4个对角（仅显示不可达）
+        deltas = [
+            ("西北", -1, -1, False), ("北", 0, -1, True), ("东北", 1, -1, False),
+            ("西", -1, 0, True),                              ("东", 1, 0, True),
+            ("西南", -1, 1, False),  ("南", 0, 1, True),  ("东南", 1, 1, False),
+        ]
         adjacent = []
-        for dir_name, dx, dy in deltas:
+        for dir_name, dx, dy, can_move in deltas:
             new_x = current.x + dx
             new_y = current.y + dy
             if 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size:
@@ -210,9 +215,10 @@ class WorldMap:
                         "region_type": region.region_type if region.explored else "unknown",
                         "x": region.x,
                         "y": region.y,
+                        "can_move": can_move,
                     })
                 else:
-                    # 空白格子（可前往，到达时由RegionAgent生成）
+                    # 空白格子
                     adjacent.append({
                         "region_id": "",
                         "name": "未知",
@@ -222,7 +228,21 @@ class WorldMap:
                         "region_type": "unknown",
                         "x": new_x,
                         "y": new_y,
+                        "can_move": can_move,
                     })
+
+        # 全图数据：所有已生成的区域（供弹窗预览）
+        all_regions = []
+        for r in self.regions.values():
+            all_regions.append({
+                "region_id": r.region_id,
+                "name": r.name,
+                "x": r.x,
+                "y": r.y,
+                "explored": r.explored,
+                "danger_level": r.danger_level,
+                "region_type": r.region_type,
+            })
 
         return {
             "current": {
@@ -237,6 +257,7 @@ class WorldMap:
             },
             "adjacent": adjacent,
             "grid_size": self.grid_size,
+            "all_regions": all_regions,
         }
 
     def can_move_to(self, target_id: str) -> bool:
