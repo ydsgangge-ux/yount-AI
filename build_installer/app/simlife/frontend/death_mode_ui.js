@@ -1189,24 +1189,24 @@ const DeathModeUI = {
         const cell = grid[`${r},${c}`];
         if (!cell) {
           // 对角线空位（不可达）
-          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:#21262d;">·</div>`;
+          cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:#21262d;">·</div>`;
           continue;
         }
         if (cell.type === 'center') {
-          cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a3a1a;border-radius:6px;border:1px solid #3fb950;">
+          cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a3a1a;border-radius:6px;border:1px solid #3fb950;">
             <span style="font-size:14px;">📍</span>
             <span style="font-size:7px;color:#3fb950;font-weight:bold;text-align:center;line-height:1.2;max-width:100%;word-break:break-all;">${cell.name}</span>
           </div>`;
         } else if (cell.type === 'blank') {
           // 空白格子（可前往探索，到达时自动生成）
           if (canMove) {
-            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.background='#161b22';" onmouseout="this.style.background='#0d1117';">
+            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.background='#161b22';" onmouseout="this.style.background='#0d1117';">
               <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
               <span style="font-size:14px;margin:1px 0;">🌫️</span>
               <span style="font-size:6px;color:#484f58;text-align:center;">可探索</span>
             </div>`;
           } else {
-            cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;opacity:0.4;">
+            cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:#0d1117;border:1px dashed #30363d;opacity:0.4;">
               <span style="font-size:8px;color:#58a6ff;font-weight:bold;">${dirArrow[cell.direction]} ${cell.direction}</span>
               <span style="font-size:14px;margin:1px 0;">🌫️</span>
               <span style="font-size:6px;color:#484f58;text-align:center;">🔒</span>
@@ -1219,13 +1219,13 @@ const DeathModeUI = {
           const icon = cell.explored ? regionIcon(cell.regionType) : '❓';
           const name = cell.explored ? cell.name : '未知';
           if (canMove) {
-            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};cursor:pointer;" onmouseover="this.style.borderColor='#58a6ff';" onmouseout="this.style.borderColor='${cell.explored ? '#21262d' : '#161b22'}';">
+            cells += `<div onclick="DeathModeUI.moveByDirection('${cell.direction}')" style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};cursor:pointer;" onmouseover="this.style.borderColor='#58a6ff';" onmouseout="this.style.borderColor='${cell.explored ? '#21262d' : '#161b22'}';">
               <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
               <span style="font-size:14px;margin:1px 0;">${icon}</span>
               <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">${name}</span>
             </div>`;
           } else {
-            cells += `<div style="width:33.33%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};opacity:0.4;">
+            cells += `<div style="flex:1 0 0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:4px;background:${cell.explored ? '#161b22' : '#0d1117'};border:1px solid ${cell.explored ? '#21262d' : '#161b22'};opacity:0.4;">
               <span style="font-size:8px;color:${color};font-weight:bold;">${arrow} ${cell.direction}</span>
               <span style="font-size:14px;margin:1px 0;">${icon}</span>
               <span style="font-size:7px;color:${color};text-align:center;line-height:1.2;max-width:100%;word-break:break-all;padding:0 1px;">🔒</span>
