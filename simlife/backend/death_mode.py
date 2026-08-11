@@ -28,6 +28,7 @@ from simlife.backend.equipment_system import EquipmentSystem
 from simlife.backend.quest_system import QuestSystem
 from simlife.backend.world_progress import WorldProgress
 from simlife.backend.dungeon_agent import DungeonAgent, Dungeon
+from simlife.backend.region_agent import RegionAgent
 from simlife.backend.party_agent import PartyAgent, PartyMember
 from simlife.backend.ending_system import generate_hidden_ending, HiddenEnding
 
@@ -64,6 +65,7 @@ class DeathModeEngine:
         self.state: Optional[Dict] = None
         self.world_map: Optional[WorldMap] = None
         self.npc_system: Optional[NPCSystem] = None
+        self.region_agent: Optional[RegionAgent] = None
         self.dungeon_agent: Optional[DungeonAgent] = None
         self._current_dungeon: Optional[Dungeon] = None
         self.party_agent: Optional[PartyAgent] = None
@@ -122,6 +124,13 @@ class DeathModeEngine:
         # 恢复地图和NPC
         if self.state and self.world_map is None and self.state.get("world_map"):
             self.world_map = WorldMap.from_dict(self.state["world_map"])
+            # 恢复 RegionAgent
+            if self.region_agent is None:
+                try:
+                    world_id = self.state.get("world_setting", {}).get("world_id", "")
+                    self.region_agent = RegionAgent(self.world_map, world_id)
+                except Exception:
+                    pass
         if self.state and self.npc_system is None and self.state.get("npc_system"):
             self.npc_system = NPCSystem.from_dict(self.state["npc_system"])
         # 迁移旧存档：inventory → shared_inventory
@@ -347,6 +356,14 @@ class DeathModeEngine:
                         wm.save_region(world_id, region_data)
         except Exception as e:
             print(f"[DeathMode] 保存区域文件失败: {e}")
+
+        # ── 初始化区域管理 Agent ──
+        try:
+            world_id = world_setting.get("world_id", "")
+            self.region_agent = RegionAgent(self.world_map, world_id)
+            print(f"[DeathMode] RegionAgent 初始化完成（world_id={world_id}）")
+        except Exception as e:
+            print(f"[DeathMode] RegionAgent 初始化失败: {e}")
 
         # ── 生成隐藏结局（对用户和系统角色完全隐藏）──
         try:
@@ -1091,99 +1108,57 @@ class DeathModeEngine:
         outcome_type = agent_result.get("outcome_type", "nothing")
         next_tension = agent_result.get("next_tension", "medium")
 
-        # ── 离开区域/方向移动的后端兜底逻辑 ──
-        # 核心问题：LLM经常在用户说"南下"时生成随机地点名称（如"水晶浅滩"），
-        # 导致方格坐标从未更新，每次南下都从同个起点计算，反复横跳。
-        # 修复方案：用户明确说方向时，强制按方格坐标移动，无视LLM的new_location。
-        _original_location = state.get("story", {}).get("current_location", "")
-        _direction_forced = False  # 标记是否由后端强制移动
+        # ── 方向移动/区域管理：RegionAgent 接管 ──
+        # RegionAgent 负责：
+        # 1. 从用户行动中提取方向关键词（"南下"/"北上"/"东行"/"西行"等）
+        # 2. 根据方格坐标计算新区域，更新 current_region_id
+        # 3. 加载区域文件数据，供后续使用
+        # 4. 接收 StoryAgent 的 region_story_updates 写回
+        _region_moved = False
+        _region_move_result = None
         try:
             _action = (action or "").strip()
-            _leave_keywords = ("离开", "离去", "出城", "出镇", "出村", "北上", "南下", "东行", "西行", "前往", "去", "出发", "启程", "上路")
-            _is_leave_action = any(kw in _action for kw in _leave_keywords)
-
-            # 从行动文本中提取方向关键词
-            _dir_map = {"北上": "北", "南下": "南", "东行": "东", "西行": "西", "北": "北", "南": "南", "东": "东", "西": "西"}
+            _dir_map = {"北上": "北", "南下": "南", "东行": "东", "西行": "西", "北": "北", "南": "南", "东": "东", "西": "西",
+                        "东北": "东北", "西北": "西北", "东南": "东南", "西南": "西南"}
             _wanted_dir = ""
             for _kw, _d in _dir_map.items():
                 if _kw in _action:
                     _wanted_dir = _d
                     break
-
-            # 检查LLM是否真正移动了位置（new_location非空且不等于原始位置）
-            new_location = agent_result.get("new_location")
-            _llm_new_loc = (new_location or "").strip() if isinstance(new_location, str) else ""
-            _llm_moved = bool(_llm_new_loc and _llm_new_loc != _original_location)
-
-            # 判断是否需要强制方格移动：用户说了具体方向 或 (说了离开且LLM没移动)
-            _force_grid_move = bool(_wanted_dir) or (_is_leave_action and not _llm_moved)
-
-            if _force_grid_move and self.world_map:
-                _current_wm_region = self.world_map.get_current_region()
-                if _current_wm_region:
-                    _adjacent = self.world_map.get_adjacent_regions()
-                    if _adjacent:
-                        # 按方向筛选相邻区域
-                        _dir_candidates = []
-                        if _wanted_dir:
-                            for r in _adjacent:
-                                _d = self.world_map._get_direction_label(
-                                    _current_wm_region.x, _current_wm_region.y, r.x, r.y
-                                )
-                                if _d == _wanted_dir:
-                                    _dir_candidates.append(r)
-                        # 有方向匹配则优先选方向匹配的，否则全量
-                        _pool = _dir_candidates if _dir_candidates else _adjacent
-                        # 优先选野外区域，其次 dungeon，最后任意
-                        _target = None
-                        for r in _pool:
-                            if r.region_type == "wild":
-                                _target = r
-                                break
-                        if not _target:
-                            for r in _pool:
-                                if r.region_type != "town":
-                                    _target = r
-                                    break
-                        if not _target:
-                            _target = _pool[0]
-                        # 执行移动
-                        self.world_map.current_region_id = _target.region_id
-                        _target.explored = True
-                        state["story"]["current_location"] = _target.name
-                        state["story"]["scene_description"] = _target.description
-                        # 清理旧区域任务委托
-                        QuestSystem.cleanup_offers_by_region(state)
-                        print(f"[DeathMode] 强制方格移动：{_original_location} → {_target.name}（方向={_wanted_dir or 'auto'}）")
-                        # 更新叙事（添加一段到达描述）
-                        _arrival_note = f"\n\n两人策马前行，{_original_location}的轮廓在身后渐渐模糊。前方出现了新的景象——{_target.description}"
-                        narrative += _arrival_note
-                        agent_result["narrative"] = narrative
-                        # 任务进度：到达新区域触发
-                        try:
-                            QuestSystem.record_progress(state, "visit_location",
-                                                         location=_target.name,
-                                                         narrative=narrative, action_text=action)
-                        except Exception:
-                            pass
-                        # 标记已强制移动，下游跳过LLM的new_location
-                        _direction_forced = True
+            if _wanted_dir and self.region_agent:
+                _move_result = self.region_agent.move_by_direction(_wanted_dir)
+                if _move_result.get("moved"):
+                    _region_moved = True
+                    _region_move_result = _move_result
+                    _target = _move_result["region"]
+                    _original_location = state.get("story", {}).get("current_location", "")
+                    state["story"]["current_location"] = _target.name
+                    state["story"]["scene_description"] = _target.description
+                    # 清理旧区域任务委托
+                    QuestSystem.cleanup_offers_by_region(state)
+                    print(f"[DeathMode] RegionAgent 方向移动：{_original_location} → {_target.name}（方向={_wanted_dir}）")
+                    # 更新叙事（添加一段到达描述）
+                    _arrival_note = f"\n\n两人策马前行，{_original_location}的轮廓在身后渐渐模糊。前方出现了新的景象——{_target.description}"
+                    narrative += _arrival_note
+                    agent_result["narrative"] = narrative
+                    # 任务进度：到达新区域触发
+                    try:
+                        QuestSystem.record_progress(state, "visit_location",
+                                                     location=_target.name,
+                                                     narrative=narrative, action_text=action)
+                    except Exception:
+                        pass
         except Exception as e:
-            print(f"[DeathMode] 离开区域检测异常: {e}")
+            print(f"[DeathMode] RegionAgent 方向移动异常: {e}")
 
-        # 地点连续性：如果行动涉及移动，更新当前地点
-        # 注意：如果后端已强制方格移动，则忽略LLM的new_location
-        if not _direction_forced:
-            new_location = agent_result.get("new_location")
-            if new_location and isinstance(new_location, str) and new_location.strip():
-                state["story"]["current_location"] = new_location.strip()
-                # 任务进度：进入新地点触发（传入叙事文本用于 fallback 匹配）
-                try:
-                    QuestSystem.record_progress(state, "visit_location",
-                                                 location=new_location.strip(),
-                                                 narrative=narrative, action_text=action)
-                except Exception:
-                    pass
+        # ── 区域状态更新：StoryAgent 写回 region_story_updates ──
+        if not _region_moved:
+            try:
+                _region_updates = agent_result.get("region_story_updates")
+                if _region_updates and isinstance(_region_updates, dict) and self.region_agent:
+                    self.region_agent.update_current_region_state(_region_updates)
+            except Exception as e:
+                print(f"[DeathMode] 区域状态更新异常: {e}")
 
         # 任务进度：与NPC对话触发（从用户行动和叙事文本中提取NPC名）
         try:

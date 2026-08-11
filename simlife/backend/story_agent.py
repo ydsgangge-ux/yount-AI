@@ -739,14 +739,12 @@ class StoryAgent:
 5. 如果是社交行动，描述对方反应
 6. 保持紧张感，但不透露具体数值
 7. 结尾留下"接下来会发生什么"的悬念
-8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。除非玩家明确说"前往XX/离开这里/去XX"，否则 new_location 必须填 null，叙事地点不得改变。绝不可在玩家只说"查看/清掉/攻击"等原地行动时擅自切换地点。
-9. 如果行动涉及移动（如"前往XX"、"探索XX"），叙事应描述到达该处或移动过程，并在new_location中填写新地点
-10. 如果行动不涉及移动，new_location填null（保持原地）
+8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。区域切换由系统自动管理，你不需要在输出中指定 new_location。叙事应自然描述在当前区域内的行动经过。
 11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
-12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力），new_location 填新地点。
+12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力）。
 13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。
 14. 【行动连续性·最重要】必须参考【最近行动记录】，当前行动是之前行动的延续。NPC名字、地点、对话内容必须与之前一致。如果之前在跟某个NPC对话，当前必须还是那个NPC。如果之前在某个地点，当前必须还在那个地点（除非行动明确涉及移动）。
-15. 【战斗状态感知·关键】如果【角色状态】中标注了【战斗中】，说明战斗正在进行：叙事必须描述战斗交锋过程，绝不能生成新敌人（spotted_enemies 填 null），绝不能切换地点（new_location 填 null）。如果【最近行动记录】中有[战斗胜利]，说明战斗刚结束：叙事应描述战后的短暂喘息或清理战场，不要假装敌人还活着。
+15. 【战斗状态感知·关键】如果【角色状态】中标注了【战斗中】，说明战斗正在进行：叙事必须描述战斗交锋过程，绝不能生成新敌人（spotted_enemies 填 null），绝不能切换地点。如果【最近行动记录】中有[战斗胜利]，说明战斗刚结束：叙事应描述战后的短暂喘息或清理战场，不要假装敌人还活着。
 16. 【角色名约束·最严格】叙事中只能使用以下角色名：{char.get('name', 'AI')}（系统角色）和{user_char.get('name', '用户')}（用户角色）。绝不能编造其他角色名（如 turent、张三等），绝不能把技能或攻击归属到不存在的角色身上。
 17. 【攻击NPC·坏人路线·最严格】当角色攻击、杀害、抢劫、袭击任何有名字的人物（如"杀掉旅店老板""攻击镇长""抢劫商人""杀死莱恩""干掉药剂师"）时：
     - 必须在 spotted_enemies 中填入该人物的名称（如 [{{"name": "旅店老板", "count": 1}}] 或 [{{"name": "莱恩", "count": 1}}]），让战斗系统处理战斗
@@ -757,6 +755,11 @@ class StoryAgent:
     - 如果上方【已死亡NPC·绝不能复活】列表中已包含该NPC，说明NPC已死，不能再被攻击或交互，叙事应描述"尸体还在那里"或类似内容
 18. 【已死亡NPC交互】如果角色试图与【已死亡NPC·绝不能复活】列表中的NPC对话、交易或交互，叙事应明确描述该NPC已死（如"你走到旅店老板的尸体旁，他已经无法回答任何问题"），outcome_type 填 "nothing"，不要生成新的 spotted_enemies
 19. 【剧情终点约束】每个区域和剧情线都应有自然终点。如果区域已完成或主线线索已明朗，叙事不应生成新的分支冲突或任务，而应让故事自然收尾并引导角色前往最终方向。
+20. 【区域状态写入·可选】如果叙事推进了当前区域的剧情发展（如完成了某个探索目标、发现了重要隐藏点、击败了区域守卫等），可以在 region_story_updates 中记录：
+    - story_state: 探索进度文本（如"已探索矿洞入口"、"击败了森林守卫"）
+    - story_progress: 剧情推进关键描述（如"发现了通往深处的隐藏通道"）
+    - completed: true（仅当该区域所有核心内容都已探索完毕，不再需要新内容时设为 true）
+    如果当前行动没有推进区域剧情，region_story_updates 填 null。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
@@ -781,7 +784,11 @@ class StoryAgent:
   "narrative": "结果叙事（2-3句，不超过150字）",
   "outcome_type": "combat_success/combat_fail/discovery/social_response/trap/escape/rest/trade/nothing",
   "next_tension": "low/medium/high",
-  "new_location": "新地点名称" 或 null,
+  "region_story_updates": {{
+    "story_state": "探索进度（如'已探索入口处'）" 或 null,
+    "story_progress": "剧情推进描述" 或 null,
+    "completed": true 或 null
+  }} 或 null,
   "items_gained": ["物品名1", "物品名2"] 或 null,
   "gold_spent": 0 或 null,
   "gold_gained": 0 或 null,
@@ -869,7 +876,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
                 "narrative": str(result.get("narrative", "行动执行完毕。")),
                 "outcome_type": str(result.get("outcome_type", "nothing")),
                 "next_tension": str(result.get("next_tension", "medium")),
-                "new_location": result.get("new_location"),
+                "region_story_updates": result.get("region_story_updates"),
                 "items_gained": result.get("items_gained"),
                 "gold_spent": result.get("gold_spent"),
                 "gold_gained": result.get("gold_gained"),
@@ -1007,15 +1014,14 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
 5. 如果角色阵亡，描述壮烈的最后一刻
 6. Boss/精英的对话和技能必须与日志一致
 7. 角色名只能使用：{char_name}（系统角色）和{user_name}（用户角色）
-8. new_location 必须填 null（战斗中不切换地点）
-9. spotted_enemies 必须填 null（战斗中不生成新敌人）
+8. spotted_enemies 必须填 null（战斗中不生成新敌人）
 
 返回JSON格式：
 {{
   "narrative": "战斗叙事（基于实际日志，不超过150字）",
   "outcome_type": "combat_success" 或 "combat_fail" 或 "combat_ongoing",
   "next_tension": "low/medium/high",
-  "new_location": null,
+  "region_story_updates": null,
   "items_gained": null,
   "gold_spent": null,
   "gold_gained": null,
@@ -1041,7 +1047,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
                 "narrative": str(result.get("narrative", "")),
                 "outcome_type": str(result.get("outcome_type", "combat_ongoing")),
                 "next_tension": str(result.get("next_tension", "medium")),
-                "new_location": None,  # 战斗中不切换地点
+                "region_story_updates": None,  # 战斗中不更新区域状态
                 "items_gained": None,
                 "gold_spent": None,
                 "gold_gained": None,
@@ -1261,10 +1267,10 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
         result = {}
         # 用正则提取已完成的 "key": "value" 或 "key": [...] 或 "key": null
         # 字符串值
-        for m in re.finditer(r'"(narrative|outcome_type|next_tension|new_location)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
+        for m in re.finditer(r'"(narrative|outcome_type|next_tension)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
             result[m.group(1)] = m.group(2).encode().decode('unicode_escape')
         # null 值
-        for m in re.finditer(r'"(new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers)"\s*:\s*(null)', text):
+        for m in re.finditer(r'"(region_story_updates|new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers)"\s*:\s*(null)', text):
             result[m.group(1)] = None
         # 数值
         for m in re.finditer(r'"(gold_spent|gold_gained|hp_change|mp_change)"\s*:\s*(-?\d+)', text):
