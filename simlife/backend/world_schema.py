@@ -87,6 +87,32 @@ RELATIONS_SCHEMA = {
     # routes 字段已废弃（全代码库无读取逻辑），保留 schema 以兼容旧数据
 }
 
+# 世界 BOSS 等级固定曲线（玩家上限 60，全程高于玩家保证挑战性）
+WORLD_BOSS_LEVELS = {
+    "boss": 65,          # 世界 BOSS 本体
+    "subordinate": 64,   # 直属手下
+    "elite": 62,         # 精英
+    "minion": 60,        # 精锐小兵
+}
+
+# 世界 BOSS 数量约束（按用户提供的世界，最少 3 个，最多 8 个）
+WORLD_BOSS_MIN = 3
+WORLD_BOSS_MAX = 8
+
+WORLD_BOSS_SCHEMA = {
+    "name": "",            # BOSS名
+    "type": "monster",     # monster/evil_faction/special_race/other
+    "identity": "",        # 身份/性格/目标（供身份交流：谈判/求饶/逃跑/加入）
+    "level": 65,           # BOSS本体等级（固定公式，忽略LLM乱填）
+    "territories": [],     # 领地区域名（2-3个，都会自动生成 worldboss 区域）
+    "minions": [],         # 精锐小兵名列表（Lv.60）
+    "elites": [],          # 精英名列表（Lv.62）
+    "subordinates": [],    # 直属手下名列表（Lv.64）
+    "can_surrender": True, # 是否允许玩家求饶/逃跑
+    "can_join": True,      # 是否允许玩家加入该BOSS势力
+    "description": "",     # 背景描述
+}
+
 
 # ────────────────────────────────
 # 清洗/标准化工具
@@ -168,6 +194,44 @@ def sanitize_relations(relations: Dict) -> Dict:
     relations["storylines"] = _normalize_list(relations.get("storylines"))
     relations["characters"] = _normalize_list(relations.get("characters"))
     return relations
+
+
+def sanitize_world_boss(boss: Dict) -> Dict:
+    """清洗一个世界 BOSS 为标准结构，并强制使用固定等级曲线"""
+    if not isinstance(boss, dict):
+        boss = {}
+    boss = _apply_schema(boss, WORLD_BOSS_SCHEMA)
+    # 数量/内容用固定等级曲线兜底，防止 LLM 乱填导致失衡
+    boss["level"] = WORLD_BOSS_LEVELS["boss"]
+    boss["minions"] = _normalize_list(boss.get("minions"))
+    boss["elites"] = _normalize_list(boss.get("elites"))
+    boss["subordinates"] = _normalize_list(boss.get("subordinates"))
+    boss["territories"] = _normalize_list(boss.get("territories"))
+    # 类型规范化
+    if boss.get("type") not in ("monster", "evil_faction", "special_race", "other"):
+        boss["type"] = "monster"
+    # 布尔字段兜底
+    boss["can_surrender"] = bool(boss.get("can_surrender", True))
+    boss["can_join"] = bool(boss.get("can_join", True))
+    return boss
+
+
+def build_world_boss_prompt_schema() -> str:
+    """生成给 LLM 的世界 BOSS Schema 模板（约束 LLM 输出标准结构）"""
+    return """每个世界 BOSS 必须返回如下 JSON 对象（数量 3-8 个，可混合种族/势力/怪物）：
+{
+  "name": "世界BOSS名",
+  "type": "monster/evil_faction/special_race/other",
+  "identity": "身份、性格、目标（供玩家谈判/求饶/逃跑/加入时使用）",
+  "description": "背景故事",
+  "territories": ["领地区域名1", "领地区域名2", "领地区域名3"],
+  "minions": ["精锐小兵名", "精锐小兵名"],
+  "elites": ["精英名", "精英名"],
+  "subordinates": ["直属手下名", "直属手下名"],
+  "can_surrender": true,
+  "can_join": true
+}
+（等级由系统固定：小兵60/精英62/手下64/BOSS65，无需填写）"""
 
 
 def build_region_prompt_schema() -> str:

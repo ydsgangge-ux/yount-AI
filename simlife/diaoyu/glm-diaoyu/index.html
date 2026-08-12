@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>俄罗斯钓鱼 · 网页版</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game-wrap">
+  <canvas id="scene"></canvas>
+
+  <!-- 顶部状态栏 -->
+  <div id="topbar">
+    <div class="stat">
+      <span class="ic">🎣</span>
+      <span class="lbl">等级</span>
+      <span class="val" id="lvl">1</span>
+    </div>
+    <div class="stat">
+      <span class="ic">💰</span>
+      <span class="lbl">金币</span>
+      <span class="val" id="coin">0</span>
+    </div>
+    <div class="stat">
+      <span class="ic">🐟</span>
+      <span class="lbl">已捕</span>
+      <span class="val" id="caught">0</span>
+    </div>
+    <div class="stat time-stat">
+      <span class="ic">🕐</span>
+      <span class="lbl" id="tod-label">白天</span>
+    </div>
+  </div>
+
+  <!-- 右侧鱼类图鉴 -->
+  <div id="dex">
+    <div class="dex-title">📜 鱼类图鉴</div>
+    <div id="dex-list"></div>
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div id="bottombar">
+    <div id="hint" class="hint">点击水面 抛 出鱼竿</div>
+    <button id="action-btn" class="action-btn">抛 竿</button>
+    <div class="power-wrap">
+      <div class="power-label">张力</div>
+      <div class="power-bar"><div id="power-fill" class="power-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- 弹出提示 -->
+  <div id="toast"></div>
+
+  <!-- 战斗面板（咬钩时显示） -->
+  <div id="fight-panel" class="hidden">
+    <div class="fight-title">🐟 上钩了！保持张力在绿区</div>
+    <div class="tension-bar">
+      <div class="green-zone"></div>
+      <div id="tension-ind" class="tension-ind"></div>
+    </div>
+    <div class="fight-btns">
+      <button id="pull-btn">👆 收线</button>
+      <button id="release-btn">✋ 放线</button>
+    </div>
+    <div class="fight-info">
+      <span id="fish-name">未知</span> ·
+      耐力 <span id="fish-stam">100</span>%
+    </div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

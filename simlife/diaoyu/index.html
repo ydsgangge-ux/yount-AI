@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>湖畔钓鱼物语 · 钓鱼4网页版</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部状态栏 -->
+    <header id="topbar">
+      <div class="brand">🐟 湖畔钓鱼·物语</div>
+      <div class="stat">
+        <span class="icon">💰</span>
+        <span id="gold">0</span>
+      </div>
+      <div class="stat">
+        <span class="icon">📍</span>
+        <span id="location-name">老磨坊池塘</span>
+      </div>
+      <div class="stat">
+        <span class="icon">🎣</span>
+        <span id="fish-count">0</span>
+      </div>
+      <nav class="tabs">
+        <button class="tab active" data-panel="game">钓鱼</button>
+        <button class="tab" data-panel="bag">装备</button>
+        <button class="tab" data-panel="shop">商店</button>
+        <button class="tab" data-panel="collection">图鉴</button>
+        <button class="tab" data-panel="map">水域</button>
+      </nav>
+    </header>
+
+    <main id="content">
+      <!-- 钓鱼主界面 -->
+      <section id="panel-game" class="panel active">
+        <div class="game-area">
+          <canvas id="game"></canvas>
+          <div id="bite-toast" class="toast hidden"></div>
+          <div id="result-toast" class="toast hidden"></div>
+
+          <!-- 操作提示 -->
+          <div id="hint" class="hint">
+            <span id="hint-text">按住鼠标蓄力，松开抛竿</span>
+            <div id="powerbar-wrap"><div id="powerbar"></div></div>
+          </div>
+
+          <!-- 遛鱼张力条 -->
+          <div id="tension-wrap" class="hidden">
+            <div class="tension-label">张力</div>
+            <div id="tension-bar"><div id="tension-fill"></div></div>
+          </div>
+        </div>
+
+        <!-- 已装备栏 -->
+        <div id="equip-bar">
+          <div class="equip-slot" data-slot="rod"><span class="es-icon">🎣</span><div class="es-info"><b>鱼竿</b><span id="eq-rod">木竿</span></div></div>
+          <div class="equip-slot" data-slot="reel"><span class="es-icon">⚙️</span><div class="es-info"><b>卷线轮</b><span id="eq-reel">基础轮</span></div></div>
+          <div class="equip-slot" data-slot="line"><span class="es-icon">🧵</span><div class="es-info"><b>鱼线</b><span id="eq-line">尼龙线</span></div></div>
+          <div class="equip-slot" data-slot="bait"><span class="es-icon">🪱</span><div class="es-info"><b>鱼饵</b><span id="eq-bait">蚯蚓</span></div></div>
+        </div>
+      </section>
+
+      <!-- 装备背包 -->
+      <section id="panel-bag" class="panel">
+        <h2>🎒 装备背包</h2>
+        <div id="bag-list" class="item-grid"></div>
+      </section>
+
+      <!-- 商店 -->
+      <section id="panel-shop" class="panel">
+        <h2>🏪 渔具商店</h2>
+        <div class="shop-tabs">
+          <button class="stab active" data-type="rod">鱼竿</button>
+          <button class="stab" data-type="reel">卷线轮</button>
+          <button class="stab" data-type="line">鱼线</button>
+          <button class="stab" data-type="bait">鱼饵</button>
+        </div>
+        <div id="shop-list" class="item-grid"></div>
+      </section>
+
+      <!-- 图鉴 -->
+      <section id="panel-collection" class="panel">
+        <h2>📖 鱼种图鉴 <span id="collection-progress"></span></h2>
+        <div id="collection-list"></div>
+      </section>
+
+      <!-- 水域地图 -->
+      <section id="panel-map" class="panel">
+        <h2>🗺️ 选择水域</h2>
+        <div id="map-list" class="map-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

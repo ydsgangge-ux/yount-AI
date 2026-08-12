@@ -7,6 +7,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 
+# 延迟导入，避免循环依赖
+def _life_skill_init() -> Dict:
+    from simlife.backend import life_skills
+    return life_skills.init_life_state()
+
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 STATE_FILE = DATA_DIR / "death_mode_state.json"
 HALL_FILE = DATA_DIR / "death_hall.json"
@@ -272,6 +278,8 @@ def create_initial_state(
         "world_progress_triggered": [],  # 已触发的世界事件 id
         # ── 共享背包 ──
         "shared_inventory": [],  # 两角色共享的背包（装备穿戴后从此取出）
+        # ── 生活技能系统 ──
+        "life_state": _life_skill_init(),  # 烹饪/锻造/钓鱼 生活技能状态
         # ── 用户角色（与AI角色并列） ──
         "user_character": user_character,
         # ── 地图与NPC系统 ──

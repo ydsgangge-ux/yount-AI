@@ -260,9 +260,10 @@ def generate_world_setting(
 4. 数量适当：区域4-8个，种族3-6个，势力3-5个，副本3-5个
 5. 所有名称要有风格统一性
 6. 时间跨度要真实：技能学习、修炼提升、旅途赶路都需要合理的时长，不能几天速成
+7. 世界BOSS：在 dangers.world_bosses 中生成 3-8 个世界级强敌（是最顶尖的存在，玩家不一定会遇到，主线通常不涉及）。它们不限于怪物，也可以是反抗势力首领、特殊种族之王、异界造物等。每个BOSS要有独立的领地（territories 数组，2-3个区域名）、身份性格（identity，供玩家谈判/求饶/逃跑/加入）、以及直属手下/精英/小兵（只填名字，等级由系统固定）。等级无需填写。
 
 返回完整的 JSON 格式，必须包含以下顶层字段：
-world_id（英文小写id）、world_name、world_type、era、communication（device/device_description/narrative_style）、geography（overview/regions数组）、races数组、power_system（name/description/levels数组/description中要包含每个等级的典型修炼时长）、factions数组、history（overview/major_events数组/current_situation）、daily_life、dangers（monster_types/dungeons数组）、character_generation_guide、activity_generation_guide、event_generation_guide
+world_id（英文小写id）、world_name、world_type、era、communication（device/device_description/narrative_style）、geography（overview/regions数组）、races数组、power_system（name/description/levels数组/description中要包含每个等级的典型修炼时长）、factions数组、history（overview/major_events数组/current_situation）、daily_life、dangers（monster_types/dungeons/world_bosses数组）、character_generation_guide、activity_generation_guide、event_generation_guide
 
 只返回JSON，不要任何其他文字。确保JSON可以直接被解析。"""
 
@@ -321,6 +322,20 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
         factions = setting.get("factions", [])
         if factions and isinstance(factions, list):
             setting["factions"] = [world_schema.sanitize_faction(f) for f in factions if isinstance(f, dict)]
+
+        # 清洗世界 BOSS 为标准结构（数量 3-8，等级固定曲线）
+        dangers = setting.setdefault("dangers", {})
+        raw_bosses = dangers.get("world_bosses", [])
+        if raw_bosses and isinstance(raw_bosses, list):
+            bosses = [world_schema.sanitize_world_boss(b) for b in raw_bosses if isinstance(b, dict)]
+            # 数量约束：最少 3，最多 8
+            bosses = bosses[:world_schema.WORLD_BOSS_MAX]
+            while len(bosses) < world_schema.WORLD_BOSS_MIN:
+                bosses.append(world_schema.sanitize_world_boss({
+                    "name": f"世界之敌{len(bosses)+1}",
+                    "description": "世界边缘沉睡的古老威胁，其存在本身就是一种象征。",
+                }))
+            dangers["world_bosses"] = bosses
 
         # 拆分区域到独立文件（标准 schema 清洗后落盘）
         regions = setting.get("geography", {}).get("regions", [])

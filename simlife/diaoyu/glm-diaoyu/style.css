@@ -1,0 +1,254 @@
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #0a1424;
+  color: #eaf2ff;
+}
+
+#game-wrap {
+  position: relative;
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+}
+
+#scene {
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: crosshair;
+}
+
+/* ===== 顶部状态栏 ===== */
+#topbar {
+  position: absolute;
+  top: 14px; left: 14px;
+  display: flex;
+  gap: 12px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.stat {
+  background: rgba(12, 28, 50, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  border-radius: 12px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  min-width: 90px;
+}
+.stat .ic { font-size: 18px; filter: drop-shadow(0 0 4px rgba(255,255,255,.3)); }
+.stat .lbl { font-size: 12px; opacity: 0.7; }
+.stat .val { font-size: 16px; font-weight: 700; color: #ffe39a; }
+.time-stat { min-width: auto; }
+
+/* ===== 右侧图鉴 ===== */
+#dex {
+  position: absolute;
+  top: 14px; right: 14px;
+  width: 220px;
+  max-height: calc(100vh - 180px);
+  background: rgba(12, 28, 50, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  border-radius: 14px;
+  padding: 12px;
+  z-index: 10;
+  overflow-y: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.dex-title {
+  font-size: 14px; font-weight: 700;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(120,180,255,0.2);
+  text-align: center;
+}
+.dex-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+.dex-item.locked { opacity: 0.4; filter: grayscale(1); }
+.dex-item.unlocked { background: rgba(80, 160, 220, 0.12); }
+.dex-item .count { font-size: 11px; color: #ffe39a; font-weight: 700; }
+
+#dex::-webkit-scrollbar { width: 6px; }
+#dex::-webkit-scrollbar-thumb { background: rgba(120,180,255,0.3); border-radius: 3px; }
+
+/* ===== 底部操作栏 ===== */
+#bottombar {
+  position: absolute;
+  bottom: 18px; left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  z-index: 10;
+  background: rgba(12, 28, 50, 0.78);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  border-radius: 18px;
+  padding: 14px 22px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.hint {
+  font-size: 13px;
+  opacity: 0.85;
+  min-width: 160px;
+  text-align: center;
+  color: #b8d4ff;
+}
+
+.action-btn {
+  background: linear-gradient(180deg, #4a9bff, #1f6fd6);
+  border: none;
+  color: white;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 12px 28px;
+  border-radius: 12px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  box-shadow: 0 4px 14px rgba(40, 120, 220, 0.55), inset 0 1px 0 rgba(255,255,255,0.3);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.action-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(40, 120, 220, 0.7); }
+.action-btn:active { transform: translateY(1px); }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.power-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.power-label { font-size: 11px; opacity: 0.7; }
+.power-bar {
+  width: 120px; height: 8px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(120,180,255,0.2);
+}
+.power-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+  transition: width 0.1s linear;
+}
+
+/* ===== 战斗面板 ===== */
+#fight-panel {
+  position: absolute;
+  bottom: 100px; left: 50%;
+  transform: translateX(-50%);
+  width: 360px;
+  background: rgba(20, 12, 30, 0.92);
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(255, 200, 100, 0.5);
+  border-radius: 16px;
+  padding: 16px;
+  z-index: 20;
+  box-shadow: 0 0 40px rgba(255, 180, 60, 0.35);
+  animation: popIn 0.3s ease-out;
+}
+#fight-panel.hidden { display: none; }
+
+.fight-title {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffd966;
+  margin-bottom: 12px;
+  animation: blink 0.8s infinite alternate;
+}
+@keyframes blink { from { opacity: 0.6; } to { opacity: 1; } }
+@keyframes popIn { from { transform: translateX(-50%) scale(0.7); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+
+.tension-bar {
+  position: relative;
+  height: 22px;
+  background: linear-gradient(90deg, #5a2a2a, #2a5a3a, #2a5a3a, #5a2a2a);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.green-zone {
+  position: absolute;
+  left: 35%; width: 30%;
+  top: 0; bottom: 0;
+  background: rgba(80, 220, 120, 0.45);
+  border-left: 2px solid #5eff8a;
+  border-right: 2px solid #5eff8a;
+}
+.tension-ind {
+  position: absolute;
+  top: -2px; bottom: -2px;
+  width: 4px;
+  left: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px #fff;
+  border-radius: 2px;
+  transition: left 0.05s linear;
+}
+
+.fight-btns { display: flex; gap: 10px; justify-content: center; margin-bottom: 8px; }
+.fight-btns button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+  color: white;
+  transition: transform 0.1s;
+}
+#pull-btn { background: linear-gradient(180deg, #e74c3c, #c0392b); }
+#release-btn { background: linear-gradient(180deg, #3498db, #2980b9); }
+.fight-btns button:hover { transform: translateY(-2px); }
+.fight-btns button:active { transform: translateY(1px); }
+
+.fight-info { text-align: center; font-size: 13px; opacity: 0.9; }
+.fight-info #fish-name { color: #ffd966; font-weight: 700; }
+
+/* ===== Toast ===== */
+#toast {
+  position: absolute;
+  top: 80px; left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: rgba(20, 40, 70, 0.95);
+  border: 1px solid rgba(120,180,255,0.4);
+  color: #ffe39a;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 15px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.4s ease;
+  z-index: 30;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 720px) {
+  #dex { width: 160px; }
+  .stat { min-width: 70px; padding: 6px 10px; }
+  .stat .val { font-size: 14px; }
+  #bottombar { gap: 10px; padding: 10px 14px; }
+  .hint { min-width: 90px; font-size: 11px; }
+  .action-btn { padding: 10px 16px; font-size: 13px; }
+  #fight-panel { width: 90vw; }
+}

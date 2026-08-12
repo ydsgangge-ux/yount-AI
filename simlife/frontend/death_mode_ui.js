@@ -224,6 +224,7 @@ const DeathModeUI = {
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <span id="dm-auto-refresh" style="font-size:11px;color:#3fb950;">● 自动刷新</span>
+          <button id="dm-life-btn" style="padding:4px 12px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:6px;color:#58a6ff;cursor:pointer;font-size:12px;">🎒 生活技能</button>
           <button id="dm-exit" style="padding:4px 12px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">退出</button>
         </div>
       </div>
@@ -259,6 +260,14 @@ const DeathModeUI = {
       panel.remove();
       const setupOverlay = document.getElementById('setup-overlay');
       if (setupOverlay) setupOverlay.style.display = '';
+    });
+
+    panel.querySelector('#dm-life-btn').addEventListener('click', () => {
+      if (window.LifeSkillsUI) {
+        window.LifeSkillsUI.open();
+      } else {
+        alert('生活技能模块未加载');
+      }
     });
 
     // 加载状态和日志

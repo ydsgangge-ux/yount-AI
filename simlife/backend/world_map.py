@@ -11,6 +11,7 @@
 import random
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+from simlife.backend.world_schema import WORLD_BOSS_LEVELS
 
 
 class WorldRegion:
@@ -37,6 +38,8 @@ class WorldRegion:
         self.completion_condition: str = ""    # 区域完成条件，如"boss_defeated: 矿脉之心"
         self.completed: bool = False            # 区域是否已完成（完成后LLM不再续写新内容）
         self.is_blank: bool = False             # 是否为空白区域（待LLM生成）
+        self.world_boss_id: Optional[str] = None  # 所属世界BOSS id（若本区域是世界BOSS领地）
+        self.world_boss_stage: str = ""         # 领地阶段：铺垫/势力/对峙（供叙事区分）
 
     def to_dict(self) -> Dict:
         return {
@@ -57,6 +60,8 @@ class WorldRegion:
             "completion_condition": self.completion_condition,
             "completed": self.completed,
             "is_blank": self.is_blank,
+            "world_boss_id": self.world_boss_id,
+            "world_boss_stage": self.world_boss_stage,
         }
 
     @classmethod
@@ -80,6 +85,8 @@ class WorldRegion:
         r.completion_condition = data.get("completion_condition", "")
         r.completed = data.get("completed", False)
         r.is_blank = data.get("is_blank", False)
+        r.world_boss_id = data.get("world_boss_id")
+        r.world_boss_stage = data.get("world_boss_stage", "")
         return r
 
 
@@ -472,19 +479,30 @@ class MapGenerator:
         if grid_config and grid_config.get("main_regions"):
             wm = MapGenerator._generate_from_world_grid(grid_config, world_setting)
             print(f"[WorldMap] 从世界设定grid生成地图：{len(wm.regions)}个主要区域，grid_size={wm.grid_size}")
-            return wm
-
-        # 兼容旧版：尝试 LLM 生成
-        if llm_client:
+        elif llm_client:
+            # 兼容旧版：尝试 LLM 生成
             try:
                 wm = MapGenerator._generate_with_llm(world_setting, llm_client)
                 MapGenerator._assign_llm_grid_positions(wm)
                 wm.grid_size = 10
-                return wm
             except Exception as e:
                 print(f"[WorldMap] LLM生成失败，使用模板: {e}")
+                wm = MapGenerator._generate_from_any_template(world_setting)
+        else:
+            # 最终回退：模板生成
+            wm = MapGenerator._generate_from_any_template(world_setting)
 
-        # 最终回退：模板生成
+        # 世界 BOSS 领地区域生成（任何世界都自动生成，保证通用性）
+        try:
+            MapGenerator._generate_world_boss_territories(wm, world_setting)
+        except Exception as e:
+            print(f"[WorldMap] 世界BOSS领地生成失败: {e}")
+
+        return wm
+
+    @staticmethod
+    def _generate_from_any_template(world_setting: Dict) -> WorldMap:
+        """从世界类型模板生成地图（grid模板优先，否则旧版模板）"""
         world_type = world_setting.get("world_type", "fantasy")
         world_type = MapGenerator.WORLD_TYPE_MAP.get(world_type, world_type)
         grid_templates = MapGenerator.GRID_LAYOUTS.get(world_type, MapGenerator.GRID_LAYOUTS["fantasy"])
@@ -864,6 +882,108 @@ class MapGenerator:
             "level": danger_level * 5 + 5,
             "type": "boss",
         }
+
+    @staticmethod
+    def _generate_world_boss_territories(wm: WorldMap, world_setting: Dict):
+        """根据世界设定的 dangers.world_bosses 生成世界 BOSS 领地区域（通用框架，任何世界自动生成）。
+
+        每个 BOSS 生成 2-3 个领地区域（铺垫/势力/对峙），其中对峙阶段为 boss_lair，
+        放置 BOSS 本体（Lv65）及其直属手下（Lv64）；其余领地放置精英（Lv62）/小兵（Lv60）。
+        等级固定使用 WORld_BOSS_LEVELS，保证通用且高于玩家上限（60）。
+        """
+        dangers = world_setting.get("dangers", {}) if world_setting else {}
+        bosses = dangers.get("world_bosses", [])
+        if not bosses:
+            return
+
+        monster_types = dangers.get("monster_types", [])
+        world_type = world_setting.get("world_type", "fantasy")
+
+        # 已占用的格子坐标（避免与主要区域重叠）
+        occupied = {(r.x, r.y) for r in wm.regions.values()}
+
+        def next_free_cell():
+            for y in range(wm.grid_size):
+                for x in range(wm.grid_size):
+                    if (x, y) not in occupied:
+                        occupied.add((x, y))
+                        return x, y
+            return None
+
+        for boss in bosses:
+            if not isinstance(boss, dict):
+                continue
+            boss_name = boss.get("name") or "世界之敌"
+            boss_id = boss_name.lower().replace(" ", "_").replace("·", "_").strip("_")
+            if not boss_id:
+                boss_id = "world_enemy"
+
+            # 领地区域名：优先用 boss.territories，补齐到 2-3 个
+            territories = [t for t in boss.get("territories", []) if t]
+            territories = territories[:3]
+            while len(territories) < 2:
+                territories.append(f"{boss_name}领地")
+            territories = territories[:3]
+
+            minions = boss.get("minions", []) or []
+            elites = boss.get("elites", []) or []
+            subordinates = boss.get("subordinates", []) or []
+            type_name = boss.get("identity") or ""
+            desc = boss.get("description") or ""
+
+            for idx, terr_name in enumerate(territories):
+                cell = next_free_cell()
+                if cell is None:
+                    break
+                x, y = cell
+                is_final = (idx == len(territories) - 1)
+                stage = "对峙" if is_final else ("势力" if idx == 1 else "铺垫")
+                rtype = "boss_lair" if is_final else "wild"
+                danger = 5 if is_final else (4 if idx == 1 else 3)
+
+                region = WorldRegion(
+                    region_id=f"{boss_id}_t{idx}",
+                    name=terr_name,
+                    description=f"{boss_name}的领地之一。「{desc}」" if desc else f"{boss_name}的领地之一。",
+                    danger_level=danger,
+                    region_type=rtype,
+                    x=x,
+                    y=y,
+                )
+                region.world_boss_id = boss_id
+                region.world_boss_stage = stage
+                region.boss_defeated = False
+                region.completion_condition = f"world_boss_defeated:{boss_id}"
+
+                # 怪物分配：铺垫放小兵、势力放精英、对峙放直属手下
+                region.monsters = []
+                if idx == 0:
+                    for n in minions:
+                        region.monsters.append({"name": n, "level": WORLD_BOSS_LEVELS["minion"], "type": "normal"})
+                elif idx == 1:
+                    for n in elites:
+                        region.monsters.append({"name": n, "level": WORLD_BOSS_LEVELS["elite"], "type": "elite"})
+                else:
+                    for n in subordinates:
+                        region.monsters.append({"name": n, "level": WORLD_BOSS_LEVELS["subordinate"], "type": "elite"})
+
+                # 对峙阶段放入 BOSS 本体
+                if is_final:
+                    region.boss = {
+                        "name": boss_name,
+                        "description": desc,
+                        "identity": type_name,
+                        "level": WORLD_BOSS_LEVELS["boss"],
+                        "type": "boss",
+                        "can_surrender": bool(boss.get("can_surrender", True)),
+                        "can_join": bool(boss.get("can_join", True)),
+                        "world_boss_id": boss_id,
+                    }
+
+                wm.add_region(region)
+
+        # 重新建立格子连接，让 BOSS 领地区域与周边区域互通
+        MapGenerator._build_grid_connections(wm)
 
     @staticmethod
     def _build_connections(wm: WorldMap):

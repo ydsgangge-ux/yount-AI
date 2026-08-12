@@ -5,6 +5,7 @@ SimLife FastAPI 后端入口
 import json
 import sys
 import os
+import random
 import webbrowser
 import threading
 from pathlib import Path
@@ -1503,6 +1504,688 @@ def api_death_mode_state():
     result["shared_inventory"] = result.get("shared_inventory", [])
 
     return result
+
+
+# ══════════════════════════════════════════════════════
+# 生活技能系统 API（烹饪/锻造/钓鱼）
+# ══════════════════════════════════════════════════════
+
+def _life_engine():
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    state = engine._load()
+    if not state:
+        return None, None
+    from simlife.backend.life_skills import ensure_life_state
+    ensure_life_state(state)
+    return engine, state
+
+
+@app.get("/api/death-mode/life-skills")
+def api_death_mode_life_skills():
+    """获取生活技能状态（等级/材料/菜谱/设计图/食物/装备/鱼/商店）"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    ls = state["life_state"]
+    char = state.get("character", {})
+    overall = max((s.get("level", 1) for s in ls["skills"].values()), default=1)
+    fg = ls.get("fish_gear") or {}
+    # 当前异世界区域 → 决定可钓到的水域（不同区域不同鱼）
+    current_region = None
+    region_zone = fg.get("zone", "pond")
+    if engine.world_map:
+        reg = engine.world_map.get_current_region()
+        if reg:
+            current_region = {
+                "id": reg.region_id, "name": reg.name,
+                "region_type": reg.region_type, "danger_level": reg.danger_level,
+            }
+            region_zone = LS.region_fish_zone(reg.region_type, reg.danger_level)
+    return {
+        "skills": ls["skills"],
+        "inventory": LS.ensure_life_state(state)["inventory"],
+        "recipes_known": ls["recipes_known"],
+        "blueprints_known": ls["blueprints_known"],
+        "foods": ls["foods"],
+        "equipment": ls["equipment"],
+        "fish_caught": ls["fish_caught"],
+        "buffs": ls["buffs"],
+        "shop": LS.build_shop(overall),
+        "recipes": LS.COOK_RECIPES,
+        "blueprints": LS.FORGE_BLUEPRINTS,
+        "enchant_materials": LS.enchant_materials(),
+        "fish_table": LS.FISH_TABLE,
+        "fish_zones": LS.FISH_ZONES,
+        "fish_gear_rod": LS.FISH_RODS,
+        "fish_gear_reel": LS.FISH_REELS,
+        "fish_gear_line": LS.FISH_LINES,
+        "fish_gear_bait": LS.FISH_BAITS,
+        "fish_gear_owned": fg.get("owned", []),
+        "fish_gear_equipped": fg.get("equipped", {}),
+        "fish_zone": region_zone,
+        "fish_region": current_region,
+        "fish_earnings": fg.get("earnings", 0),
+        "gold": char.get("gold", 0),
+    }
+
+
+@app.post("/api/death-mode/life-skills/buy")
+def api_death_mode_life_buy(data: dict):
+    """商店购买原材料：消耗金币，加入原材料背包"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    mat_id = data.get("mat_id", "")
+    qty = max(1, int(data.get("qty", 1)))
+    mat = LS._find_mat(mat_id)
+    if not mat:
+        return {"error": "not_found", "message": "材料不存在"}
+    char = state["character"]
+    gold = char.get("gold", 0)
+    cost = mat["price"] * qty
+    if gold < cost:
+        return {"error": "no_gold", "message": f"金币不足（需要{cost}）"}
+    char["gold"] -= cost
+    ls = state["life_state"]
+    LS.add_materials(ls["inventory"], mat_id, qty, mat["name"], mat["icon"])
+    engine._save()
+    return {"success": True, "message": f"购买了{qty}个{mat['name']}（-{cost}金币）",
+            "gold": char["gold"], "inventory": ls["inventory"]}
+
+
+def _life_llm_json(prompt: str, max_tokens: int = 400):
+    """调用 LLM 并尽力解析 JSON 对象；失败返回 None（不阻断流程）"""
+    import json as _json
+    try:
+        from simlife.backend.generator import get_llm_client
+        llm = get_llm_client()
+        resp = llm.generate(prompt, max_tokens=max_tokens, temperature=0.9, thinking=False)
+    except Exception:
+        return None
+    text = (resp or "").strip()
+    if "```" in text:
+        parts = text.split("```")
+        text = parts[1] if len(parts) > 1 else text
+        if text.startswith("json"):
+            text = text[4:].lstrip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        obj = _json.loads(text[start:end + 1])
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+@app.post("/api/death-mode/life-skills/cook")
+def api_death_mode_life_cook(data: dict):
+    """烹饪判定：recipe_id（固定菜谱）或自由组合（materials + steps）
+    steps_sorted: 用户排序后的步骤索引数组（每位对应预期步骤，值=用户选择的步骤）
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    ls = state["life_state"]
+    cooking = ls["skills"]["cooking"]
+    recipe_id = data.get("recipe_id")
+    free_materials = data.get("materials")  # 自由组合 [[id, qty], ...]
+    recipe = LS.get_cook_recipe(recipe_id) if recipe_id else None
+    is_free = (not recipe) and bool(free_materials)
+
+    if not recipe and not is_free:
+        return {"error": "no_recipe", "message": "请选择菜谱或自由组合材料"}
+
+    # ── 自由组合：LLM 动态生成料理 ──
+    if is_free:
+        if not LS.has_materials(ls["inventory"], free_materials):
+            return {"error": "no_materials", "message": "材料不足，无法自由烹饪"}
+        mat_val = LS.material_value(ls["inventory"], free_materials)
+        if mat_val < 4:
+            return {"error": "too_few", "message": "材料太少，不足以烹饪出像样的料理"}
+        target_steps = ["备料", "调味", "烹制"]
+        steps_sorted = data.get("steps", [])
+        if not steps_sorted or len(steps_sorted) < len(target_steps):
+            return {"error": "incomplete", "message": "步骤未完成"}
+        mat_desc = "、".join(
+            f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in free_materials)
+        llm = _life_llm_json(
+            f"你是奇幻世界的烹饪大师。玩家用以下食材自由创作一道料理：{mat_desc}\n"
+            f"请只输出一个JSON对象：{{\"name\":\"料理名(2-6字)\",\"icon\":\"一个emoji\",\"buff_type\":\"hp或mp或attack或defense\",\"desc\":\"一句话\"}}")
+        base = LS.free_dish_base(cooking["level"], mat_val)
+        if llm and llm.get("name"):
+            dish_name = str(llm["name"])[:12]
+            icon = str(llm.get("icon") or "🍲")
+            buff_type = str(llm.get("buff_type") or "hp")
+            if buff_type not in ("hp", "mp", "attack", "defense"):
+                buff_type = "hp"
+        else:
+            dish_name, icon, buff_type = "神秘杂烩", "🍲", "hp"
+        # 含附魔/特殊材料 → 更容易出属性类增益
+        has_special = any((LS._find_mat(mid) or {}).get("type") == "enchant" for mid, _ in free_materials)
+        if has_special and buff_type in ("hp", "mp"):
+            buff_type = random.choice(["attack", "defense"])
+        buff = {"type": buff_type, "value": base["value"],
+                "turns": 0 if buff_type in ("hp", "mp") else 3}
+        result_name = dish_name
+        result_icon = icon
+        result_level = cooking["level"]
+        quality_buff = buff
+    else:
+        # ── 固定菜谱 ──
+        if not LS.has_materials(ls["inventory"], recipe["materials"]):
+            return {"error": "no_materials", "message": "材料不足，无法烹饪"}
+        if cooking["level"] < recipe["level"]:
+            return {"error": "low_level", "message": f"烹饪等级不足（需要{recipe['level']}级）"}
+        target_steps = recipe["steps"]
+        steps_sorted = data.get("steps", [])
+        if not steps_sorted or len(steps_sorted) < len(target_steps):
+            return {"error": "incomplete", "message": "步骤未完成"}
+        result_name = recipe["result"]["name"]
+        result_icon = recipe["icon"]
+        result_level = recipe["level"]
+        quality_buff = dict(recipe["buff"])
+
+    # 步骤判定
+    judgements = []
+    for i in range(len(target_steps)):
+        input_step = int(steps_sorted[i]) if i < len(steps_sorted) else 0
+        judgements.append(LS.judge_step(i, len(target_steps), input_step, cooking["level"]))
+    quality = LS.judge_overall(judgements, cooking["level"])
+
+    # 扣除材料
+    used_materials = free_materials if is_free else recipe["materials"]
+    for mat_id, qty in used_materials:
+        LS.remove_materials(ls["inventory"], mat_id, qty)
+
+    # 失败：返还一半材料，小经验
+    is_good = quality in ("perfect", "good")
+    if not is_good:
+        for mat_id, qty in used_materials:
+            LS.add_materials(ls["inventory"], mat_id, max(1, qty // 2))
+        xp = LS.resource_value("normal")
+        lv = LS.add_xp(ls["skills"], "cooking", xp)
+        LS.add_item_to_list(ls["foods"], {"name": "焦糊料理", "icon": "🔥", "type": "food",
+                                          "buff": {"type": "hp", "value": 5, "turns": 0}}, 1)
+        ls["last_activity"] = "烹饪失败，得到一份焦糊料理"
+        engine._save()
+        return {"success": False, "quality": quality, "message": "烹饪失败，得到一份焦糊料理（返还部分材料）",
+                "xp_gained": xp, "level_up": lv["level_up"], "foods": ls["foods"]}
+
+    # 成功：按品质加成产出
+    mult = LS.quality_multiplier(quality)
+    buff = dict(quality_buff)
+    buff["value"] = int(buff["value"] * mult)
+    LS.add_item_to_list(ls["foods"], {"name": result_name, "icon": result_icon, "type": "food",
+                                      "buff": buff, "level": result_level,
+                                      **({"free": True, "desc": llm.get("desc", "") if is_free and llm else ""} if is_free else {})}, 1)
+    xp = LS.resource_value(quality)
+    lv = LS.add_xp(ls["skills"], "cooking", xp)
+    if recipe_id and recipe_id not in ls["recipes_known"]:
+        ls["recipes_known"].append(recipe_id)
+    ls["last_activity"] = f"烹饪成功，得到{result_name}"
+    engine._save()
+    engine._log_action("life_skill", {
+        "skill": "烹饪", "action": f"烹饪出{result_name}",
+        "detail": {"recipe": result_name, "quality": quality, "free": is_free},
+    })
+    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
+    return {"success": True, "quality": quality, "quality_name": quality_name,
+            "message": f"烹饪成功！得到{result_name}（{quality_name}品质）",
+            "xp_gained": xp, "level_up": lv["level_up"], "foods": ls["foods"]}
+
+
+@app.post("/api/death-mode/life-skills/forge")
+def api_death_mode_life_forge(data: dict):
+    """锻造判定：blueprint_id（设计图/钓鱼装备）或自由组合（materials + steps）
+    fishing_gear 设计图产出钓鱼装备；自由组合经 LLM 动态生成装备。
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    ls = state["life_state"]
+    forging = ls["skills"]["forging"]
+    bp_id = data.get("blueprint_id")
+    free_materials = data.get("materials")  # 自由组合 [[id, qty], ...]
+    bp = LS.get_forge_blueprint(bp_id) if bp_id else None
+    is_free = (not bp) and bool(free_materials)
+
+    if not bp and not is_free:
+        return {"error": "no_blueprint", "message": "请选择设计图或自由组合材料"}
+
+    # ── 目标步骤与材料 ──
+    if is_free:
+        if not LS.has_materials(ls["inventory"], free_materials):
+            return {"error": "no_materials", "message": "材料不足，无法锻造"}
+        mat_val = LS.material_value(ls["inventory"], free_materials)
+        if mat_val < 8:
+            return {"error": "too_few", "message": "材料太少，不足以锻造成型"}
+        target_steps = ["选材", "加热", "锻打", "淬火", "成型"]
+        used_materials = free_materials
+    else:
+        if not LS.has_materials(ls["inventory"], bp["materials"]):
+            return {"error": "no_materials", "message": "材料不足，无法锻造"}
+        if forging["level"] < bp["level"]:
+            return {"error": "low_level", "message": f"锻造等级不足（需要{bp['level']}级）"}
+        target_steps = bp["steps"]
+        used_materials = bp["materials"]
+
+    steps_sorted = data.get("steps", [])
+    if not steps_sorted or len(steps_sorted) < len(target_steps):
+        return {"error": "incomplete", "message": "步骤未完成"}
+
+    judgements = []
+    for i in range(len(target_steps)):
+        input_step = int(steps_sorted[i]) if i < len(steps_sorted) else 0
+        judgements.append(LS.judge_step(i, len(target_steps), input_step, forging["level"]))
+    quality = LS.judge_overall(judgements, forging["level"])
+
+    for mat_id, qty in used_materials:
+        LS.remove_materials(ls["inventory"], mat_id, qty)
+
+    if quality == "fail":
+        for mat_id, qty in used_materials:
+            LS.add_materials(ls["inventory"], mat_id, max(1, qty // 2))
+        xp = LS.resource_value("normal")
+        lv = LS.add_xp(ls["skills"], "forging", xp)
+        ls["last_activity"] = "锻造失败，金属报废"
+        engine._save()
+        return {"success": False, "quality": quality, "message": "锻造失败，金属报废（返还部分材料）",
+                "xp_gained": xp, "level_up": lv["level_up"]}
+
+    mult = LS.quality_multiplier(quality)
+    xp = LS.resource_value(quality)
+    lv = LS.add_xp(ls["skills"], "forging", xp)
+
+    # ── 钓鱼装备设计图：产出钓鱼装备 ──
+    if bp and bp.get("fishing_gear"):
+        fg_info = bp["fishing_gear"]
+        LS.forge_fishing_gear(ls, fg_info["slot"], fg_info["gear_id"])
+        ls["last_activity"] = f"锻造成功，打造了{bp['name']}"
+        engine._save()
+        engine._log_action("life_skill", {
+            "skill": "锻造", "action": f"打造出{bp['name']}",
+            "detail": {"item": bp["name"], "quality": quality, "fishing_gear": True},
+        })
+        quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
+        return {"success": True, "quality": quality, "quality_name": quality_name,
+                "message": f"锻造成功！打造出{bp['icon']} {bp['name']}（{quality_name}品质），已加入钓鱼装备",
+                "xp_gained": xp, "level_up": lv["level_up"],
+                "fish_gear_owned": ls.setdefault("fish_gear", {}).get("owned", [])}
+
+    # ── 自由组合：LLM 动态生成装备 ──
+    if is_free:
+        mat_val = LS.material_value(ls["inventory"], used_materials)
+        mat_desc = "、".join(
+            f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in used_materials)
+        llm = _life_llm_json(
+            f"你是奇幻世界的锻造大师。玩家用以下材料自由锻造一件装备：{mat_desc}\n"
+            f"请只输出一个JSON对象：{{\"name\":\"装备名(2-6字)\",\"icon\":\"一个emoji\",\"item_type\":\"weapon或outfit\",\"damage_type\":\"physical或magic或defense\",\"desc\":\"一句话\"}}")
+        base = LS.free_gear_base(forging["level"], mat_val)
+        if llm and llm.get("name"):
+            result_name = str(llm["name"])[:12]
+            result_icon = str(llm.get("icon") or "⚔️")
+            item_type = str(llm.get("item_type") or "weapon")
+            if item_type not in ("weapon", "outfit"):
+                item_type = "weapon"
+            damage_type = str(llm.get("damage_type") or "physical")
+            if damage_type not in ("physical", "magic", "defense"):
+                damage_type = "physical"
+        else:
+            result_name = "无名兵刃"
+            result_icon, item_type, damage_type = "⚔️", "weapon", "physical"
+        result = {"name": result_name, "icon": result_icon, "type": item_type,
+                  "damage_type": damage_type, "bonus": max(1, int(base["bonus"] * mult)),
+                  "free": True, "desc": llm.get("desc", "") if llm else ""}
+        rarity_map = {"perfect": "传说", "good": "史诗", "normal": "稀有"}
+        result["rarity_name"] = rarity_map.get(quality, "稀有")
+        LS.add_item_to_list(ls["equipment"], result, 1)
+        ls["last_activity"] = f"锻造成功，得到{result_name}"
+        engine._save()
+        engine._log_action("life_skill", {
+            "skill": "锻造", "action": f"锻造出{result_name}",
+            "detail": {"item": result_name, "quality": quality, "free": True,
+                       "rarity": result.get("rarity_name", "")},
+        })
+        quality_name = rarity_map.get(quality, quality)
+        return {"success": True, "quality": quality, "quality_name": quality_name,
+                "message": f"锻造成功！得到{result['icon']} {result_name}（{quality_name}品质）",
+                "xp_gained": xp, "level_up": lv["level_up"], "equipment": ls["equipment"]}
+
+    # ── 固定设计图（武器/防具） ──
+    result = dict(bp["result"])
+    result["bonus"] = max(1, int(result["bonus"] * mult))
+    rarity_map = {"perfect": "传说", "good": "史诗", "normal": "稀有"}
+    result["rarity_name"] = rarity_map.get(quality, "稀有")
+    LS.add_item_to_list(ls["equipment"], result, 1)
+    if bp_id and bp_id not in ls["blueprints_known"]:
+        ls["blueprints_known"].append(bp_id)
+    ls["last_activity"] = f"锻造成功，得到{result['name']}"
+    engine._save()
+    engine._log_action("life_skill", {
+        "skill": "锻造", "action": f"锻造出{result['name']}",
+        "detail": {"item": result["name"], "quality": quality,
+                   "rarity": result.get("rarity_name", "")},
+    })
+    quality_name = rarity_map.get(quality, quality)
+    return {"success": True, "quality": quality, "quality_name": quality_name,
+            "message": f"锻造成功！得到{result['name']}（{quality_name}品质）",
+            "xp_gained": xp, "level_up": lv["level_up"], "equipment": ls["equipment"]}
+
+
+@app.post("/api/death-mode/life-skills/enchant")
+def api_death_mode_life_enchant(data: dict):
+    """附魔：为已锻造装备/钓鱼装备附加属性（消耗附魔材料）
+    data: {"item_name": 装备名, "materials": [[id, qty], ...]}
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    ls = state["life_state"]
+    name = data.get("item_name", "")
+    materials = data.get("materials", [])
+    if not materials:
+        return {"error": "no_materials", "message": "请选择附魔材料"}
+    if not LS.has_materials(ls["inventory"], materials):
+        return {"error": "no_materials", "message": "附魔材料不足"}
+    # 查找装备（锻造装备或钓鱼装备）
+    item = next((e for e in ls["equipment"] if e["name"] == name and e.get("qty", 0) > 0), None)
+    target = "equipment"
+    if not item:
+        item = next((f for f in ls["fish_caught"] if f["name"] == name), None)
+        target = "fish_caught"
+    if not item:
+        return {"error": "not_found", "message": "没有这件可附魔的物品"}
+    if item.get("enchant"):
+        return {"error": "enchanted", "message": "该物品已附魔，无法重复附魔"}
+
+    mat_val = LS.material_value(ls["inventory"], materials)
+    # LLM 生成附魔效果
+    mat_desc = "、".join(
+        f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in materials)
+    llm = _life_llm_json(
+        f"你是奇幻世界的附魔师。为装备「{name}」使用材料（{mat_desc}）附魔。\n"
+        f"请只输出一个JSON对象：{{\"name\":\"附魔名(2-6字)\",\"stat_type\":\"attack或defense或hp或mp\",\"stat_value\":整数,range 5-40,\"desc\":\"一句话\"}}")
+    if llm and llm.get("stat_type") in ("attack", "defense", "hp", "mp"):
+        stat_type = llm["stat_type"]
+        stat_value = max(3, min(60, int(llm.get("stat_value") or mat_val // 4)))
+        enchant_name = str(llm.get("name") or "古老附魔")[:12]
+    else:
+        stat_type = "attack"
+        stat_value = max(3, mat_val // 4)
+        enchant_name = "淬火封印"
+    # 材料价值越高 → 附魔越强（上限保护）
+    stat_value = int(stat_value * (1 + mat_val / 200.0))
+    stat_value = min(80, stat_value)
+
+    # 扣除材料
+    for mid, qty in materials:
+        LS.remove_materials(ls["inventory"], mid, qty)
+
+    if target == "equipment":
+        LS.apply_enchant(item, stat_type, stat_value, enchant_name)
+    else:
+        # 钓鱼装备附魔：记录在 fish 上（供钓鱼属性参考），暂仅存字段
+        item["enchant"] = {"name": enchant_name, "stat_type": stat_type, "stat_value": stat_value}
+
+    ls["last_activity"] = f"为{name}附魔成功：{enchant_name}"
+    engine._save()
+    engine._log_action("life_skill", {
+        "skill": "附魔", "action": f"为{name}附魔「{enchant_name}」",
+        "detail": {"item": name, "enchant": enchant_name, "stat_type": stat_type,
+                   "stat_value": stat_value},
+    })
+    stat_name = {"attack": "攻击", "defense": "防御", "hp": "生命", "mp": "法力"}.get(stat_type, stat_type)
+    return {"success": True, "message": f"附魔成功！{name}获得「{enchant_name}」：{stat_name}+{stat_value}",
+            "equipment": ls["equipment"], "fish_caught": ls["fish_caught"],
+            "inventory": ls["inventory"]}
+
+
+@app.post("/api/death-mode/life-skills/fish")
+def api_death_mode_life_fish(data: dict):
+    """钓鱼结算：客户端(实景小游戏)已完成搏斗，提交捕获结果。
+    zone: 水域id  fish_id: 捕获的鱼id  weight: 体重kg  quality: 完美/良好/普通
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    ls = state["life_state"]
+    fishing = ls["skills"]["fishing"]
+    zone = data.get("zone", "pond")
+    # 当前区域决定水域：若玩家位于异世界区域，强制使用该区域对应的水域
+    region_name = ""
+    if engine.world_map:
+        reg = engine.world_map.get_current_region()
+        if reg:
+            region_name = reg.name
+            zone = LS.region_fish_zone(reg.region_type, reg.danger_level)
+    fish_id = data.get("fish_id", "")
+    weight = float(data.get("weight", 1))
+    quality = data.get("quality", "normal")
+
+    # 校验水域
+    z = LS.get_zone(zone)
+    if not z:
+        return {"error": "no_zone", "message": "水域不存在"}
+    if not LS.zone_unlocked(zone, (ls.get("fish_gear") or {}).get("earnings", 0)):
+        return {"error": "locked_zone", "message": f"该水域尚未解锁（需累计收益{z['need']}）"}
+    # 校验鱼属于该水域
+    fish = LS.get_fish(fish_id)
+    if not fish or zone not in fish["zones"]:
+        return {"error": "no_fish", "message": "该水域没有这种鱼"}
+
+    # 消耗一份鱼饵（装备背包里的鱼饵材料）
+    baits = [it for it in ls["inventory"] if it.get("type") == "bait"]
+    if baits:
+        LS.remove_materials(ls["inventory"], baits[0]["id"], 1)
+
+    # 体重有效范围
+    weight = max(fish["min"], min(fish["max"], weight))
+    value = max(1, int(fish["value"] * weight))
+    energy = max(1, int(fish["energy"] * weight))
+    mult = {"perfect": 1.5, "good": 1.2, "normal": 1.0}.get(quality, 1.0)
+    value = max(1, int(value * mult))
+    energy = max(1, int(energy * mult))
+
+    # 入账：鱼获 + 累计收益 + 经验
+    LS.add_item_to_list(ls["fish_caught"], {
+        "name": fish["name"], "icon": fish["icon"], "family": fish["family"],
+        "rarity": fish["rarity"], "weight": weight, "value": value, "energy": energy,
+    }, 1)
+    fg = ls.setdefault("fish_gear", {})
+    fg["earnings"] = fg.get("earnings", 0) + value
+    xp = LS.resource_value(quality) + LS.fish_rarity_weight(fish)
+    lv = LS.add_xp(ls["skills"], "fishing", xp)
+    ls["last_activity"] = f"钓到了{fish['name']}({weight}kg)"
+    engine._save()
+
+    # 记录到行动日志，供 A 层/AI 角色读取
+    engine._log_action("life_skill", {
+        "skill": "钓鱼",
+        "action": f"在{region_name}钓到了{fish['name']}",
+        "detail": {"fish": fish["name"], "weight": weight, "quality": quality,
+                   "value": value, "region": region_name, "zone": zone},
+    })
+
+    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
+    return {"success": True, "quality": quality, "quality_name": quality_name,
+            "message": f"钓到了{fish['name']}（{weight}kg·{quality_name}）！价值{value}金币",
+            "fish": {"name": fish["name"], "icon": fish["icon"], "rarity": fish["rarity"],
+                     "family": fish["family"], "weight": weight, "value": value, "energy": energy},
+            "xp_gained": xp, "level_up": lv["level_up"], "fish_caught": ls["fish_caught"]}
+
+
+@app.post("/api/death-mode/life-skills/fish-buy-gear")
+def api_death_mode_life_fish_buy_gear(data: dict):
+    """购买钓鱼装备（杆/轮/线/饵）"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    gear_id = data.get("gear_id", "")
+    ls = state["life_state"]
+    char = state["character"]
+    r = LS.buy_fish_gear(ls, gear_id, char.get("gold", 0))
+    if not r["success"]:
+        return {"error": "buy_fail", "message": r["msg"]}
+    char["gold"] = r["gold"]
+    engine._save()
+    return {"success": True, "message": r["msg"], "gold": char["gold"],
+            "fish_gear_owned": ls["fish_gear"]["owned"]}
+
+
+@app.post("/api/death-mode/life-skills/fish-equip")
+def api_death_mode_life_fish_equip(data: dict):
+    """穿戴钓鱼装备"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    gear_id = data.get("gear_id", "")
+    ls = state["life_state"]
+    r = LS.equip_fish_gear(ls, gear_id)
+    if not r["success"]:
+        return {"error": "equip_fail", "message": r["msg"]}
+    engine._save()
+    return {"success": True, "message": r["msg"], "fish_gear_equipped": ls["fish_gear"]["equipped"]}
+
+
+@app.post("/api/death-mode/life-skills/fish-set-zone")
+def api_death_mode_life_fish_set_zone(data: dict):
+    """切换到指定水域"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    zone = data.get("zone", "")
+    ls = state["life_state"]
+    fg = ls.setdefault("fish_gear", {})
+    if not LS.zone_unlocked(zone, fg.get("earnings", 0)):
+        return {"error": "locked_zone", "message": "该水域尚未解锁"}
+    fg["zone"] = zone
+    engine._save()
+    return {"success": True, "message": f"已切换到{LS.get_zone(zone)['name']}", "fish_zone": zone}
+
+
+@app.post("/api/death-mode/life-skills/eat")
+def api_death_mode_life_eat(data: dict):
+    """食用食物/鱼：获得增益或回复 HP/MP"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    target = data.get("target", "ai")  # ai / user
+    name = data.get("name", "")
+    ls = state["life_state"]
+    char = state["character"] if target == "ai" else state.get("user_character")
+    if not char:
+        return {"error": "no_target", "message": f"目标角色不存在"}
+    # 从食物或鱼中查找
+    item = next((f for f in ls["foods"] if f["name"] == name), None)
+    source = "foods"
+    if not item:
+        item = next((f for f in ls["fish_caught"] if f["name"] == name), None)
+        source = "fish_caught"
+    if not item:
+        return {"error": "not_found", "message": "没有这种食物"}
+    if item.get("qty", 0) <= 0:
+        return {"error": "empty", "message": "数量不足"}
+
+    # 扣除
+    item["qty"] -= 1
+    if item["qty"] <= 0:
+        ls[source].remove(item)
+
+    buff = item.get("buff") or {}
+    msg = f"食用了{name}。"
+    # HP/MP 回复
+    if buff.get("type") == "hp":
+        char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + buff.get("value", 0))
+        msg += f" 回复{min(buff['value'], char.get('max_hp',0)-char.get('hp',0)+buff['value'])}点HP"
+    elif buff.get("type") == "mp":
+        char["mp"] = min(char.get("max_mp", char["mp"]), char.get("mp", 0) + buff.get("value", 0))
+        msg += f" 回复{buff['value']}点MP"
+    # 临时增益（攻击/防御 持续回合）
+    elif buff.get("type") in ("attack", "defense"):
+        turns = buff.get("turns", 3)
+        ls["buffs"].append({"type": buff["type"], "value": buff["value"], "turns": turns, "source": name})
+        msg += f" 获得{buff['value']}点{'攻击' if buff['type']=='attack' else '防御'}增益（{turns}回合）"
+    # 鱼类能量
+    elif item.get("energy"):
+        char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + item.get("energy", 0))
+        msg += f" 回复{item.get('energy',0)}点HP"
+
+    char["hp"] = max(0, char["hp"])
+    engine._save()
+    return {"success": True, "message": msg, "hp": char.get("hp"), "mp": char.get("mp"),
+            "buffs": ls["buffs"], "foods": ls["foods"], "fish_caught": ls["fish_caught"]}
+
+
+@app.post("/api/death-mode/life-skills/equip-item")
+def api_death_mode_life_equip_item(data: dict):
+    """把锻造装备放入共享背包（可装备）"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    name = data.get("name", "")
+    ls = state["life_state"]
+    item = next((e for e in ls["equipment"] if e["name"] == name), None)
+    if not item:
+        return {"error": "not_found", "message": "没有这种锻造装备"}
+    if item.get("qty", 0) <= 0:
+        return {"error": "empty", "message": "数量不足"}
+    item["qty"] -= 1
+    if item["qty"] <= 0:
+        ls["equipment"].remove(item)
+    # 加入共享背包，附带装备属性（含附魔加成）
+    stat_bonus = dict(item.get("stat_bonus") or {})
+    if item.get("enchant"):
+        eh = item["enchant"]
+        stat_bonus[eh.get("stat_type", "attack")] = stat_bonus.get(eh.get("stat_type", "attack"), 0) + eh.get("stat_value", 0)
+    eq_item = {
+        "name": item["name"], "rarity": "epic", "rarity_name": item.get("rarity_name", "稀有"),
+        "type": item.get("type", "weapon"), "bonus": item.get("bonus", 0),
+        "damage_type": item.get("damage_type", "physical"),
+        "stat_bonus": stat_bonus, "level_req": 1, "sell_price": item.get("bonus", 0) * 3,
+        "icon": item.get("icon", "⚔️"),
+    }
+    if item.get("enchant"):
+        eq_item["enchant"] = item["enchant"]
+    state.setdefault("shared_inventory", []).append(eq_item)
+    engine._save()
+    return {"success": True, "message": f"已将{item['name']}放入共享背包", "equipment": ls["equipment"]}
+
+
+@app.post("/api/death-mode/life-skills/sell-fish")
+def api_death_mode_life_sell_fish(data: dict):
+    """出售鱼获换成金币"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    name = data.get("name", "")
+    ls = state["life_state"]
+    item = next((f for f in ls["fish_caught"] if f["name"] == name), None)
+    if not item:
+        return {"error": "not_found", "message": "没有这种鱼"}
+    if item.get("qty", 0) <= 0:
+        return {"error": "empty", "message": "数量不足"}
+    item["qty"] -= 1
+    if item["qty"] <= 0:
+        ls["fish_caught"].remove(item)
+    price = item.get("price", 5)
+    state["character"]["gold"] = state["character"].get("gold", 0) + price
+    engine._save()
+    return {"success": True, "message": f"出售{name}获得{price}金币",
+            "gold": state["character"]["gold"], "fish_caught": ls["fish_caught"]}
 
 
 @app.post("/api/death-mode/scene")

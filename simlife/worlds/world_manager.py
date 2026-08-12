@@ -192,6 +192,20 @@ def build_world_context(world_setting: Dict, max_length: int = 4000) -> str:
         dungeon_list = "、".join([f"{d.get('name','')}({d.get('difficulty','')})" for d in dungeons[:5]])
         parts.append(f"\n【副本/地下城】{dungeon_list}")
 
+    # 世界 BOSS（顶尖存在，通常不涉及主线，但可被玩家谈判/求饶/逃跑/加入）
+    world_bosses = dangers.get("world_bosses", [])
+    if world_bosses:
+        wb_list = []
+        for b in world_bosses[:8]:
+            if not isinstance(b, dict):
+                continue
+            b_name = b.get("name", "")
+            b_identity = b.get("identity", "")
+            b_terr = "、".join(b.get("territories", [])[:3])
+            wb_list.append(f"{b_name}（{b_identity or '身份不详'}，领地：{b_terr or '不祥'}）")
+        if wb_list:
+            parts.append(f"\n【世界级强敌】{'；'.join(wb_list)}（均为极高难度的顶尖存在，玩家可尝试与之谈判、求饶、逃跑或加入其势力）")
+
     context = "\n".join(parts)
 
     # 截断

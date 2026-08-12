@@ -86,6 +86,42 @@ class DeathModeEngine:
         if len(self.state["action_log"]) > 500:
             self.state["action_log"] = self.state["action_log"][-500:]
 
+    def _drop_life_materials(self, enemy: Dict, combat_log: List):
+        """战斗掉落：生活技能原材料（LLM 自由组合的物料来源之一）。
+        敌人等级越高、类型越强，掉落越高级材料。
+        """
+        try:
+            from simlife.backend import life_skills as LS
+            if not self.state:
+                return
+            ls = LS.ensure_life_state(self.state)
+            level = enemy.get("level", 1) or 1
+            etype = enemy.get("type", "normal") or "normal"
+            # 掉落概率：普通 30%，精英 55%，BOSS 100%；等级越高越容易出
+            base_chance = {"normal": 0.30, "elite": 0.55, "boss": 1.0}.get(etype, 0.30)
+            if random.random() > min(0.95, base_chance + level * 0.01):
+                return
+            # 按敌人等级决定可掉落材料池
+            pool = [m for m in LS.RAW_MATERIALS if m["type"] in ("ingredient", "ore", "misc", "enchant")]
+            high = [m for m in pool if m["type"] == "enchant" or m["price"] >= 15]
+            if level >= 8 and high:
+                candidates = high
+            elif level >= 4:
+                candidates = [m for m in pool if m["price"] >= 8] or pool
+            else:
+                candidates = [m for m in pool if m["price"] <= 10]
+            mat = random.choice(candidates)
+            qty = random.randint(1, 2) + (1 if level >= 6 else 0)
+            LS.add_materials(ls["inventory"], mat["id"], qty, mat["name"], mat["icon"])
+            if combat_log is not None:
+                combat_log.append(f"采获：{mat['icon']} {mat['name']}×{qty}（生活材料）")
+            self._log_action("life_skill", {
+                "skill": "采集", "action": f"从{enemy.get('name', '敌人')}身上采获{mat['name']}×{qty}",
+                "detail": {"material": mat["name"], "qty": qty, "enemy": enemy.get("name", "")},
+            })
+        except Exception:
+            pass
+
     def _log_sweep_action(self, action: str, result: Dict):
         """记录扫荡战斗的行动日志（网页端展示用）"""
         sweep_result = result.get("combat_result", {}) if isinstance(result.get("combat_result"), dict) else {}
@@ -164,6 +200,10 @@ class DeathModeEngine:
                     "class_icon": "👤", "level": 1, "hp": 0, "max_hp": 0, "mp": 0, "max_mp": 0,
                     "stats": {"strength": 5, "agility": 5, "intelligence": 5, "vitality": 5, "luck": 5},
                     "skills": [], "equipment": [], "experience": 0, "exp_to_next": 100, "gold": 0}
+        # 兼容旧存档：确保生活技能状态存在
+        if self.state and not self.state.get("life_state"):
+            from simlife.backend.life_skills import ensure_life_state
+            ensure_life_state(self.state)
         # 迁移旧存档：技能中文名 → ID
         if self.state:
             _need_save = False
@@ -472,6 +512,7 @@ class DeathModeEngine:
             "map_display": self.world_map.get_map_display() if self.world_map else None,
             "npc_death_records": state.get("npc_death_records", []),
             "shared_inventory": state.get("shared_inventory", []),
+            "life_state": state.get("life_state", {}),
             "user_character": state.get("user_character", {}),
             "death_pending": state.get("death_pending", False),
             "death_who": state.get("death_who"),
@@ -1217,6 +1258,18 @@ class DeathModeEngine:
             return _blocked_result
 
         # 3. 非移动 或 移动成功 → 调用StoryAgent生成叙事
+        # 世界BOSS身份交流拦截：谈判/求饶/逃跑/加入势力，在LLM叙事前用硬性判定，避免即兴致死
+        try:
+            _boss_dialogue = self._handle_world_boss_dialogue(state, action, sender=sender)
+        except Exception as _e:
+            print(f"[DeathMode] 世界BOSS身份交流异常: {_e}")
+            _boss_dialogue = None
+        if _boss_dialogue:
+            _boss_dialogue.setdefault("next_scene", True)
+            self._record_history_and_save(state, action, _boss_dialogue.get("narrative", ""),
+                                          "world_boss_dialogue", None, _boss_dialogue)
+            return _boss_dialogue
+
         agent_result = self.agent.process_action(state, action, action_type, sender=sender)
         narrative = agent_result.get("narrative", "")
         outcome_type = agent_result.get("outcome_type", "nothing")
@@ -2809,6 +2862,8 @@ class DeathModeEngine:
                     shared_inv = state.setdefault("shared_inventory", [])
                     shared_inv.append(drop)
                     combat_log.append(f"掉落：{drop['name']}（{drop.get('rarity_name', '普通')}）已放入背包")
+                # 生活技能原材料掉落（战斗掉落，LLM 自由组合的物料来源）
+                self._drop_life_materials(enemy, combat_log)
 
         # ── 战术修正 ──
         tactic_result = None
@@ -4216,6 +4271,116 @@ class DeathModeEngine:
                 result["death_cause"] = f"逃跑时被{pursued_by}追击身亡"
 
             return result
+
+    def _handle_world_boss_dialogue(self, state: Dict, action: str, sender: str = "user") -> Optional[Dict]:
+        """世界BOSS身份交流：谈判/对话/求饶/逃跑/加入势力。
+
+        在 LLM 叙事生成之前拦截，用 BOSS 性格(identity)与开关(can_surrender/can_join)做硬性判定，
+        避免纯 LLM 即兴导致玩家直接死亡。核心安全原则：
+        - 拒绝谈判/求饶时绝不直接致死，而是退回战斗或给逃生机会
+        - 加入成功后记录世界BOSS盟友关系，之后该BOSS不再敌对
+        返回 dict 或 None(None=不适用，继续正常流程)。
+        """
+        if not action:
+            return None
+        if not self.world_map:
+            return None
+        region = self.world_map.get_current_region()
+        if not region or not getattr(region, "world_boss_id", None) or region.boss_defeated:
+            return None
+        boss = region.boss if isinstance(region.boss, dict) else None
+        if not boss:
+            return None  # 铺垫/势力中转领地无本体，走正常流程
+
+        boss_name = boss.get("name", "世界BOSS")
+        boss_id = boss.get("world_boss_id") or region.world_boss_id
+        identity = boss.get("identity", "") or ""
+        can_surrender = boss.get("can_surrender", True)
+        can_join = boss.get("can_join", True)
+
+        a = (action or "").strip()
+        is_negotiate = any(k in a for k in ("谈判", "对话", "交涉", "商量", "求和", "沟通", "聊聊", "交谈", "和谈", "谈条件", "谈和", "谈判"))
+        is_surrender = any(k in a for k in ("求饶", "投降", "饶命", "认输", "臣服", "放过我", "饶了我", "乞求", "请饶", "饶命啊"))
+        is_join = any(k in a for k in ("加入", "投靠", "归顺", "效忠", "追随", "入伙", "臣服于你", "归附", "投奔", "加入你"))
+        is_flee = any(k in a for k in ("逃跑", "撤退", "逃离", "撤走", "溜走", "逃命"))
+
+        if not (is_negotiate or is_surrender or is_join or is_flee):
+            return None
+
+        # 已加入该BOSS → 是盟友，不再敌对
+        alliances = state.get("world_boss_alliances", [])
+        already_ally = boss_id in alliances
+
+        # 性格关键词
+        merciful_kw = ("仁慈", "宽厚", "惜才", "爱才", "欣赏", "尊重", "宽容", "赏识", "惜", "高傲", "自负", "孤高", "重才", "求贤")
+        cruel_kw = ("凶残", "残忍", "冷酷", "嗜杀", "无情", "冷血", "暴虐", "残暴", "嗜血", "疯狂", "阴狠", "狰狞")
+        recruiting_kw = ("招揽", "野心", "需要人手", "招募", "求贤", "扩张", "笼络", "孤独", "雄才", "创业", "用人之际")
+        has_merciful = any(k in identity for k in merciful_kw)
+        has_cruel = any(k in identity for k in cruel_kw)
+        has_recruiting = any(k in identity for k in recruiting_kw)
+
+        # ── 逃跑：多数BOSS允许离开，凶残Boss小概率拦路 ──
+        if is_flee:
+            if already_ally:
+                return {"narrative": f"你是{boss_name}的麾下，想来便来，想走便走。", "joined_boss": boss_id}
+            if has_cruel and not has_merciful:
+                if random.random() < 0.5:
+                    state["in_combat"] = False
+                    state["enemies"] = []
+                    state["spotted_enemies"] = []
+                    return {"narrative": f"{boss_name}狞笑追来，你拼尽全力，终于甩开追兵，逃出了这片领地。", "in_combat": False, "fled": True}
+                return {"narrative": f"{boss_name}狞笑着挡住去路：「想逃？没那么容易！」", "blocked": True, "flee_chance": True}
+            state["in_combat"] = False
+            state["enemies"] = []
+            state["spotted_enemies"] = []
+            return {"narrative": f"{boss_name}冷冷望着你离去，并未阻拦。你顺利离开了这片领地。", "in_combat": False, "fled": True}
+
+        # ── 加入势力 ──
+        if is_join:
+            if already_ally:
+                return {"narrative": f"你已是{boss_name}的麾下，对方自然对你以礼相待、不设戒备。", "joined_boss": boss_id}
+            if not can_join:
+                return {"narrative": f"{boss_name}冷哼一声：「本座不收无名之辈，滚。」", "blocked": True}
+            if has_recruiting or random.random() < 0.6:
+                if boss_id not in alliances:
+                    alliances.append(boss_id)
+                    state["world_boss_alliances"] = alliances
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                return {"narrative": f"{boss_name}打量你片刻，竟点头应允：「有点胆识，本座收下你了。」你加入了{boss_name}麾下，成为其势力的一员。",
+                        "joined_boss": boss_id, "in_combat": False}
+            return {"narrative": f"{boss_name}斜睨你一眼：「想投靠本座？先证明你的价值——去猎杀本座的敌人，或献上诚意之物。」", "blocked": True, "needs_trial": True}
+
+        # ── 求饶：性格决定，拒绝也不致死 ──
+        if is_surrender:
+            if already_ally:
+                return {"narrative": f"作为{boss_name}的麾下，你无需求饶。", "joined_boss": boss_id}
+            if not can_surrender:
+                return {"narrative": f"{boss_name}目光冰寒：「求饶无用，本座只认实力。」", "blocked": True}
+            if has_merciful or (not has_cruel and random.random() < 0.5):
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                return {"narrative": f"{boss_name}看着你，竟收起杀意：「……也罢，本座不杀弃甲之人。滚吧。」你侥幸保住一命。",
+                        "in_combat": False, "spared": True}
+            return {"narrative": f"{boss_name}冷笑着步步逼近，杀意凛然——但就在此刻，你若想逃命，趁现在！", "blocked": True, "flee_chance": True}
+
+        # ── 谈判 ──
+        if is_negotiate:
+            if already_ally:
+                return {"narrative": f"你与{boss_name}相谈甚欢，对方对你十分友善。", "joined_boss": boss_id}
+            if not can_surrender and not has_merciful:
+                return {"narrative": f"{boss_name}摆手打断：「本座没兴趣跟你谈条件。」", "blocked": True}
+            if has_merciful or random.random() < 0.5:
+                state["in_combat"] = False
+                state["enemies"] = []
+                state["spotted_enemies"] = []
+                return {"narrative": f"{boss_name}与你一番交谈，竟愿意放你通行：「今日给你个面子，走吧。」你们达成了和平默契。",
+                        "in_combat": False, "negotiated": True}
+            return {"narrative": f"{boss_name}权衡片刻，仍摇了摇头：「你的条件打动不了本座。」", "blocked": True}
+
+        return None
 
     def _calc_trap_damage(self, char: Dict, risk_level: str) -> int:
         """计算陷阱伤害"""
