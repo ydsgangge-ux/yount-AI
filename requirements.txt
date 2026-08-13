@@ -3,6 +3,8 @@
 
 # Desktop UI framework
 PyQt6>=6.6.0
+# Web engine for VRM / Live2D rendering
+PyQt6-WebEngine
 
 # Screenshot + OCR
 Pillow>=10.0.0
@@ -59,6 +61,9 @@ SoundFile>=0.10.3
 
 # Sensor agent - Robot communication (optional)
 paho-mqtt>=2.0.0
+
+# SimLife world engine (pydantic)
+pydantic>=2.0.0
 
 # Sensor agent - Serial communication (optional, for robot SDK)
 # pyserial>=3.5
