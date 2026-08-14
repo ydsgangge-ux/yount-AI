@@ -8,7 +8,7 @@ from pathlib import Path
 
 # ── 路径 ──────────────────────────────────────────
 APP_NAME    = "AGI 认知助手"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.0.1"
 
 # 数据目录（跨平台）
 if sys.platform == "win32":

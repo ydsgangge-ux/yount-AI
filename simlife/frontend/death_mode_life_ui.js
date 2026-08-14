@@ -13,7 +13,7 @@ const LifeSkillsUI = {
   // 烹饪小游戏状态
   _cook: { recipe: null, steps: [], picked: [], active: false, timer: null },
   // 自由烹饪 · 中餐工序状态（切型/腌料/腌制时长/手法/火候时长）
-  _cookFree: { cut: '', marinade: '', marinade_t: '不腌', method: '', duration: '' },
+  _cookFree: { cut: {}, marinade: [], marinade_t: '不腌', method: '', duration: '' },
   // 锻造小游戏状态
   _forge: { bp: null, steps: [], idx: 0, active: false, timer: null, window: 0, results: [] },
   // 钓鱼小游戏状态（实景 Canvas + 搏斗张力）
@@ -529,12 +529,32 @@ const LifeSkillsUI = {
     const sel = this._freeSel.cook || {};
     const materials = Object.entries(sel).filter(([id, q]) => q > 0).map(([id, q]) => [id, q]);
     if (!materials.length) { alert('请先挑选食材'); return; }
-    this._cookFree = { cut: '', marinade: '', marinade_t: '不腌', method: '', duration: '' };
+    this._cookFree = { cut: {}, marinade: [], marinade_t: '不腌', method: '', duration: '' };
     this._renderCookFree();
   },
 
   _cfSet(key, val) {
-    this._cookFree[key] = val;
+    // 腌制腌料：多选切换；其余（时长/手法/火候）单选
+    if (key === 'marinade') {
+      if (val === '不腌') {
+        this._cookFree.marinade = ['不腌'];  // 选"不腌"则清空其他腌料
+      } else {
+        const arr = this._cookFree.marinade || [];
+        this._cookFree.marinade = arr.includes('不腌')
+          ? [val]
+          : (arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]);
+        if (!this._cookFree.marinade.length) this._cookFree.marinade = ['不腌'];
+      }
+    } else {
+      this._cookFree[key] = val;
+    }
+    this._renderCookFree();
+  },
+
+  // 切配：每种食材各自选切法（多食材各自成刀工）
+  _cfCut(mid, val) {
+    this._cookFree.cut = this._cookFree.cut || {};
+    this._cookFree.cut[mid] = val;
     this._renderCookFree();
   },
 
@@ -545,24 +565,43 @@ const LifeSkillsUI = {
     const sel = this._freeSel.cook || {};
     const mats = Object.entries(sel).filter(([id, q]) => q > 0);
     const matDesc = mats.map(([id, q]) => `${this._matName(id)}×${q}`).join('、') || '（未选）';
-    const group = (label, key, opts) => `
-      <div style="margin-bottom:8px;">
-        <div style="font-size:11px;color:#8b949e;margin-bottom:4px;">${label}</div>
+    const CUT_OPTS = ['切丝', '切片', '切块', '切丁', '滚刀块', '剁末', '整条'];
+    // ① 切配：每种食材各自选切法（多食材各自成刀工）
+    const cutRows = mats.map(([id, q]) => {
+      const chosen = (cf.cut && cf.cut[id]) || '';
+      return `
+      <div style="margin-bottom:6px;">
+        <div style="font-size:11px;color:#c9d1d9;margin-bottom:3px;">${this._matName(id)}×${q} <span style="color:#8b949e;">的切法：</span></div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;">
-          ${opts.map(o => `<button onclick="LifeSkillsUI._cfSet('${key}','${o}')" style="padding:4px 10px;background:${cf[key]===o?'#2ea043':'#1a3a1a'};border:1px solid ${cf[key]===o?'#3fb950':'#2d5a2d'};border-radius:14px;color:${cf[key]===o?'#fff':'#3fb950'};cursor:pointer;font-size:11px;">${o}</button>`).join('')}
+          ${CUT_OPTS.map(o => `<button onclick="LifeSkillsUI._cfCut('${id}','${o}')" style="padding:3px 9px;background:${chosen===o?'#2ea043':'#1a3a1a'};border:1px solid ${chosen===o?'#3fb950':'#2d5a2d'};border-radius:14px;color:${chosen===o?'#fff':'#3fb950'};cursor:pointer;font-size:10px;">${o}</button>`).join('')}
         </div>
       </div>`;
-    const ready = cf.cut && cf.marinade && cf.method && cf.duration;
+    }).join('');
+    const group = (label, key, opts, multi) => {
+      const isSel = (o) => multi
+        ? ((cf[key] || []).includes(o))
+        : (cf[key] === o);
+      return `
+      <div style="margin-bottom:8px;">
+        <div style="font-size:11px;color:#8b949e;margin-bottom:4px;">${label}${multi ? '<span style="color:#58a6ff;">（可多选）</span>' : ''}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">
+          ${opts.map(o => `<button onclick="LifeSkillsUI._cfSet('${key}','${o}')" style="padding:4px 10px;background:${isSel(o)?'#2ea043':'#1a3a1a'};border:1px solid ${isSel(o)?'#3fb950':'#2d5a2d'};border-radius:14px;color:${isSel(o)?'#fff':'#3fb950'};cursor:pointer;font-size:11px;">${o}</button>`).join('')}
+        </div>
+      </div>`;
+    };
+    const allCut = mats.length && mats.every(([id]) => cf.cut && cf.cut[id]);
+    const ready = allCut && (cf.marinade || []).length && cf.marinade_t && cf.method && cf.duration;
     el.innerHTML = `
       <div style="padding:12px;background:#12241a;border:1px solid #3fb950;border-radius:10px;">
         <div style="font-size:13px;color:#3fb950;font-weight:600;margin-bottom:4px;">🧪 自由烹饪 · 中餐工序</div>
         <div style="font-size:11px;color:#c9d1d9;margin-bottom:8px;">食材：${matDesc}<span style="color:#8b949e;">（食材品质越高，成品越好、越易出完美）</span></div>
-        ${group('① 切配 · 切成什么形状？', 'cut', ['切丝', '切片', '切块', '切丁', '滚刀块', '剁末', '整条'])}
-        ${group('② 腌制 · 用什么腌料？', 'marinade', ['不腌', '盐', '生抽', '料酒', '姜葱', '蒜蓉', '花椒', '辣椒', '糖醋汁'])}
+        <div style="font-size:11px;color:#8b949e;margin-bottom:4px;">① 切配 · 每种食材各自的刀工</div>
+        ${cutRows}
+        ${group('② 腌制 · 用什么腌料？', 'marinade', ['不腌', '盐', '生抽', '料酒', '姜葱', '蒜蓉', '花椒', '辣椒', '糖醋汁'], true)}
         ${group('腌制时长', 'marinade_t', ['不腌', '10分钟', '30分钟', '2小时'])}
         ${group('③ 制作手法', 'method', ['煎', '炒', '炸', '蒸', '炖', '烤', '煮', '焖', '爆'])}
         ${group('④ 火候时长', 'duration', ['短(急火)', '中', '长(慢火)'])}
-        <div style="font-size:10px;color:#6e7681;margin-top:2px;">火候与手法不匹配会出问题（如煎太久糊了、炖太短夹生），完成时会得到一句烹饪评语。</div>
+        <div style="font-size:10px;color:#6e7681;margin-top:2px;">每种食材可分别切配（如鱼切片、葱切段）；火候与手法不匹配会出问题（如煎太久糊了、炖太短夹生），完成时会得到一句烹饪评语。腌料可多选组合（如盐+料酒+姜葱）。</div>
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button onclick="LifeSkillsUI._startCookFree()" style="padding:5px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;cursor:pointer;font-size:11px;">重置</button>
           <button onclick="LifeSkillsUI._submitCookFree()" ${ready?'':'disabled'} style="padding:5px 14px;background:#1a3a1a;border:1px solid #3fb950;border-radius:6px;color:#3fb950;cursor:pointer;font-size:12px;font-weight:bold;">🍳 完成烹饪</button>
@@ -574,10 +613,13 @@ const LifeSkillsUI = {
     const cf = this._cookFree;
     const sel = this._freeSel.cook || {};
     const materials = Object.entries(sel).filter(([id, q]) => q > 0).map(([id, q]) => [id, q]);
+    // 每种食材各自的切法描述，如「小麦切丝、鱼肉切片」
+    const cutDesc = materials.map(([id]) =>
+      `${this._matName(id)}${(cf.cut && cf.cut[id]) || ''}`).join('、');
     const resp = await fetch('/api/death-mode/life-skills/cook', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ materials, free: true,
-        cut: cf.cut, marinade: cf.marinade, marinade_t: cf.marinade_t,
+        cut: cutDesc, marinade: (cf.marinade || []).join('+'), marinade_t: cf.marinade_t,
         method: cf.method, duration: cf.duration }),
     });
     const r = await resp.json();
@@ -942,13 +984,15 @@ const LifeSkillsUI = {
     const available = (d.fish_table || []).filter(f => f.zones.includes(zoneId));
     if (!available.length) return null;
     const bait = this._equipped().bait || { family: '杂鱼', bite: 1.15 };
+    const rod = this._equipped().rod || {};
     const level = (d.skills.fishing || {}).level || 1;
     const weighted = [];
     for (const f of available) {
       let w = f.aggress;
       if (bait.family === f.family) w *= bait.bite;
       else if (bait.family === '传说' && f.legendary) w *= bait.bite;
-      if (f.fight > 60 && level < 3) w *= 0.6;
+      // 鱼竿抛投力：抛得越远，越容易勾到力量型大鱼（fight 高）
+      if (f.fight > 60) w *= 0.6 + (rod.cast || 40) / 100;
       weighted.push([f, Math.max(0.05, w)]);
     }
     const total = weighted.reduce((a, b) => a + b[1], 0);
@@ -1057,6 +1101,41 @@ const LifeSkillsUI = {
     f.rod.sway = Math.sin(f.time * 1.5) * 0.02;
   },
 
+  // 装备组合值 vs 鱼难度：返回「装备不足压力」0(无)~0.9(极大)
+  _gearPressure(fish) {
+    const eq = this._equipped();
+    const gearPower = (eq.rod.fight || 0) * 1.2 + (eq.rod.cast || 0) * 0.2
+      + (eq.reel.drag || 0) * 1.0 + (eq.reel.speed || 0) * 0.3
+      + (eq.line.maxTension || 0) * 0.6;
+    const diff = (fish.strength || 0) + (fish.fight || 0) * 0.5 + (fish.max || 0) * 1.0;
+    if (diff <= 0) return 0;
+    return Math.max(0, Math.min(0.9, 1 - gearPower / diff));
+  },
+
+  // 装备不足导致的失败：脱钩/断线/爆杆（断线、爆杆需重新购买装备）
+  async _gearFail(fish) {
+    const f = this._fish;
+    const heavy = f._pres > 0.6;   // 差距极大 → 爆杆概率高
+    const r = Math.random();
+    if (!heavy && r < 0.35) {
+      this._endFight(false, `💨 ${fish.name} 脱钩跑了！`); return;
+    }
+    const isRod = heavy ? r < 0.5 : r < 0.7;
+    const slot = isRod ? 'rod' : 'line';
+    let msg = '';
+    try {
+      const resp = await fetch('/api/death-mode/life-skills/fish-damage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot }),
+      });
+      const rj = await resp.json();
+      if (rj.broken) msg = `（${rj.message}）`;
+    } catch (e) { /* 网络异常不阻断 */ }
+    const name = slot === 'rod' ? '鱼竿' : '鱼线';
+    this._reload('fish');
+    this._endFight(false, `💥 ${fish.name} 实在太猛，你的${name}不堪重负${isRod ? '爆杆' : '断了'}！${msg}`);
+  },
+
   _pickAndHook() {
     const f = this._fish;
     const fish = this._pickFish(this._zone);
@@ -1064,6 +1143,8 @@ const LifeSkillsUI = {
     f.hookedFish = fish;
     f.phase = 'fighting';
     f.tension = 50; f.tensionTarget = 50; f.tensionDir = 0; f.fishStam = 100; f.maxTensionSeen = 50;
+    f._failAcc = 0;
+    f._pres = this._gearPressure(fish);
     f.bobber.bob = 8;
     this._spawnSplash(f.bobber.x, f.cv.height * 0.58, 18);
     this._spawnRipple(f.bobber.x, f.cv.height * 0.58);
@@ -1083,11 +1164,14 @@ const LifeSkillsUI = {
     f.tensionTarget = this._flamp(50 + f.tensionDir, 5, 95);
     f.tensionDir *= 0.96;
     if (f.pulling) {
-      const inc = Math.max(5, 35 - drag * 0.4);
+      // 线强度提供张力缓冲：强线拉线时张力涨得慢，更不易断线
+      const lineBuf = Math.max(1, (eq.line.maxTension || 90) / 90);
+      const inc = Math.max(5, (35 - drag * 0.4) / lineBuf);
       f.tension += inc * dt;
       f.fishStam -= (8 + fish.strength / 40) * dt * (1 + (eq.rod.fight || 0) / 100);
     } else if (f.releasing) {
-      f.tension -= 35 * dt; f.fishStam += 1 * dt;
+      // 卷线轮速度：速度越快，放线时张力降得越快（更容易缓解断线风险）
+      f.tension -= 35 * (1 + (eq.reel.speed || 30) / 100) * dt; f.fishStam += 1 * dt;
     } else {
       f.tension += (f.tensionTarget - f.tension) * dt * 0.8;
     }
@@ -1095,6 +1179,14 @@ const LifeSkillsUI = {
     f.tension = this._flamp(f.tension, 0, 100);
     f.fishStam = this._flamp(f.fishStam, 0, 100);
     f.maxTensionSeen = Math.max(f.maxTensionSeen, f.tension);
+    // 装备组合 vs 鱼难度：装备不足时累积「失败压力」，压力满则脱钩/断线/爆杆
+    if (f._pres > 0) {
+      let growth = f._pres * 0.5;
+      if (f.tension > 70) growth += 0.3;   // 张力警戒线附近压力暴涨
+      if (f.tension < 30) growth *= 0.3;    // 稳住低张力可大幅缓解
+      f._failAcc = (f._failAcc || 0) + growth * dt;
+      if (f._failAcc >= 1) { f._failAcc = 0; this._gearFail(fish); return; }
+    }
     f.bobber.bob = Math.sin(performance.now() * 0.02) * 4 + 2;
     this._updateFightHud();
     if (f.tension >= breakLimit) this._endFight(false, '💥 线断了！鱼跑了');
@@ -1135,8 +1227,9 @@ const LifeSkillsUI = {
     if (success && fish) {
       const weight = this._weight(fish);
       const line = this._equipped().line;
-      const breakLimit = Math.min(100, line.maxTension || 90);
-      const quality = f.maxTensionSeen < breakLimit * 0.8 ? 'perfect' : (f.maxTensionSeen <= breakLimit ? 'good' : 'normal');
+      const maxT = line.maxTension || 90;
+      // 线越强，「张力峰值」越容易低于 80% 上限 → 越容易出完美品质
+      const quality = f.maxTensionSeen < maxT * 0.8 ? 'perfect' : 'good';
       this._setHint('搏斗成功！结算中...');
       const resp = await fetch('/api/death-mode/life-skills/fish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -1592,6 +1592,10 @@ def api_death_mode_life_buy(data: dict):
     char["gold"] -= cost
     ls = state["life_state"]
     LS.add_materials(ls["inventory"], mat_id, qty, mat["name"], mat["icon"])
+    engine._log_action("life_skill", {
+        "skill": "采购", "action": f"购买了{qty}个{mat['name']}（-{cost}金币）",
+        "detail": {"材料": mat["name"], "数量": qty, "花费": f"-{cost}金币"},
+    })
     engine._save()
     return {"success": True, "message": f"购买了{qty}个{mat['name']}（-{cost}金币）",
             "gold": char["gold"], "inventory": ls["inventory"]}
@@ -1734,6 +1738,10 @@ def api_death_mode_life_cook(data: dict):
         LS.add_item_to_list(ls["foods"], {"name": "焦糊料理", "icon": "🔥", "type": "food",
                                           "buff": {"type": "hp", "value": 5, "turns": 0}}, 1)
         ls["last_activity"] = "烹饪失败，得到一份焦糊料理"
+        engine._log_action("life_skill", {
+            "skill": "烹饪", "action": "烹饪失败！",
+            "detail": {"评价": "失败", "说明": "步骤错误，得到一份焦糊料理（返还部分材料）"},
+        })
         engine._save()
         return {"success": False, "quality": quality, "message": "烹饪失败，得到一份焦糊料理（返还部分材料）",
                 "xp_gained": xp, "level_up": lv["level_up"], "foods": ls["foods"]}
@@ -1762,11 +1770,22 @@ def api_death_mode_life_cook(data: dict):
     if recipe_id and recipe_id not in ls["recipes_known"]:
         ls["recipes_known"].append(recipe_id)
     ls["last_activity"] = f"烹饪成功，得到{result_name}"
-    engine._save()
+    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通", "bad": "劣质"}.get(quality, quality)
+    detail = {
+        "菜名": result_name,
+        "评价": quality_name,
+        "回复": f"{buff.get('type','hp')}+{buff.get('value',0)}",
+        "评语": comment if is_free else "",
+    }
+    if special:
+        detail["特殊"] = f"附加{special['type']}+{special['value']}（{special['turns']}回合）"
+    if poison:
+        detail["注意"] = "火候失控，吃了会食物中毒扣血！"
     engine._log_action("life_skill", {
         "skill": "烹饪", "action": f"烹饪出{result_name}",
-        "detail": {"recipe": result_name, "quality": quality, "free": is_free},
+        "detail": detail,
     })
+    engine._save()
     quality_name = {"perfect": "完美", "good": "良好", "normal": "普通", "bad": "劣质"}.get(quality, quality)
     return {"success": True, "quality": quality, "quality_name": quality_name,
             "message": f"烹饪成功！得到{result_name}（{quality_name}品质）",
@@ -1830,6 +1849,10 @@ def api_death_mode_life_forge(data: dict):
         xp = LS.resource_value("normal")
         lv = LS.add_xp(ls["skills"], "forging", xp)
         ls["last_activity"] = "锻造失败，金属报废"
+        engine._log_action("life_skill", {
+            "skill": "锻造", "action": "锻造失败！",
+            "detail": {"评价": "失败", "说明": "步骤错误，金属报废（返还部分材料）"},
+        })
         engine._save()
         return {"success": False, "quality": quality, "message": "锻造失败，金属报废（返还部分材料）",
                 "xp_gained": xp, "level_up": lv["level_up"]}
@@ -1843,11 +1866,13 @@ def api_death_mode_life_forge(data: dict):
         fg_info = bp["fishing_gear"]
         LS.forge_fishing_gear(ls, fg_info["slot"], fg_info["gear_id"])
         ls["last_activity"] = f"锻造成功，打造了{bp['name']}"
-        engine._save()
+        quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
         engine._log_action("life_skill", {
             "skill": "锻造", "action": f"打造出{bp['name']}",
-            "detail": {"item": bp["name"], "quality": quality, "fishing_gear": True},
+            "detail": {"装备": bp["name"], "评价": quality_name,
+                       "部位": bp["fishing_gear"]["slot"], "用途": "钓鱼装备"},
         })
+        engine._save()
         quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
         return {"success": True, "quality": quality, "quality_name": quality_name,
                 "message": f"锻造成功！打造出{bp['icon']} {bp['name']}（{quality_name}品质），已加入钓鱼装备",
@@ -1882,12 +1907,15 @@ def api_death_mode_life_forge(data: dict):
         result["rarity_name"] = rarity_map.get(quality, "稀有")
         LS.add_item_to_list(ls["equipment"], result, 1)
         ls["last_activity"] = f"锻造成功，得到{result_name}"
-        engine._save()
+        rarity_name = rarity_map.get(quality, "稀有")
+        bonus_str = f"{result.get('bonus',0)}"
         engine._log_action("life_skill", {
             "skill": "锻造", "action": f"锻造出{result_name}",
-            "detail": {"item": result_name, "quality": quality, "free": True,
-                       "rarity": result.get("rarity_name", "")},
+            "detail": {"装备": result_name, "评价": rarity_name,
+                       "属性": f"{result.get('type','weapon')}·{result.get('damage_type','physical')}",
+                       "加成": f"+{bonus_str}"},
         })
+        engine._save()
         quality_name = rarity_map.get(quality, quality)
         return {"success": True, "quality": quality, "quality_name": quality_name,
                 "message": f"锻造成功！得到{result['icon']} {result_name}（{quality_name}品质）",
@@ -1902,12 +1930,14 @@ def api_death_mode_life_forge(data: dict):
     if bp_id and bp_id not in ls["blueprints_known"]:
         ls["blueprints_known"].append(bp_id)
     ls["last_activity"] = f"锻造成功，得到{result['name']}"
-    engine._save()
+    rarity_name = rarity_map.get(quality, "稀有")
     engine._log_action("life_skill", {
         "skill": "锻造", "action": f"锻造出{result['name']}",
-        "detail": {"item": result["name"], "quality": quality,
-                   "rarity": result.get("rarity_name", "")},
+        "detail": {"装备": result["name"], "评价": rarity_name,
+                   "属性": result.get("damage_type", "physical"),
+                   "加成": f"+{result.get('bonus',0)}"},
     })
+    engine._save()
     quality_name = rarity_map.get(quality, quality)
     return {"success": True, "quality": quality, "quality_name": quality_name,
             "message": f"锻造成功！得到{result['name']}（{quality_name}品质）",
@@ -1971,12 +2001,13 @@ def api_death_mode_life_enchant(data: dict):
         item["enchant"] = {"name": enchant_name, "stat_type": stat_type, "stat_value": stat_value}
 
     ls["last_activity"] = f"为{name}附魔成功：{enchant_name}"
-    engine._save()
+    stat_label = {"attack": "攻击", "defense": "防御", "hp": "生命", "mp": "魔法"}.get(stat_type, stat_type)
     engine._log_action("life_skill", {
         "skill": "附魔", "action": f"为{name}附魔「{enchant_name}」",
-        "detail": {"item": name, "enchant": enchant_name, "stat_type": stat_type,
-                   "stat_value": stat_value},
+        "detail": {"装备": name, "附魔": enchant_name,
+                   "效果": f"{stat_label}+{stat_value}"},
     })
+    engine._save()
     stat_name = {"attack": "攻击", "defense": "防御", "hp": "生命", "mp": "法力"}.get(stat_type, stat_type)
     return {"success": True, "message": f"附魔成功！{name}获得「{enchant_name}」：{stat_name}+{stat_value}",
             "equipment": ls["equipment"], "fish_caught": ls["fish_caught"],
@@ -2043,15 +2074,16 @@ def api_death_mode_life_fish(data: dict):
     xp = LS.resource_value(quality) + LS.fish_rarity_weight(fish)
     lv = LS.add_xp(ls["skills"], "fishing", xp)
     ls["last_activity"] = f"钓到了{fish['name']}({weight}kg)"
-    engine._save()
 
     # 记录到行动日志，供 A 层/AI 角色读取
+    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
     engine._log_action("life_skill", {
         "skill": "钓鱼",
         "action": f"在{region_name}钓到了{fish['name']}",
-        "detail": {"fish": fish["name"], "weight": weight, "quality": quality,
-                   "value": value, "region": region_name, "zone": zone},
+        "detail": {"鱼": fish["name"], "体重": f"{weight}kg", "评价": quality_name,
+                   "价值": f"{value}金币", "地点": region_name, "水域": zone},
     })
+    engine._save()
 
     quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
     return {"success": True, "quality": quality, "quality_name": quality_name,
@@ -2075,6 +2107,10 @@ def api_death_mode_life_fish_buy_gear(data: dict):
     if not r["success"]:
         return {"error": "buy_fail", "message": r["msg"]}
     char["gold"] = r["gold"]
+    engine._log_action("life_skill", {
+        "skill": "采购", "action": r["msg"],
+        "detail": {"装备": r["msg"]},
+    })
     engine._save()
     return {"success": True, "message": r["msg"], "gold": char["gold"],
             "fish_gear_owned": ls["fish_gear"]["owned"]}
@@ -2092,8 +2128,34 @@ def api_death_mode_life_fish_equip(data: dict):
     r = LS.equip_fish_gear(ls, gear_id)
     if not r["success"]:
         return {"error": "equip_fail", "message": r["msg"]}
+    engine._log_action("life_skill", {
+        "skill": "钓鱼", "action": r["msg"],
+        "detail": {"装备": r["msg"]},
+    })
     engine._save()
     return {"success": True, "message": r["msg"], "fish_gear_equipped": ls["fish_gear"]["equipped"]}
+
+
+@app.post("/api/death-mode/life-skills/fish-damage")
+def api_death_mode_life_fish_damage(data: dict):
+    """钓鱼装备损坏（断线/爆杆）：从已拥有中移除对应装备，需重新购买"""
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    slot = data.get("slot", "")
+    ls = state["life_state"]
+    r = LS.damage_fish_gear(ls, slot)
+    if not r["broken"]:
+        return {"success": True, "broken": False, "message": r["msg"]}
+    engine._log_action("life_skill", {
+        "skill": "钓鱼", "action": f"钓鱼时{r['name']}损坏需更换",
+        "detail": {"装备": r["name"], "状态": "已损坏，需重新购买"},
+    })
+    engine._save()
+    return {"success": True, "broken": True, "message": r["msg"],
+            "fish_gear_owned": ls["fish_gear"]["owned"],
+            "fish_gear_equipped": ls["fish_gear"]["equipped"]}
 
 
 @app.post("/api/death-mode/life-skills/fish-set-zone")
@@ -2109,8 +2171,13 @@ def api_death_mode_life_fish_set_zone(data: dict):
     if not LS.zone_unlocked(zone, fg.get("earnings", 0)):
         return {"error": "locked_zone", "message": "该水域尚未解锁"}
     fg["zone"] = zone
+    zone_name = LS.get_zone(zone)["name"]
+    engine._log_action("life_skill", {
+        "skill": "钓鱼", "action": f"前往{zone_name}垂钓",
+        "detail": {"水域": zone_name},
+    })
     engine._save()
-    return {"success": True, "message": f"已切换到{LS.get_zone(zone)['name']}", "fish_zone": zone}
+    return {"success": True, "message": f"已切换到{zone_name}", "fish_zone": zone}
 
 
 @app.post("/api/death-mode/life-skills/eat")
@@ -2172,6 +2239,14 @@ def api_death_mode_life_eat(data: dict):
         msg += f" ✨特殊效果：获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
 
     char["hp"] = max(0, char["hp"])
+    actor = "AI角色" if target == "ai" else "玩家"
+    detail = {"对象": actor, "食物": name, "效果": msg}
+    if special:
+        detail["特殊"] = f"获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
+    engine._log_action("life_skill", {
+        "skill": "饮食", "action": f"{actor}食用了{name}",
+        "detail": detail,
+    })
     engine._save()
     return {"success": True, "message": msg, "hp": char.get("hp"), "mp": char.get("mp"),
             "buffs": ls["buffs"], "foods": ls["foods"], "fish_caught": ls["fish_caught"]}
@@ -2209,6 +2284,10 @@ def api_death_mode_life_equip_item(data: dict):
     if item.get("enchant"):
         eq_item["enchant"] = item["enchant"]
     state.setdefault("shared_inventory", []).append(eq_item)
+    engine._log_action("life_skill", {
+        "skill": "锻造", "action": f"将{item['name']}打造并放入共享背包",
+        "detail": {"装备": item["name"], "状态": "已放入共享背包"},
+    })
     engine._save()
     return {"success": True, "message": f"已将{item['name']}放入共享背包", "equipment": ls["equipment"]}
 
@@ -2232,6 +2311,10 @@ def api_death_mode_life_sell_fish(data: dict):
         ls["fish_caught"].remove(item)
     price = item.get("price", 5)
     state["character"]["gold"] = state["character"].get("gold", 0) + price
+    engine._log_action("life_skill", {
+        "skill": "交易", "action": f"出售{name}获得{price}金币",
+        "detail": {"鱼": name, "金币": f"+{price}"},
+    })
     engine._save()
     return {"success": True, "message": f"出售{name}获得{price}金币",
             "gold": state["character"]["gold"], "fish_caught": ls["fish_caught"]}

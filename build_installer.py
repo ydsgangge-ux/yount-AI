@@ -20,7 +20,7 @@ from pathlib import Path
 
 # ── 配置 ──────────────────────────────────────────────
 APP_NAME = "AGI-Assistant"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.0.1"
 APP_PUBLISHER = "Yount-AI"
 
 PYTHON_VERSION = "3.13.7"          # 嵌入式 Python 版本
@@ -30,6 +30,8 @@ PYTHON_EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{
 BASE = Path(__file__).parent
 BUILD_DIR = BASE / "build_installer"
 DIST_DIR = BASE / "dist"
+# 持久缓存目录（存放已下载的 Python 与已安装依赖，避免每次打包重复下载）
+CACHE_DIR = BASE / ".build_cache"
 
 # NSIS 路径（自动探测）
 NSIS_CANDIDATES = [
@@ -82,10 +84,12 @@ def _extract_zip(zip_path: Path, dest: Path):
 
 # ── 打包步骤 ──────────────────────────────────────────
 def step1_prepare_dirs():
-    """1. 准备打包目录"""
+    """1. 准备打包目录（保留持久缓存）"""
     print("\n[1/6] 准备打包目录...")
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR)
+    if CACHE_DIR.exists():
+        print(f"  复用缓存目录: {CACHE_DIR}（Python 与依赖无需重新下载）")
     if DIST_DIR.exists():
         # 不删 dist，避免误删其他构建产物
         pass
@@ -94,10 +98,21 @@ def step1_prepare_dirs():
 
 
 def step2_download_python():
-    """2. 下载并解压嵌入式 Python"""
-    print("\n[2/6] 下载嵌入式 Python...")
-    py_zip = BUILD_DIR / f"python-{PYTHON_VERSION}-embed-amd64.zip"
+    """2. 下载并解压嵌入式 Python（命中缓存则直接复用）"""
     py_dir = BUILD_DIR / "python"
+    py_exe = py_dir / "python.exe"
+
+    # 命中完整缓存：直接复用已装好依赖的 Python 环境
+    if _cache_valid():
+        print("\n[2/6] 命中缓存 Python 环境...")
+        cache_py = CACHE_DIR / "python"
+        shutil.copytree(cache_py, py_dir)
+        print(f"  已从缓存复制 Python 环境（跳过下载与依赖安装）")
+        return py_dir, py_exe, True
+
+    print("\n[2/6] 下载嵌入式 Python...")
+    py_zip = CACHE_DIR / f"python-{PYTHON_VERSION}-embed-amd64.zip"
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     if py_zip.exists():
         print(f"  已存在缓存: {py_zip}")
@@ -118,7 +133,6 @@ def step2_download_python():
     print("  安装 pip...")
     get_pip = BUILD_DIR / "get-pip.py"
     _download("https://bootstrap.pypa.io/get-pip.py", get_pip)
-    py_exe = py_dir / "python.exe"
     subprocess.run(
         [str(py_exe), str(get_pip), "--no-warn-script-location"],
         cwd=str(py_dir),
@@ -126,56 +140,81 @@ def step2_download_python():
         capture_output=True,
     )
     print("  pip 安装完成")
-    return py_dir, py_exe
+    return py_dir, py_exe, False
 
 
-def step3_install_deps(py_exe: Path, py_dir: Path):
-    """3. 安装全部依赖到嵌入式 Python"""
+# 全部依赖（分批安装，避免单次失败；同时用于缓存校验）
+DEPS = [
+    # 核心 UI 框架
+    "PyQt6>=6.6.0",
+    "Pillow>=10.0.0",
+    "pyautogui>=0.9.54",
+    "pytesseract>=0.3.10",
+    "keyboard>=0.13.5",
+    "requests>=2.31.0",
+    # Office 工具
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=0.6.23",
+    "reportlab>=4.1.0",
+    "pdfplumber>=0.10.0",
+    # 金融
+    "yfinance>=0.2.31",
+    # TTS 语音
+    "edge-tts>=6.1.0",
+    "pyttsx3>=2.90",
+    # 新闻
+    "newspaper3k>=0.2.8",
+    "lxml_html_clean>=0.1.0",
+    # HTTP / 抓取
+    "httpx>=0.27.0",
+    "feedparser>=6.0.11",
+    "beautifulsoup4>=4.12.3",
+    # FastAPI 服务（SimLife + 手机端）
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "PyJWT>=2.8.0",
+    # Flask 网页版
+    "Flask>=3.0.0",
+    "Flask-SocketIO>=5.3.0",
+    # 语音 STT
+    "websocket-client>=1.6.0",
+    "sounddevice>=0.4.6",
+    "SoundFile>=0.10.3",
+    # 传感器
+    "paho-mqtt>=2.0.0",
+    # pydantic（SimLife）
+    "pydantic>=2.0.0",
+]
+
+
+def _deps_hash() -> str:
+    """依赖清单的哈希，用于缓存有效性校验"""
+    import hashlib
+    return hashlib.md5("\n".join(DEPS).encode("utf-8")).hexdigest()
+
+
+def _cache_valid() -> bool:
+    """已缓存的完整 Python 环境是否可用（存在且依赖清单匹配）"""
+    py = CACHE_DIR / "python" / "python.exe"
+    deps_file = CACHE_DIR / "deps.txt"
+    if not py.exists() or not deps_file.exists():
+        return False
+    return deps_file.read_text(encoding="utf-8").strip() == _deps_hash()
+
+
+def step3_install_deps(py_exe: Path, py_dir: Path, from_cache: bool = False):
+    """3. 安装全部依赖到嵌入式 Python（若 from_cache，直接复用缓存环境）"""
     print("\n[3/6] 安装全部依赖...")
 
+    if from_cache:
+        print(f"  ✓ 命中缓存，跳过依赖安装（{len(DEPS)} 个依赖已就绪）")
+        total = sum(f.stat().st_size for f in py_dir.rglob("*") if f.is_file())
+        print(f"  Python 环境总大小: {total/1024/1024:.1f} MB")
+        return
+
     # 分批安装，避免单次安装失败
-    deps = [
-        # 核心 UI 框架
-        "PyQt6>=6.6.0",
-        "Pillow>=10.0.0",
-        "pyautogui>=0.9.54",
-        "pytesseract>=0.3.10",
-        "keyboard>=0.13.5",
-        "requests>=2.31.0",
-        # Office 工具
-        "python-docx>=1.1.0",
-        "openpyxl>=3.1.0",
-        "python-pptx>=0.6.23",
-        "reportlab>=4.1.0",
-        "pdfplumber>=0.10.0",
-        # 金融
-        "yfinance>=0.2.31",
-        # TTS 语音
-        "edge-tts>=6.1.0",
-        "pyttsx3>=2.90",
-        # 新闻
-        "newspaper3k>=0.2.8",
-        "lxml_html_clean>=0.1.0",
-        # HTTP / 抓取
-        "httpx>=0.27.0",
-        "feedparser>=6.0.11",
-        "beautifulsoup4>=4.12.3",
-        # FastAPI 服务（SimLife + 手机端）
-        "fastapi>=0.110.0",
-        "uvicorn>=0.27.0",
-        "PyJWT>=2.8.0",
-        # Flask 网页版
-        "Flask>=3.0.0",
-        "Flask-SocketIO>=5.3.0",
-        # 语音 STT
-        "websocket-client>=1.6.0",
-        "sounddevice>=0.4.6",
-        "SoundFile>=0.10.3",
-        # 传感器
-        "paho-mqtt>=2.0.0",
-        # pydantic（SimLife）
-        "pydantic>=2.0.0",
-    ]
+    deps = DEPS
 
     print(f"  安装 {len(deps)} 个依赖包...")
     for i, dep in enumerate(deps, 1):
@@ -212,6 +251,15 @@ def step3_install_deps(py_exe: Path, py_dir: Path):
     # 统计体积
     total_size = sum(f.stat().st_size for f in py_dir.rglob("*") if f.is_file())
     print(f"  Python 环境总大小: {total_size/1024/1024:.1f} MB")
+
+    # 写入持久缓存，下次打包直接复用
+    print("  保存环境到缓存（下次打包可直接复用，无需重新下载）...")
+    cache_py = CACHE_DIR / "python"
+    if cache_py.exists():
+        shutil.rmtree(cache_py, ignore_errors=True)
+    cache_py.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(py_dir, cache_py)
+    (CACHE_DIR / "deps.txt").write_text(_deps_hash(), encoding="utf-8")
 
 
 def step4_collect_project(app_root: Path):
@@ -328,7 +376,7 @@ def step5_create_launcher(app_root: Path):
         '  echo [ERROR] Application exited with errors.\r\n'
         '  pause\r\n'
         ')\r\n',
-        encoding="ascii",
+        encoding="utf-8",
     )
     print(f"  创建: {launcher.name}")
 
@@ -341,7 +389,7 @@ def step5_create_launcher(app_root: Path):
         'cd /d "%~dp0"\r\n'
         '"python\\python.exe" -m simlife.backend.main %*\r\n'
         'if errorlevel 1 pause\r\n',
-        encoding="ascii",
+        encoding="utf-8",
     )
     print(f"  创建: {simlife_launcher.name}")
 
@@ -364,7 +412,7 @@ def step5_create_launcher(app_root: Path):
         'echo.\r\n'
         'echo 完成！\r\n'
         'pause\r\n',
-        encoding="ascii",
+        encoding="utf-8",
     )
     print(f"  创建: {install_optional.name}")
 
@@ -402,6 +450,8 @@ def step6_build_nsis(app_root: Path, py_dir: Path):
         cwd=str(BUILD_DIR),
         capture_output=True,
         text=True,
+        encoding="gbk",
+        errors="replace",
     )
     if result.returncode != 0:
         print(f"  [ERROR] makensis 失败:")
@@ -483,7 +533,7 @@ Unicode True
 !insertmacro MUI_LANGUAGE "English"
 
 ; ── 版本信息 ──
-VIProductVersion "1.0.0.0"
+VIProductVersion "{APP_VERSION}"
 VIAddVersionKey "ProductName" "${{APP_NAME}}"
 VIAddVersionKey "CompanyName" "${{APP_PUBLISHER}}"
 VIAddVersionKey "FileVersion" "${{APP_VERSION}}"
@@ -549,7 +599,7 @@ Section "Uninstall"
   DetailPrint "卸载完成"
 SectionEnd
 """
-    nsi_path.write_text(nsi_content, encoding="utf-8")
+    nsi_path.write_text(nsi_content, encoding="gbk")
 
 
 # ── 主流程 ────────────────────────────────────────────
@@ -568,8 +618,8 @@ def main():
 
     try:
         step1_prepare_dirs()
-        py_dir, py_exe = step2_download_python()
-        step3_install_deps(py_exe, py_dir)
+        py_dir, py_exe, from_cache = step2_download_python()
+        step3_install_deps(py_exe, py_dir, from_cache)
 
         # 准备应用根目录
         app_root = BUILD_DIR / "app"

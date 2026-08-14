@@ -9,6 +9,14 @@ dist/
 build/
 *.whl
 
+# Installer build cache (Python + deps, reused across builds, not for repo)
+.build_cache/
+
+# Installer build output (regenerated every build, not for repo)
+build_installer/app/
+build_installer/python/
+build_installer/installer.nsi
+
 # Virtual environments
 venv/
 .venv/

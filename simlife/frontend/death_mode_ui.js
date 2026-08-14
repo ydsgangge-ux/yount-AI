@@ -836,6 +836,7 @@ const DeathModeUI = {
       death_pending:{ icon: '☠️', color: '#f85149', label: '生死' },
       move:         { icon: '🗺️', color: '#3fb950', label: '移动' },
       npc_interact: { icon: '💬', color: '#d29922', label: 'NPC交互' },
+      life_skill:   { icon: '🧰', color: '#b48cff', label: '生活技能' },
     };
     const cfg = typeConfig[type] || typeConfig.action;
 
@@ -969,6 +970,18 @@ const DeathModeUI = {
     else if (type === 'npc_interact') {
       content = `<div style="color:#d29922;">💬 与 ${d.npc_name} 交互（${d.interaction}）</div>
         ${d.message ? `<div style="font-size:12px;color:#8b949e;margin-top:2px;">${this._replaceYou(d.message)}</div>` : ''}`;
+    }
+    else if (type === 'life_skill') {
+      content = `<div style="color:#c9d1d9;font-size:13px;font-weight:600;">${d.skill || '生活技能'}</div>
+        <div style="font-size:12px;color:#8b949e;line-height:1.5;margin-top:2px;">${this._replaceYou(d.action || '')}</div>
+        ${d.detail ? `<div style="font-size:11px;color:#484f58;margin-top:4px;display:flex;flex-wrap:wrap;gap:3px 10px;">${Object.entries(d.detail).map(([k, v]) => {
+          const str = String(v);
+          // 短值（评价/数量等）做成小标签，长文本（评语/效果）整行显示
+          const isLong = str.length > 12;
+          return isLong
+            ? `<div style="flex:1 1 100%;color:#8b949e;line-height:1.5;">${k}：${this._replaceYou(str)}</div>`
+            : `<span style="color:#8b949e;">${k}：<span style="color:#c9d1d9;">${this._replaceYou(str)}</span></span>`;
+        }).join('')}</div>` : ''}`;
     }
 
     return `

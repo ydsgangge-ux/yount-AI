@@ -319,7 +319,7 @@ class SimLifeClient:
                 _sdata = _json.loads(_state_file.read_text(encoding="utf-8"))
                 _alog = _sdata.get("action_log", [])
                 if _alog:
-                    recent = _alog[-2:]
+                    recent = _alog[-5:]
                     lines.append("【最近行动】")
                     for entry in recent:
                         et = entry.get("type", "")
@@ -353,6 +353,17 @@ class SimLifeClient:
                         elif et == "death_pending":
                             who = ed.get("name", "")
                             lines.append(f"  [{t}] {who}阵亡")
+                        elif et == "life_skill":
+                            skill = ed.get("skill", "生活技能")
+                            act = ed.get("action", "")
+                            # 汇总 detail 评价（如：评价=完美、回复=HP+20）
+                            detail_parts = []
+                            for k, v in (ed.get("detail") or {}).items():
+                                if v in (None, "", "False", False):
+                                    continue
+                                detail_parts.append(f"{k}={v}")
+                            if act:
+                                lines.append(f"  [{t}] 🧰{skill}：{act}" + (f"（{'、'.join(detail_parts)}）" if detail_parts else ""))
         except Exception:
             pass
 

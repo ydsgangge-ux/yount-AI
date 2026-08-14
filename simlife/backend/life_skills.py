@@ -589,6 +589,29 @@ def equip_fish_gear(ls: Dict, gear_id: str) -> Dict:
     return {"success": True, "msg": f"已换上{gear['icon']} {gear['name']}"}
 
 
+def damage_fish_gear(ls: Dict, slot: str) -> Dict:
+    """钓鱼装备损坏（断线/爆杆）：从已拥有中移除该槽位装备，并回退到该槽位默认装备。
+
+    返回 {broken, name, msg}。broken=False 表示该槽位无需损坏（如默认基础装备）。
+    """
+    if slot not in FISH_GEAR_LISTS or slot in ("bait", "reel"):
+        return {"broken": False, "msg": ""}
+    fg = ls.setdefault("fish_gear", {})
+    owned = fg.setdefault("owned", [])
+    eq = fg.setdefault("equipped", {})
+    gid = eq.get(slot)
+    default_id = FISH_GEAR_LISTS[slot][0]["id"]
+    # 若当前装备是基础默认装备，则不损坏（避免把初始装备也弄坏）
+    if not gid or gid == default_id:
+        return {"broken": False, "msg": ""}
+    if gid in owned:
+        owned.remove(gid)
+    eq[slot] = default_id
+    gear = next((g for g in FISH_GEAR_LISTS[slot] if g["id"] == gid), None)
+    name = gear["name"] if gear else gid
+    return {"broken": True, "name": name, "msg": f"你的{name}已损坏，需重新购买"}
+
+
 def equipped_fish_gear(ls: Dict) -> Dict:
     """返回当前穿戴装备的完整定义 {rod, reel, line, bait}"""
     fg = ls.setdefault("fish_gear", {})
@@ -600,7 +623,7 @@ def equipped_fish_gear(ls: Dict) -> Dict:
     return out
 
 
-def pick_fish(zone_id: str, fishing_level: int, bait: Dict) -> Optional[Dict]:
+def pick_fish(zone_id: str, fishing_level: int, bait: Dict, cast: Optional[int] = None) -> Optional[Dict]:
     """按 水域 + 鱼饵家族偏好 + 攻击性 加权选鱼"""
     available = [f for f in FISH_TABLE if zone_id in f["zones"]]
     if not available:
@@ -613,9 +636,9 @@ def pick_fish(zone_id: str, fishing_level: int, bait: Dict) -> Optional[Dict]:
             w *= bait.get("bite", 1.15)
         elif bf == "传说" and f.get("legendary"):
             w *= bait.get("bite", 1.15)
-        # 高级水域/稀有鱼略受等级影响，低等级出大鱼概率降低
-        if f["fight"] > 60 and fishing_level < 3:
-            w *= 0.6
+        # 鱼竿抛投力：抛得越远，越容易勾到力量型大鱼（fight 高）
+        if f["fight"] > 60:
+            w *= 0.6 + (cast if cast is not None else 40) / 100
         weighted.append((f, max(0.05, w)))
     total = sum(w for _, w in weighted)
     r = random.uniform(0, total)
