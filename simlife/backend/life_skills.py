@@ -65,26 +65,47 @@ RAW_MATERIALS: List[Dict] = [
 #   zones: 出没水域  legendary: 传说级  color: 绘制颜色
 FISH_TABLE: List[Dict] = [
     # ── 老磨坊池塘 (新手) ──
-    {"id": "bream", "name": "太平鱼", "family": "杂鱼", "min": 0.3, "max": 1.2, "value": 8, "strength": 14, "aggress": 0.9, "fight": 22, "energy": 20, "rarity": "common", "color": "#b8a24e", "zones": ["pond"], "icon": "🐟"},
-    {"id": "perch", "name": "河鲈", "family": "鲈鱼", "min": 0.4, "max": 1.8, "value": 14, "strength": 22, "aggress": 0.8, "fight": 30, "energy": 22, "rarity": "common", "color": "#86a15a", "zones": ["pond", "lake"], "icon": "🐟"},
-    {"id": "roach", "name": "北欧鲤", "family": "鲤科", "min": 0.5, "max": 3.0, "value": 20, "strength": 30, "aggress": 0.7, "fight": 40, "energy": 25, "rarity": "common", "color": "#c98b3d", "zones": ["pond", "lake"], "icon": "🐠"},
-    {"id": "trout", "name": "溪鳟", "family": "鳟鱼", "min": 0.5, "max": 2.5, "value": 32, "strength": 38, "aggress": 0.6, "fight": 48, "energy": 30, "rarity": "rare", "color": "#5f9ea0", "zones": ["pond", "lake"], "icon": "🐟"},
+    {"id": "bream", "name": "太平鱼", "family": "杂鱼", "min": 0.3, "max": 1.2, "value": 8, "strength": 14, "aggress": 0.9, "fight": 22, "energy": 20, "rarity": "common", "color": "#b8a24e", "zones": ["pond"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "none", "pattern": "none", "mark": "none"}},
+    {"id": "perch", "name": "河鲈", "family": "鲈鱼", "min": 0.4, "max": 1.8, "value": 14, "strength": 22, "aggress": 0.8, "fight": 30, "energy": 22, "rarity": "common", "color": "#86a15a", "zones": ["pond", "lake"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "stripes", "mark": "none"}},
+    {"id": "roach", "name": "北欧鲤", "family": "鲤科", "min": 0.5, "max": 3.0, "value": 20, "strength": 30, "aggress": 0.7, "fight": 40, "energy": 25, "rarity": "common", "color": "#c98b3d", "zones": ["pond", "lake"], "icon": "🐠", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "scales", "mark": "none"}},
+    {"id": "trout", "name": "溪鳟", "family": "鳟鱼", "min": 0.5, "max": 2.5, "value": 32, "strength": 38, "aggress": 0.6, "fight": 48, "energy": 30, "rarity": "rare", "color": "#5f9ea0", "zones": ["pond", "lake"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fan", "fin": "adipose", "pattern": "spots", "mark": "none"}},
+    {"id": "minnow", "name": "白条鱼", "family": "杂鱼", "min": 0.1, "max": 0.4, "value": 5, "strength": 8, "aggress": 0.95, "fight": 15, "energy": 12, "rarity": "common", "color": "#c7cfdd", "zones": ["pond"], "icon": "🐟", "silhouette": {"body": "slender", "tail": "fork", "fin": "none", "pattern": "none", "mark": "none"}},
+    {"id": "crucian", "name": "鲫鱼", "family": "鲤科", "min": 0.2, "max": 1.5, "value": 10, "strength": 20, "aggress": 0.8, "fight": 35, "energy": 22, "rarity": "common", "color": "#9a9a6a", "zones": ["pond", "lake"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "scales", "mark": "none"}},
+    {"id": "tilapia", "name": "罗非鱼", "family": "慈鲷", "min": 0.3, "max": 2.0, "value": 12, "strength": 24, "aggress": 0.85, "fight": 34, "energy": 24, "rarity": "common", "color": "#7a8a6a", "zones": ["pond", "lake"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "stripes", "mark": "none"}},
+    {"id": "gudgeon", "name": "麦穗鱼", "family": "杂鱼", "min": 0.05, "max": 0.3, "value": 4, "strength": 6, "aggress": 0.98, "fight": 12, "energy": 10, "rarity": "common", "color": "#b9c3d0", "zones": ["pond"], "icon": "🐟", "silhouette": {"body": "slender", "tail": "fan", "fin": "none", "pattern": "none", "mark": "none"}},
     # ── 月光湖 (进阶) ──
-    {"id": "pike", "name": "北方梭鱼", "family": "梭鱼", "min": 1.0, "max": 8.0, "value": 26, "strength": 52, "aggress": 0.5, "fight": 70, "energy": 28, "rarity": "rare", "color": "#7a9b4e", "zones": ["lake", "river"], "icon": "🐟"},
-    {"id": "zander", "name": "梭鲈", "family": "鲈鱼", "min": 0.8, "max": 6.0, "value": 30, "strength": 48, "aggress": 0.5, "fight": 62, "energy": 30, "rarity": "rare", "color": "#8fbf6f", "zones": ["lake", "river"], "icon": "🐟"},
-    {"id": "carp", "name": "镜鲤", "family": "鲤科", "min": 1.5, "max": 12, "value": 22, "strength": 58, "aggress": 0.4, "fight": 90, "energy": 32, "rarity": "epic", "color": "#d4a24a", "zones": ["lake", "pond"], "icon": "🐠"},
-    {"id": "asp", "name": "赤梢鱼", "family": "鲤科", "min": 0.6, "max": 4.0, "value": 34, "strength": 44, "aggress": 0.6, "fight": 55, "energy": 28, "rarity": "rare", "color": "#b8c4d0", "zones": ["lake", "river"], "icon": "🐟"},
+    {"id": "pike", "name": "北方梭鱼", "family": "梭鱼", "min": 1.0, "max": 8.0, "value": 26, "strength": 52, "aggress": 0.5, "fight": 70, "energy": 28, "rarity": "rare", "color": "#7a9b4e", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fork", "fin": "dorsal", "pattern": "spots", "mark": "none"}},
+    {"id": "zander", "name": "梭鲈", "family": "鲈鱼", "min": 0.8, "max": 6.0, "value": 30, "strength": 48, "aggress": 0.5, "fight": 62, "energy": 30, "rarity": "rare", "color": "#8fbf6f", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fork", "fin": "dorsal", "pattern": "stripes", "mark": "none"}},
+    {"id": "carp", "name": "镜鲤", "family": "鲤科", "min": 1.5, "max": 12, "value": 22, "strength": 58, "aggress": 0.4, "fight": 90, "energy": 32, "rarity": "epic", "color": "#d4a24a", "zones": ["lake", "pond"], "icon": "🐠", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "scales", "mark": "whisker"}},
+    {"id": "asp", "name": "赤梢鱼", "family": "鲤科", "min": 0.6, "max": 4.0, "value": 34, "strength": 44, "aggress": 0.6, "fight": 55, "energy": 28, "rarity": "rare", "color": "#b8c4d0", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fork", "fin": "dorsal", "pattern": "none", "mark": "none"}},
+    {"id": "tench", "name": "丁鳜", "family": "鲤科", "min": 0.8, "max": 6.0, "value": 24, "strength": 46, "aggress": 0.55, "fight": 68, "energy": 30, "rarity": "rare", "color": "#8a9a5a", "zones": ["lake"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "none", "mark": "none"}},
+    {"id": "blackbass", "name": "大口黑鲈", "family": "鲈鱼", "min": 0.5, "max": 5.0, "value": 28, "strength": 40, "aggress": 0.6, "fight": 75, "energy": 28, "rarity": "rare", "color": "#6b8e4e", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fan", "fin": "dorsal", "pattern": "spots", "mark": "none"}},
+    {"id": "bream_lake", "name": "青鱼", "family": "鲤科", "min": 1.0, "max": 20, "value": 26, "strength": 62, "aggress": 0.4, "fight": 110, "energy": 34, "rarity": "epic", "color": "#5a6a5a", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fork", "fin": "dorsal", "pattern": "none", "mark": "none"}},
+    {"id": "grasscarp", "name": "草鱼", "family": "鲤科", "min": 1.0, "max": 15, "value": 24, "strength": 60, "aggress": 0.45, "fight": 100, "energy": 33, "rarity": "epic", "color": "#6a7a4a", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fork", "fin": "dorsal", "pattern": "scales", "mark": "none"}},
+    {"id": "culter", "name": "翘嘴鲌", "family": "鲤科", "min": 0.5, "max": 5.0, "value": 32, "strength": 42, "aggress": 0.6, "fight": 60, "energy": 28, "rarity": "rare", "color": "#c9d4e0", "zones": ["lake", "river"], "icon": "🐟", "silhouette": {"body": "slender", "tail": "fork", "fin": "dorsal", "pattern": "none", "mark": "none"}},
     # ── 暗礁河 (困难) ──
-    {"id": "catfish", "name": "六须鲶", "family": "鲶鱼", "min": 2.0, "max": 30, "value": 18, "strength": 70, "aggress": 0.3, "fight": 120, "energy": 35, "rarity": "epic", "color": "#6b5b4a", "zones": ["river"], "icon": "🐟"},
-    {"id": "sturgeon", "name": "欧洲鲟", "family": "鲟鱼", "min": 3.0, "max": 40, "value": 40, "strength": 80, "aggress": 0.25, "fight": 140, "energy": 40, "rarity": "epic", "color": "#8a8a8a", "zones": ["river"], "icon": "🐟"},
-    {"id": "salmon", "name": "大西洋鲑", "family": "鲑鱼", "min": 1.5, "max": 15, "value": 45, "strength": 62, "aggress": 0.5, "fight": 85, "energy": 38, "rarity": "epic", "color": "#9ec6d0", "zones": ["river"], "icon": "🐟"},
-    {"id": "burbot", "name": "江鳕", "family": "鳕鱼", "min": 0.8, "max": 6.0, "value": 28, "strength": 50, "aggress": 0.45, "fight": 65, "energy": 30, "rarity": "rare", "color": "#a08a5a", "zones": ["river", "pond"], "icon": "🐟"},
+    {"id": "catfish", "name": "六须鲶", "family": "鲶鱼", "min": 2.0, "max": 30, "value": 18, "strength": 70, "aggress": 0.3, "fight": 120, "energy": 35, "rarity": "epic", "color": "#6b5b4a", "zones": ["river"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "none", "pattern": "none", "mark": "whisker"}},
+    {"id": "sturgeon", "name": "欧洲鲟", "family": "鲟鱼", "min": 3.0, "max": 40, "value": 40, "strength": 80, "aggress": 0.25, "fight": 140, "energy": 40, "rarity": "epic", "color": "#8a8a8a", "zones": ["river"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fork", "fin": "dorsal", "pattern": "scales", "mark": "snout"}},
+    {"id": "salmon", "name": "大西洋鲑", "family": "鲑鱼", "min": 1.5, "max": 15, "value": 45, "strength": 62, "aggress": 0.5, "fight": 85, "energy": 38, "rarity": "epic", "color": "#9ec6d0", "zones": ["river"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fork", "fin": "adipose", "pattern": "spots", "mark": "none"}},
+    {"id": "burbot", "name": "江鳕", "family": "鳕鱼", "min": 0.8, "max": 6.0, "value": 28, "strength": 50, "aggress": 0.45, "fight": 65, "energy": 30, "rarity": "rare", "color": "#a08a5a", "zones": ["river", "pond"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fan", "fin": "dorsal", "pattern": "spots", "mark": "whisker"}},
+    {"id": "eel", "name": "鳗鲡", "family": "鳗鱼", "min": 0.5, "max": 8.0, "value": 36, "strength": 48, "aggress": 0.5, "fight": 95, "energy": 36, "rarity": "epic", "color": "#4a5a4a", "zones": ["river"], "icon": "🐍", "silhouette": {"body": "serpent", "tail": "none", "fin": "none", "pattern": "none", "mark": "none"}},
+    {"id": "trout_brown", "name": "褐鳟", "family": "鳟鱼", "min": 0.4, "max": 4.0, "value": 34, "strength": 42, "aggress": 0.55, "fight": 70, "energy": 32, "rarity": "rare", "color": "#b0805a", "zones": ["river", "lake"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fan", "fin": "adipose", "pattern": "spots", "mark": "none"}},
+    {"id": "salmon_chum", "name": "驼背大麻哈", "family": "鲑鱼", "min": 1.0, "max": 10, "value": 40, "strength": 56, "aggress": 0.45, "fight": 80, "energy": 36, "rarity": "epic", "color": "#c08060", "zones": ["river"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fork", "fin": "adipose", "pattern": "stripes", "mark": "none"}},
+    {"id": "mandarinfish", "name": "鳜鱼", "family": "鲈鱼", "min": 0.5, "max": 8.0, "value": 38, "strength": 54, "aggress": 0.5, "fight": 78, "energy": 34, "rarity": "rare", "color": "#7a8a4e", "zones": ["river", "lake"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "spots", "mark": "none"}},
+    {"id": "yellow_catfish", "name": "黄颡鱼", "family": "鲶鱼", "min": 0.2, "max": 1.5, "value": 20, "strength": 28, "aggress": 0.7, "fight": 40, "energy": 26, "rarity": "common", "color": "#c9a03a", "zones": ["river", "pond"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "none", "pattern": "none", "mark": "whisker"}},
     # ── 深渊之眼 (精英/赏金) ──
-    {"id": "tuna", "name": "蓝鳍金枪", "family": "金枪鱼", "min": 10, "max": 200, "value": 38, "strength": 95, "aggress": 0.4, "fight": 200, "energy": 60, "rarity": "legendary", "color": "#3d5a80", "zones": ["abyss"], "icon": "🐋"},
-    {"id": "amberjack", "name": "琥珀鱼", "family": "鲹科", "min": 3.0, "max": 40, "value": 30, "strength": 72, "aggress": 0.5, "fight": 110, "energy": 45, "rarity": "epic", "color": "#e0a04a", "zones": ["abyss"], "icon": "🐟"},
-    {"id": "swordfish", "name": "剑鱼", "family": "旗鱼", "min": 8.0, "max": 120, "value": 52, "strength": 88, "aggress": 0.35, "fight": 160, "energy": 55, "rarity": "legendary", "color": "#6a7a92", "zones": ["abyss"], "icon": "🐟"},
-    {"id": "goliath", "name": "巨型石斑", "family": "石斑鱼", "min": 5.0, "max": 80, "value": 35, "strength": 78, "aggress": 0.4, "fight": 130, "energy": 50, "rarity": "epic", "color": "#8a6a4a", "zones": ["abyss"], "icon": "🐟"},
-    {"id": "monster", "name": "湖中巨怪", "family": "传说", "min": 20, "max": 500, "value": 88, "strength": 99, "aggress": 0.15, "fight": 300, "energy": 100, "rarity": "legendary", "color": "#5a4a8a", "zones": ["abyss"], "icon": "🐲", "legendary": True},
+    {"id": "tuna", "name": "蓝鳍金枪", "family": "金枪鱼", "min": 10, "max": 200, "value": 38, "strength": 95, "aggress": 0.4, "fight": 200, "energy": 60, "rarity": "legendary", "color": "#3d5a80", "zones": ["abyss"], "icon": "🐋", "silhouette": {"body": "torpedo", "tail": "crescent", "fin": "dorsal", "pattern": "none", "mark": "none"}},
+    {"id": "amberjack", "name": "琥珀鱼", "family": "鲹科", "min": 3.0, "max": 40, "value": 30, "strength": 72, "aggress": 0.5, "fight": 110, "energy": 45, "rarity": "epic", "color": "#e0a04a", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "fork", "fin": "dorsal", "pattern": "stripes", "mark": "none"}},
+    {"id": "swordfish", "name": "剑鱼", "family": "旗鱼", "min": 8.0, "max": 120, "value": 52, "strength": 88, "aggress": 0.35, "fight": 160, "energy": 55, "rarity": "legendary", "color": "#6a7a92", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "crescent", "fin": "dorsal", "pattern": "none", "mark": "sail"}},
+    {"id": "goliath", "name": "巨型石斑", "family": "石斑鱼", "min": 5.0, "max": 80, "value": 35, "strength": 78, "aggress": 0.4, "fight": 130, "energy": 50, "rarity": "epic", "color": "#8a6a4a", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "spots", "mark": "none"}},
+    {"id": "monster", "name": "湖中巨怪", "family": "传说", "min": 20, "max": 500, "value": 88, "strength": 99, "aggress": 0.15, "fight": 300, "energy": 100, "rarity": "legendary", "color": "#5a4a8a", "zones": ["abyss"], "icon": "🐲", "legendary": True, "silhouette": {"body": "serpent", "tail": "none", "fin": "dorsal", "pattern": "scales", "mark": "horn"}},
+    {"id": "marlin", "name": "大西洋旗鱼", "family": "旗鱼", "min": 10, "max": 150, "value": 55, "strength": 90, "aggress": 0.4, "fight": 180, "energy": 58, "rarity": "legendary", "color": "#4a5a8a", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "torpedo", "tail": "crescent", "fin": "dorsal", "pattern": "stripes", "mark": "sail"}},
+    {"id": "cod_atlantic", "name": "大西洋鳕", "family": "鳕鱼", "min": 1.0, "max": 12, "value": 22, "strength": 55, "aggress": 0.5, "fight": 90, "energy": 32, "rarity": "epic", "color": "#7a8a6a", "zones": ["abyss", "river"], "icon": "🐟", "silhouette": {"body": "elongated", "tail": "fan", "fin": "dorsal", "pattern": "spots", "mark": "whisker"}},
+    {"id": "deep_angler", "name": "深海鮟鱇", "family": "深海", "min": 2.0, "max": 25, "value": 42, "strength": 60, "aggress": 0.5, "fight": 120, "energy": 45, "rarity": "epic", "color": "#3a3a4a", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "bulbous", "tail": "fan", "fin": "none", "pattern": "spots", "mark": "lantern"}},
+    {"id": "mantaray", "name": "深海魔魟", "family": "深海", "min": 15, "max": 180, "value": 60, "strength": 75, "aggress": 0.3, "fight": 210, "energy": 70, "rarity": "legendary", "color": "#5a5a7a", "zones": ["abyss"], "icon": "🦈", "silhouette": {"body": "ray", "tail": "none", "fin": "none", "pattern": "none", "mark": "none"}},
+    {"id": "hairtail", "name": "带鱼", "family": "鲹科", "min": 0.5, "max": 5.0, "value": 26, "strength": 50, "aggress": 0.55, "fight": 70, "energy": 30, "rarity": "epic", "color": "#b9c4d6", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "serpent", "tail": "none", "fin": "none", "pattern": "none", "mark": "none"}},
+    {"id": "yellowcroaker", "name": "大黄鱼", "family": "鲈鱼", "min": 1.0, "max": 8.0, "value": 36, "strength": 52, "aggress": 0.5, "fight": 85, "energy": 36, "rarity": "epic", "color": "#d1a03a", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "dorsal", "pattern": "scales", "mark": "none"}},
+    {"id": "pomfret", "name": "银鲳", "family": "鲹科", "min": 0.5, "max": 4.0, "value": 30, "strength": 40, "aggress": 0.6, "fight": 60, "energy": 32, "rarity": "rare", "color": "#c7d0da", "zones": ["abyss"], "icon": "🐟", "silhouette": {"body": "oval", "tail": "fan", "fin": "none", "pattern": "none", "mark": "none"}},
 ]
 
 
@@ -269,6 +290,7 @@ def init_life_state() -> Dict:
         "foods": [],               # 已制作的食物（可食用）[{name, icon, buff, qty}]
         "equipment": [],           # 已锻造的装备（可穿戴）[{name, icon, type, bonus, damage_type, rarity}]
         "fish_caught": [],         # 已钓到的鱼 [{name, icon, family, rarity, weight, value, energy, qty}]
+        "fish_dex": {},            # 收集图鉴 {fish_id: {name, family, rarity, color, silhouette, times, best}}
         "buffs": [],               # 当前生效的增益 [{type, value, turns, source}]
         "last_activity": "",       # 最近一次生活技能活动描述
         # ── 钓鱼专用状态 ──
@@ -294,7 +316,33 @@ def _find_mat(id_: str) -> Optional[Dict]:
     for m in RAW_MATERIALS:
         if m["id"] == id_:
             return m
+    # 鱼材料：fish_<fish_id> → 对应鱼类（作为独立食材，可自由烹饪）
+    if id_.startswith("fish_"):
+        fid = id_[5:]
+        for f in FISH_TABLE:
+            if f["id"] == fid:
+                return {"id": id_, "name": f["name"], "type": "ingredient",
+                        "price": max(1, int(f["value"])), "icon": f["icon"],
+                        "rarity": f["rarity"]}
     return None
+
+
+def material_grade(id_: str) -> int:
+    """食材品质等级（1普通~5珍稀）：决定自由烹饪的加成与品质提升。
+
+    鱼按稀有度分级；特殊附魔材料高等级；肉类/蛋类等优质食材略高。
+    """
+    m = _find_mat(id_)
+    if not m:
+        return 1
+    if id_.startswith("fish_"):
+        return {"common": 2, "rare": 3, "epic": 4, "legendary": 5}.get(m.get("rarity"), 2)
+    if m.get("type") == "enchant":
+        return {"magic_stone": 3, "life_petal": 4, "fire_rune": 4, "frost_rune": 4,
+                "storm_rune": 4, "soul_crystal": 4, "dragon_scale": 5}.get(id_, 3)
+    if id_ in ("meat", "egg", "milk", "honey"):
+        return 2
+    return 1
 
 
 def add_materials(inv: List[Dict], mat_id: str, qty: int = 1, name: str = "", icon: str = "") -> None:
@@ -396,7 +444,7 @@ def judge_overall(judgements: List[str], life_level: int) -> str:
 
 def quality_multiplier(quality: str) -> float:
     """品质 → 增益加成倍率"""
-    return {"perfect": 1.5, "good": 1.2, "normal": 1.0, "fail": 0.0}.get(quality, 1.0)
+    return {"perfect": 1.5, "good": 1.2, "normal": 1.0, "bad": -0.5, "fail": 0.0}.get(quality, 1.0)
 
 
 # ── 烹饪 ─────────────────────────────────────────────
@@ -420,6 +468,32 @@ def get_fish(fish_id: str) -> Optional[Dict]:
         if f["id"] == fish_id:
             return f
     return None
+
+
+def mark_fish_dex(ls: Dict, fish_id: str, weight: float) -> None:
+    """收集图鉴：记录首次钓到的鱼种（点亮图鉴）。"""
+    dex = ls.setdefault("fish_dex", {})
+    prev = dex.get(fish_id)
+    if prev is None:
+        fish = get_fish(fish_id)
+        dex[fish_id] = {
+            "name": fish["name"] if fish else fish_id,
+            "icon": fish["icon"] if fish else "🐟",
+            "family": fish["family"] if fish else "",
+            "rarity": fish["rarity"] if fish else "common",
+            "color": fish["color"] if fish else "#8b949e",
+            "silhouette": fish["silhouette"] if fish else {"body": "oval", "tail": "fan", "fin": "none", "pattern": "none", "mark": "none"},
+            "times": 1,
+            "best": weight,
+        }
+    else:
+        prev["times"] = prev.get("times", 1) + 1
+        prev["best"] = max(prev.get("best", 0), weight)
+
+
+def get_fish_dex(ls: Dict) -> Dict:
+    """返回收集图鉴（fish_id -> 记录），兼容旧存档无 fish_dex 的情况。"""
+    return ls.get("fish_dex", {})
 
 
 # ── 钓鱼：装备 / 水域 / 选鱼 ─────────────────────────
@@ -566,7 +640,7 @@ def fish_rarity_weight(fish: Dict) -> int:
 
 def resource_value(quality: str) -> int:
     """品质 → 经验值奖励"""
-    return {"perfect": 30, "good": 20, "normal": 12, "fail": 3}.get(quality, 3)
+    return {"perfect": 30, "good": 20, "normal": 12, "bad": 4, "fail": 3}.get(quality, 3)
 
 
 # ── 自由组合辅助（烹饪/锻造 LLM 动态生成）─────────────────
@@ -587,6 +661,62 @@ def free_dish_base(level: int, mat_val: int) -> Dict:
     base = 20 + level * 8 + mat_val // 2
     # 含附魔/特殊材料 → 更容易出属性类增益
     return {"type": "hp", "value": base, "turns": 0}
+
+
+def cook_quality_by_heat(method: str, duration: str) -> str:
+    """自由烹饪：由制作手法与火候时长匹配度得出品质（perfect/good/normal/bad）。
+
+    手法分三类：急火快做（爆/炒/焯）、中火成型（煎/炸/焖/烧）、慢火细作（蒸/炖/烤/煮）。
+    时长：短(急火)/中/长(慢火)。
+      - 火候正好 → perfect（恢复×1.5 + 特殊效果）
+      - 火候稍欠但可吃 → good / normal（恢复×1.2 / ×1.0）
+      - 火候严重失控（焦糊/夹生/炒过头）→ bad（劣质，吃了食物中毒扣血×0.5）
+    """
+    fast = {"爆", "炒", "焯"}
+    medium = {"煎", "炸", "焖", "烧"}
+    slow = {"蒸", "炖", "烤", "煮"}
+    if duration not in ("短", "中", "长"):
+        duration = "中"
+    if method in fast:
+        return {"短": "perfect", "中": "good", "长": "bad"}.get(duration, "good")
+    if method in medium:
+        return {"短": "normal", "中": "perfect", "长": "bad"}.get(duration, "good")
+    if method in slow:
+        return {"短": "bad", "中": "good", "长": "perfect"}.get(duration, "good")
+    return "good"
+
+
+def cook_time_hint(method: str, duration: str) -> str:
+    """自由烹饪：根据制作手法与火候时长判断是否得当，返回一句评语（LLM 失败时的规则兜底）。
+
+    手法分三类：急火快做（爆/炒/焯）、中火成型（煎/炸/焖/烧）、慢火细作（蒸/炖/烤/煮）。
+    时长：短(急火)/中/长(慢火)。手法与时长不匹配则出问题（糊/夹生/过老）。
+    """
+    fast = {"爆", "炒", "焯"}
+    medium = {"煎", "炸", "焖", "烧"}
+    slow = {"蒸", "炖", "烤", "煮"}
+    # 时长语义归一
+    if duration not in ("短", "中", "长"):
+        duration = "中"
+    if method in fast:
+        if duration == "短":
+            return "急火快炒，火候正好，锁住了食材本味，锅气十足"
+        if duration == "中":
+            return "火候略拖，食材有些发老，味道尚可，称不上完美"
+        return "炒过了头，食材发黄疲软，隐约散发异味，吃了恐怕要闹肚子"
+    if method in medium:
+        if duration == "中":
+            return "火候恰到好处，外香里嫩，焦香与嫩滑兼备"
+        if duration == "短":
+            return "火候偏急，表面焦了里面还带生，勉强能吃"
+        return "火候太大、时间太长，食材焦糊发苦，吃了容易食物中毒"
+    if method in slow:
+        if duration == "长":
+            return "慢火细作，火候到位，汤汁浓郁、软烂入味"
+        if duration == "中":
+            return "火候稍欠，不够软烂，要再等一等才够味"
+        return "火候太短，里面还是夹生的，吃下去怕是要闹肚子"
+    return "火候拿捏得当，味道不错"
 
 
 def free_gear_base(level: int, mat_val: int) -> Dict:

@@ -12,6 +12,8 @@ const LifeSkillsUI = {
 
   // 烹饪小游戏状态
   _cook: { recipe: null, steps: [], picked: [], active: false, timer: null },
+  // 自由烹饪 · 中餐工序状态（切型/腌料/腌制时长/手法/火候时长）
+  _cookFree: { cut: '', marinade: '', marinade_t: '不腌', method: '', duration: '' },
   // 锻造小游戏状态
   _forge: { bp: null, steps: [], idx: 0, active: false, timer: null, window: 0, results: [] },
   // 钓鱼小游戏状态（实景 Canvas + 搏斗张力）
@@ -92,6 +94,7 @@ const LifeSkillsUI = {
       { id: 'cook', icon: skills.cooking.icon, label: '烹饪', lv: L('cooking').level, xp: bar(L('cooking')) },
       { id: 'forge', icon: skills.forging.icon, label: '锻造', lv: L('forging').level, xp: bar(L('forging')) },
       { id: 'fish', icon: skills.fishing.icon, label: '钓鱼', lv: L('fishing').level, xp: bar(L('fishing')) },
+      { id: 'dex', icon: '📖', label: '鱼类图鉴' },
       { id: 'bag', icon: '🎁', label: '背包' },
     ];
     side.innerHTML = tabs.map(t => `
@@ -115,6 +118,7 @@ const LifeSkillsUI = {
     else if (tab === 'cook') this._renderCook(main);
     else if (tab === 'forge') this._renderForge(main);
     else if (tab === 'fish') this._renderFish(main);
+    else if (tab === 'dex') this._renderDex(main);
     else this._renderBag(main);
   },
 
@@ -236,6 +240,101 @@ const LifeSkillsUI = {
     return { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' }[r] || r;
   },
 
+  // ── 鱼类图鉴 ──────────────────────────────────────
+  _renderDex(main) {
+    const d = this._data;
+    const dex = d.fish_dex || {};
+    const all = d.fish_table || [];
+    const zones = d.fish_zones || [];
+    const lit = Object.keys(dex).length;
+    main.innerHTML = `
+      <h4 style="margin:0 0 10px;color:#58a6ff;font-size:14px;">📖 鱼类图鉴</h4>
+      <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">钓到新鱼种即自动点亮。尚未钓到的鱼始终神秘，等你亲手上钩。</div>
+      <div style="font-size:12px;margin-bottom:12px;">已点亮 <b style="color:#f0883e;">${lit}</b> <span style="color:#8b949e;">/ ${all.length} 种</span></div>
+      ${zones.map(z => {
+        const fishes = all.filter(f => f.zones.includes(z.id));
+        return `
+        <div style="margin-bottom:14px;">
+          <div style="font-size:12px;color:#58a6ff;margin-bottom:6px;">${z.name} <span style="color:#8b949e;font-size:10px;">${z.difficulty}</span></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;">
+            ${fishes.map(f => {
+              const rec = dex[f.id];
+              if (rec) return `
+                <div title="${f.name} · 钓到${rec.times}次 · 最大 ${rec.best}kg" style="padding:8px 6px;background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:8px;text-align:center;cursor:default;">
+                  ${this._fishSVG(f, 56)}
+                  <div style="font-size:10px;color:#c9d1d9;margin-top:3px;">${f.name}</div>
+                  <div style="font-size:9px;color:${this._rarityColor(f.rarity)};">${this._rarityName(f.rarity)}</div>
+                </div>`;
+              return `
+                <div title="尚未钓到" style="padding:8px 6px;background:#0d1117;border:1px dashed #30363d;border-radius:8px;text-align:center;opacity:.55;">
+                  <div style="height:30px;display:flex;align-items:center;justify-content:center;font-size:20px;color:#6e7681;">❓</div>
+                  <div style="font-size:10px;color:#6e7681;margin-top:6px;">???</div>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }).join('')}`;
+  },
+
+  // 程序化矢量鱼形（依据 silhouette 参数绘制，无需图片素材）
+  _fishSVG(f, size = 56) {
+    const s = f.silhouette || {};
+    const body = s.body || 'oval', tail = s.tail || 'fan', fin = s.fin || 'none';
+    const pattern = s.pattern || 'none', mark = s.mark || 'none';
+    const c = f.color || '#8b949e';
+    const dark = this._shade(c, -30), stroke = this._shade(c, -45);
+    const W = 100, H = 60, cy = 30;
+
+    let bodyPath;
+    switch (body) {
+      case 'torpedo': bodyPath = `M10 ${cy} C22 ${cy - 18} 60 ${cy - 18} 80 ${cy - 5} L80 ${cy + 5} C60 ${cy + 20} 22 ${cy + 18} 10 ${cy} Z`; break;
+      case 'slender': bodyPath = `M10 ${cy} C24 ${cy - 12} 58 ${cy - 12} 80 ${cy - 4} L80 ${cy + 4} C58 ${cy + 14} 24 ${cy + 14} 10 ${cy} Z`; break;
+      case 'elongated': bodyPath = `M6 ${cy} C24 ${cy - 9} 58 ${cy - 9} 84 ${cy - 3} L84 ${cy + 3} C58 ${cy + 11} 24 ${cy + 11} 6 ${cy} Z`; break;
+      case 'serpent': bodyPath = `M4 ${cy} Q22 ${cy - 12} 40 ${cy} T74 ${cy} L74 ${cy + 4} Q56 ${cy + 12} 40 ${cy + 4} T4 ${cy + 4} Z`; break;
+      case 'bulbous': bodyPath = `M8 ${cy} C12 ${cy - 20} 40 ${cy - 20} 62 ${cy - 9} L70 ${cy - 3} L70 ${cy + 3} L62 ${cy + 9} C40 ${cy + 22} 12 ${cy + 22} 8 ${cy} Z`; break;
+      case 'ray': bodyPath = `M46 ${cy} L16 ${cy - 22} L32 ${cy} L16 ${cy + 22} Z`; break;
+      default: bodyPath = `M18 ${cy} C20 ${cy - 18} 62 ${cy - 18} 78 ${cy - 5} L78 ${cy + 5} C62 ${cy + 20} 20 ${cy + 20} 18 ${cy} Z`;
+    }
+    let tailPath = '';
+    if (tail === 'fan') tailPath = `M80 ${cy} C88 ${cy - 12} 96 ${cy - 12} 100 ${cy - 6} L94 ${cy} L100 ${cy + 6} C96 ${cy + 12} 88 ${cy + 12} 80 ${cy} Z`;
+    else if (tail === 'fork') tailPath = `M80 ${cy} L100 ${cy - 16} L88 ${cy} L100 ${cy + 16} Z`;
+    else if (tail === 'crescent') tailPath = `M80 ${cy} C92 ${cy - 12} 100 ${cy - 14} 100 ${cy} C100 ${cy + 14} 92 ${cy + 12} 80 ${cy} Z`;
+
+    const parts = [];
+    if (tailPath) parts.push(`<path d="${tailPath}" fill="${c}" stroke="${stroke}" stroke-width="1.5"/>`);
+    parts.push(`<path d="${bodyPath}" fill="${c}" stroke="${stroke}" stroke-width="1.5"/>`);
+    if (fin === 'dorsal') parts.push(`<path d="M52 ${cy - 14} L58 ${cy - 26} L66 ${cy - 14} Z" fill="${dark}" stroke="${stroke}" stroke-width="1"/>`);
+    else if (fin === 'adipose') parts.push(`<path d="M70 ${cy - 13} L74 ${cy - 20} L78 ${cy - 13} Z" fill="${dark}" stroke="${stroke}" stroke-width="1"/>`);
+    if (pattern === 'stripes') {
+      for (let x = 34; x <= 70; x += 8) parts.push(`<line x1="${x}" y1="${cy - 12}" x2="${x}" y2="${cy + 12}" stroke="${dark}" stroke-width="2.5" opacity=".55"/>`);
+    } else if (pattern === 'spots') {
+      [[40, cy - 6], [52, cy - 2], [44, cy + 4], [62, cy - 5], [70, cy + 2]].forEach(p => parts.push(`<circle cx="${p[0]}" cy="${p[1]}" r="2.6" fill="${dark}" opacity=".6"/>`));
+    } else if (pattern === 'scales') {
+      for (let x = 36; x <= 72; x += 9) parts.push(`<path d="M${x} ${cy} q 4.5 -6 9 0" fill="none" stroke="${dark}" stroke-width="2" opacity=".5"/>`);
+    }
+    if (mark === 'whisker') {
+      parts.push(`<path d="M12 ${cy + 2} L4 ${cy + 8} M14 ${cy + 5} L6 ${cy + 12}" fill="none" stroke="${stroke}" stroke-width="1.6" opacity=".8"/>`);
+    } else if (mark === 'snout') {
+      parts.push(`<path d="M10 ${cy} L4 ${cy - 2} L4 ${cy + 2} Z" fill="${c}" stroke="${stroke}" stroke-width="1"/>`);
+    } else if (mark === 'sail') {
+      parts.push(`<path d="M30 ${cy - 12} C24 ${cy - 30} 48 ${cy - 30} 44 ${cy - 14} Z" fill="${dark}" stroke="${stroke}" stroke-width="1"/>`);
+    } else if (mark === 'lantern') {
+      parts.push(`<circle cx="16" cy="${cy - 10}" r="4" fill="#ffe9a3" stroke="#f0c33c" stroke-width="1"/><line x1="17" y1="${cy - 6}" x2="20" y2="${cy - 2}" stroke="${stroke}" stroke-width="1.5"/>`);
+    } else if (mark === 'horn') {
+      parts.push(`<path d="M40 ${cy - 14} L46 ${cy - 26} L52 ${cy - 14} Z" fill="#cfd6e4" stroke="${stroke}" stroke-width="1"/>`);
+    }
+    parts.push(`<circle cx="28" cy="${cy - 4}" r="3.4" fill="#111" stroke="#fff" stroke-width="1.2"/><circle cx="29" cy="${cy - 5}" r="1.1" fill="#fff"/>`);
+    return `<svg width="${size}" height="${Math.round(size * H / W)}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+  },
+
+  _shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.max(0, Math.min(255, (n >> 16) + amt));
+    const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amt));
+    const b = Math.max(0, Math.min(255, (n & 255) + amt));
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  },
+
   async _eat(name, target) {
     const resp = await fetch('/api/death-mode/life-skills/eat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -341,7 +440,7 @@ const LifeSkillsUI = {
         <div style="font-size:13px;color:#3fb950;font-weight:600;margin-bottom:4px;">🧪 自由烹饪 <span style="font-size:10px;color:#8b949e;font-weight:normal;">（LLM 动态创作，材料任意搭配）</span></div>
         <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">从背包挑选食材自由组合，由大模型为你生成一道独门料理。加入附魔/特殊材料还可能做出属性增益佳肴。</div>
         <div id="cook-free-mats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
-        <button onclick="LifeSkillsUI._startCook(null, true)" style="padding:6px 16px;background:linear-gradient(135deg,#3fb950,#2ea043);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:12px;font-weight:bold;">🍲 开始自由烹饪</button>
+        <button onclick="LifeSkillsUI._startCookFree()" style="padding:6px 16px;background:linear-gradient(135deg,#3fb950,#2ea043);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:12px;font-weight:bold;">🍲 开始自由烹饪</button>
       </div>
       <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">选择菜谱开始烹饪。按正确顺序完成步骤（顺序小游戏），顺序越准品质越高。</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">${recipeCards}</div>`;
@@ -351,6 +450,14 @@ const LifeSkillsUI = {
   _matName(id) {
     const m = (this._data.shop || []).find(s => s.id === id);
     return m ? m.name : id;
+  },
+
+  // 食材品质等级徽标（1普通~5珍稀）
+  _gradeBadge(g) {
+    const map = { 1: ['普通', '#8b949e'], 2: ['良好', '#3fb950'], 3: ['优质', '#58a6ff'],
+                  4: ['稀有', '#a371f7'], 5: ['珍稀', '#f0883e'] };
+    const [name, color] = map[g] || map[1];
+    return `<span style="font-size:9px;color:${color};border:1px solid ${color}55;padding:0 4px;border-radius:8px;">${name}</span>`;
   },
 
   async _startCook(recipeId, free) {
@@ -417,6 +524,69 @@ const LifeSkillsUI = {
     this._renderCookGame();
   },
 
+  // ── 自由烹饪 · 中餐工序（切型/腌制/手法/火候）────────
+  _startCookFree() {
+    const sel = this._freeSel.cook || {};
+    const materials = Object.entries(sel).filter(([id, q]) => q > 0).map(([id, q]) => [id, q]);
+    if (!materials.length) { alert('请先挑选食材'); return; }
+    this._cookFree = { cut: '', marinade: '', marinade_t: '不腌', method: '', duration: '' };
+    this._renderCookFree();
+  },
+
+  _cfSet(key, val) {
+    this._cookFree[key] = val;
+    this._renderCookFree();
+  },
+
+  _renderCookFree() {
+    const cf = this._cookFree;
+    const el = document.getElementById('cook-minigame');
+    if (!el) return;
+    const sel = this._freeSel.cook || {};
+    const mats = Object.entries(sel).filter(([id, q]) => q > 0);
+    const matDesc = mats.map(([id, q]) => `${this._matName(id)}×${q}`).join('、') || '（未选）';
+    const group = (label, key, opts) => `
+      <div style="margin-bottom:8px;">
+        <div style="font-size:11px;color:#8b949e;margin-bottom:4px;">${label}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">
+          ${opts.map(o => `<button onclick="LifeSkillsUI._cfSet('${key}','${o}')" style="padding:4px 10px;background:${cf[key]===o?'#2ea043':'#1a3a1a'};border:1px solid ${cf[key]===o?'#3fb950':'#2d5a2d'};border-radius:14px;color:${cf[key]===o?'#fff':'#3fb950'};cursor:pointer;font-size:11px;">${o}</button>`).join('')}
+        </div>
+      </div>`;
+    const ready = cf.cut && cf.marinade && cf.method && cf.duration;
+    el.innerHTML = `
+      <div style="padding:12px;background:#12241a;border:1px solid #3fb950;border-radius:10px;">
+        <div style="font-size:13px;color:#3fb950;font-weight:600;margin-bottom:4px;">🧪 自由烹饪 · 中餐工序</div>
+        <div style="font-size:11px;color:#c9d1d9;margin-bottom:8px;">食材：${matDesc}<span style="color:#8b949e;">（食材品质越高，成品越好、越易出完美）</span></div>
+        ${group('① 切配 · 切成什么形状？', 'cut', ['切丝', '切片', '切块', '切丁', '滚刀块', '剁末', '整条'])}
+        ${group('② 腌制 · 用什么腌料？', 'marinade', ['不腌', '盐', '生抽', '料酒', '姜葱', '蒜蓉', '花椒', '辣椒', '糖醋汁'])}
+        ${group('腌制时长', 'marinade_t', ['不腌', '10分钟', '30分钟', '2小时'])}
+        ${group('③ 制作手法', 'method', ['煎', '炒', '炸', '蒸', '炖', '烤', '煮', '焖', '爆'])}
+        ${group('④ 火候时长', 'duration', ['短(急火)', '中', '长(慢火)'])}
+        <div style="font-size:10px;color:#6e7681;margin-top:2px;">火候与手法不匹配会出问题（如煎太久糊了、炖太短夹生），完成时会得到一句烹饪评语。</div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button onclick="LifeSkillsUI._startCookFree()" style="padding:5px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;cursor:pointer;font-size:11px;">重置</button>
+          <button onclick="LifeSkillsUI._submitCookFree()" ${ready?'':'disabled'} style="padding:5px 14px;background:#1a3a1a;border:1px solid #3fb950;border-radius:6px;color:#3fb950;cursor:pointer;font-size:12px;font-weight:bold;">🍳 完成烹饪</button>
+        </div>
+      </div>`;
+  },
+
+  async _submitCookFree() {
+    const cf = this._cookFree;
+    const sel = this._freeSel.cook || {};
+    const materials = Object.entries(sel).filter(([id, q]) => q > 0).map(([id, q]) => [id, q]);
+    const resp = await fetch('/api/death-mode/life-skills/cook', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ materials, free: true,
+        cut: cf.cut, marinade: cf.marinade, marinade_t: cf.marinade_t,
+        method: cf.method, duration: cf.duration }),
+    });
+    const r = await resp.json();
+    if (r.error) { alert(r.message || r.error); this._reload('cook'); return; }
+    alert(r.message + (r.comment ? '\n📝 大厨评语：' + r.comment : '') + (r.poison ? '\n🦠 这料理吃了会食物中毒扣血！' : '') + (r.special ? '\n✨ 特殊效果：额外获得持续攻击/防御增益！' : '') + (r.level_up ? '\n🎉 烹饪升级！' : ''));
+    this._freeSel.cook = {};
+    this._reload('cook');
+  },
+
   async _submitCook() {
     const c = this._cook;
     if (!c.recipe) return;
@@ -448,7 +618,8 @@ const LifeSkillsUI = {
     el.innerHTML = inv.map(it => {
       const q = sel[it.id] || 0;
       return `<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:#0d1117;border:1px solid ${q>0?'#58a6ff':'#30363d'};border-radius:6px;">
-        <span style="font-size:11px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#6e7681;">×${it.qty}</span></span>
+        <span style="font-size:11px;color:#c9d1d9;">${it.icon} ${it.name} ${this._gradeBadge(it.grade)}</span>
+        <span style="font-size:10px;color:#6e7681;">×${it.qty}</span>
         ${q>0?`<button onclick="LifeSkillsUI._freeInc('${selKey}','${it.id}',-1)" style="width:20px;height:20px;border-radius:4px;border:1px solid #f85149;background:transparent;color:#f85149;cursor:pointer;font-size:12px;line-height:1;">−</button><span style="font-size:11px;color:#58a6ff;min-width:14px;text-align:center;">${q}</span>`:''}
         <button onclick="LifeSkillsUI._freeInc('${selKey}','${it.id}',1)" ${q>=it.qty?'disabled':''} style="width:20px;height:20px;border-radius:4px;border:1px solid #3fb950;background:transparent;color:#3fb950;cursor:pointer;font-size:12px;line-height:1;">+</button>
       </div>`;
@@ -698,7 +869,7 @@ const LifeSkillsUI = {
             <button onmousedown="LifeSkillsUI._pull(true)" onmouseup="LifeSkillsUI._pull(false)" onmouseleave="LifeSkillsUI._pull(false)" ontouchstart="LifeSkillsUI._pull(true)" ontouchend="LifeSkillsUI._pull(false)" style="flex:1;padding:10px;background:linear-gradient(135deg,#f0883e,#d29922);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;">▲ 拉线</button>
             <button onmousedown="LifeSkillsUI._release(true)" onmouseup="LifeSkillsUI._release(false)" onmouseleave="LifeSkillsUI._release(false)" ontouchstart="LifeSkillsUI._release(true)" ontouchend="LifeSkillsUI._release(false)" style="flex:1;padding:10px;background:linear-gradient(135deg,#58a6ff,#1f6feb);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;">▼ 放线</button>
           </div>
-          <div style="margin-top:8px;font-size:11px;color:#8b949e;">点击水面抛竿。咬钩后按住「拉线」提升张力、按住「放线」泄力；张力过高断线、过低脱钩，耗尽鱼的耐力即捕获。不同区域栖息着不同的鱼，想钓到特定鱼种就前往对应的区域。</div>
+          <div style="margin-top:8px;font-size:11px;color:#8b949e;">点击水面抛竿。浮漂徐徐浮动时等鱼咬钩——浮漂一沉，立刻点击水面提竿！然后按住「拉线」提升张力、按住「放线」泄力；张力过高断线、过低脱钩，耗尽鱼的耐力即捕获。不同区域栖息着不同的鱼，想钓到特定鱼种就前往对应的区域。</div>
           <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${zoneChips}</div>
         </div>
         <div style="width:250px;flex-shrink:0;">
@@ -709,10 +880,18 @@ const LifeSkillsUI = {
           ${gear('bait', '鱼饵', '🪱', d.fish_gear_bait)}
         </div>
       </div>
-      <div style="font-size:11px;color:#8b949e;margin-top:10px;">📖 当前可钓（${zoneObj ? zoneObj.name : this._zone}·累计收益 ${earnings}💰）：</div>
+      <div style="font-size:11px;color:#8b949e;margin-top:10px;">📖 当前可钓（${zoneObj ? zoneObj.name : this._zone}·累计收益 ${earnings}💰，每种品质仅展示一种）：</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
-        ${(fishByZone[this._zone] || []).map(f => `
-          <span style="padding:3px 8px;background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:20px;font-size:10px;color:${this._rarityColor(f.rarity)};">${f.icon} ${f.name} ${this._rarityName(f.rarity)}</span>`).join('')}
+        ${(() => {
+          const zoneFish = fishByZone[this._zone] || [];
+          const shown = [];
+          const seen = {};
+          zoneFish.forEach(f => { if (!seen[f.rarity]) { seen[f.rarity] = true; shown.push(f); } });
+          const total = zoneFish.length;
+          return shown.map(f => `
+            <span title="该水域共 ${total} 种鱼，其余需钓到后在图鉴中点亮" style="padding:3px 8px;background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:20px;font-size:10px;color:${this._rarityColor(f.rarity)};">${f.icon} ${f.name} ${this._rarityName(f.rarity)}</span>`).join('')
+            + (total > shown.length ? `<span style="padding:3px 8px;background:#0d1117;border:1px dashed #30363d;border-radius:20px;font-size:10px;color:#8b949e;">+${total - shown.length} 神秘鱼种</span>` : '');
+        })()}
       </div>`;
     this._initFishCanvas();
   },
@@ -815,6 +994,7 @@ const LifeSkillsUI = {
   _onCanvasClick(e) {
     const f = this._fish;
     if (f.phase === 'idle') this._castRod(e);
+    else if (f.phase === 'bite') this._pickAndHook();   // 浮漂下沉，点击提竿
     else if (f.phase === 'waiting') this._endFight(false, '收线了，没鱼');
   },
 
@@ -848,7 +1028,20 @@ const LifeSkillsUI = {
       f.bobber.bob = Math.sin(f.time * 2) * 1.5;
       if (Math.random() < dt * 1.5) this._spawnRipple(f.bobber.x, waterLine);
       f.biteTimer -= dt;
-      if (f.biteTimer <= 0) this._pickAndHook();
+      if (f.biteTimer <= 0) {
+        // 浮漂下沉，进入提竿窗口（宽松容错：2.5 秒内点击即中）
+        f.phase = 'bite';
+        f.biteTimer = 2.5;
+        this._setHint('浮漂沉了！快点击水面提竿！');
+        this._spawnSplash(f.bobber.x, waterLine, 10);
+      }
+    } else if (f.phase === 'bite') {
+      f.biteTimer -= dt;
+      if (f.biteTimer <= 0) {
+        // 超时未提竿：鱼跑了，重新等鱼
+        f.phase = 'waiting'; f.biteTimer = 3 + Math.random() * 5;
+        this._setHint('慢了一步，鱼跑了，重新等鱼...');
+      }
     } else if (f.phase === 'fighting') {
       this._updateFight(dt);
     }
@@ -1007,7 +1200,13 @@ const LifeSkillsUI = {
     }
     // 浮漂
     if (f.bobber.inWater || f.phase === 'fighting') {
-      const bobY = waterLine - Math.abs(Math.sin(t * 2 + f.bobber.bob) * 1.5);
+      let bobY;
+      if (f.phase === 'bite') {
+        // 咬钩瞬间：浮漂被猛地拉入水下（下沉抖动）
+        bobY = waterLine + 4 + Math.sin(f.time * 16) * 2;
+      } else {
+        bobY = waterLine - Math.abs(Math.sin(t * 2 + f.bobber.bob) * 1.5);
+      }
       f.bobberY = bobY;
       ctx.fillStyle = '#f44336'; ctx.beginPath(); ctx.arc(f.bobber.x, bobY, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(f.bobber.x, bobY - 3, 2, 0, Math.PI * 2); ctx.fill();

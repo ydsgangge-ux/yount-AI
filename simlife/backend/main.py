@@ -1545,12 +1545,13 @@ def api_death_mode_life_skills():
             region_zone = LS.region_fish_zone(reg.region_type, reg.danger_level)
     return {
         "skills": ls["skills"],
-        "inventory": LS.ensure_life_state(state)["inventory"],
+        "inventory": [{**it, "grade": LS.material_grade(it["id"])} for it in ls["inventory"]],
         "recipes_known": ls["recipes_known"],
         "blueprints_known": ls["blueprints_known"],
         "foods": ls["foods"],
         "equipment": ls["equipment"],
         "fish_caught": ls["fish_caught"],
+        "fish_dex": LS.get_fish_dex(ls),
         "buffs": ls["buffs"],
         "shop": LS.build_shop(overall),
         "recipes": LS.COOK_RECIPES,
@@ -1640,31 +1641,43 @@ def api_death_mode_life_cook(data: dict):
     if not recipe and not is_free:
         return {"error": "no_recipe", "message": "请选择菜谱或自由组合材料"}
 
-    # ── 自由组合：LLM 动态生成料理 ──
+    # ── 自由烹饪：中餐工序 + LLM 动态生成料理 ──
     if is_free:
         if not LS.has_materials(ls["inventory"], free_materials):
             return {"error": "no_materials", "message": "材料不足，无法自由烹饪"}
         mat_val = LS.material_value(ls["inventory"], free_materials)
         if mat_val < 4:
             return {"error": "too_few", "message": "材料太少，不足以烹饪出像样的料理"}
-        target_steps = ["备料", "调味", "烹制"]
-        steps_sorted = data.get("steps", [])
-        if not steps_sorted or len(steps_sorted) < len(target_steps):
-            return {"error": "incomplete", "message": "步骤未完成"}
+        # 中餐工序参数
+        cut = data.get("cut") or "切块"
+        marinade = data.get("marinade") or "不腌"
+        marinade_t = data.get("marinade_t") or ""
+        method = data.get("method") or "炒"
+        duration = data.get("duration") or "中"
+        rule_comment = LS.cook_time_hint(method, duration)
         mat_desc = "、".join(
             f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in free_materials)
         llm = _life_llm_json(
-            f"你是奇幻世界的烹饪大师。玩家用以下食材自由创作一道料理：{mat_desc}\n"
-            f"请只输出一个JSON对象：{{\"name\":\"料理名(2-6字)\",\"icon\":\"一个emoji\",\"buff_type\":\"hp或mp或attack或defense\",\"desc\":\"一句话\"}}")
+            f"你是奇幻世界的中餐大厨。玩家用以下食材：{mat_desc}，进行中餐烹饪：\n"
+            f"切型「{cut}」、腌制「{marinade}{marinade_t}」、制作手法「{method}」、火候时长「{duration}」。\n"
+            f"请判断火候与手法是否匹配（爆炒焯宜急火、煎炸焖烧宜中火、蒸炖烤煮宜慢火），"
+            f"并只输出一个JSON对象："
+            f"{{\"name\":\"菜名(2-6字)\",\"icon\":\"一个emoji\",\"buff_type\":\"hp或mp或attack或defense\","
+            f"\"comment\":\"一句烹饪评语，结合火候时长评点，如\\\"火太大食材糊了，勉强能吃\\\"或\\\"火候正好，色香味俱全\\\"\"}}")
         base = LS.free_dish_base(cooking["level"], mat_val)
+        # 食材品质等级加成：取所选食材最高等级，等级越高恢复量越高
+        top_grade = max((LS.material_grade(mid) for mid, _ in free_materials), default=1)
+        base["value"] = int(base["value"] * (1 + (top_grade - 1) * 0.15))
         if llm and llm.get("name"):
             dish_name = str(llm["name"])[:12]
             icon = str(llm.get("icon") or "🍲")
             buff_type = str(llm.get("buff_type") or "hp")
             if buff_type not in ("hp", "mp", "attack", "defense"):
                 buff_type = "hp"
+            comment = str(llm.get("comment") or rule_comment)[:80]
         else:
             dish_name, icon, buff_type = "神秘杂烩", "🍲", "hp"
+            comment = rule_comment
         # 含附魔/特殊材料 → 更容易出属性类增益
         has_special = any((LS._find_mat(mid) or {}).get("type") == "enchant" for mid, _ in free_materials)
         if has_special and buff_type in ("hp", "mp"):
@@ -1690,21 +1703,30 @@ def api_death_mode_life_cook(data: dict):
         result_level = recipe["level"]
         quality_buff = dict(recipe["buff"])
 
-    # 步骤判定
-    judgements = []
-    for i in range(len(target_steps)):
-        input_step = int(steps_sorted[i]) if i < len(steps_sorted) else 0
-        judgements.append(LS.judge_step(i, len(target_steps), input_step, cooking["level"]))
-    quality = LS.judge_overall(judgements, cooking["level"])
+    # 品质判定
+    if is_free:
+        # 自由烹饪：品质由火候与手法匹配度决定，高等级食材可补救火候失误
+        quality = LS.cook_quality_by_heat(method, duration)
+        if top_grade >= 4 and quality == "bad":
+            quality = "normal"
+        if top_grade >= 5 and quality == "normal":
+            quality = "good"
+    else:
+        # 固定菜谱：按步骤排序判定
+        judgements = []
+        for i in range(len(target_steps)):
+            input_step = int(steps_sorted[i]) if i < len(steps_sorted) else 0
+            judgements.append(LS.judge_step(i, len(target_steps), input_step, cooking["level"]))
+        quality = LS.judge_overall(judgements, cooking["level"])
 
     # 扣除材料
     used_materials = free_materials if is_free else recipe["materials"]
     for mat_id, qty in used_materials:
         LS.remove_materials(ls["inventory"], mat_id, qty)
 
-    # 失败：返还一半材料，小经验
+    # 失败（仅固定菜谱）：返还一半材料，小经验
     is_good = quality in ("perfect", "good")
-    if not is_good:
+    if not is_good and not is_free:
         for mat_id, qty in used_materials:
             LS.add_materials(ls["inventory"], mat_id, max(1, qty // 2))
         xp = LS.resource_value("normal")
@@ -1720,9 +1742,21 @@ def api_death_mode_life_cook(data: dict):
     mult = LS.quality_multiplier(quality)
     buff = dict(quality_buff)
     buff["value"] = int(buff["value"] * mult)
+    # 自由烹饪 · 劣质品质：火候失控，产出容易食物中毒的料理（吃了扣血）
+    poison = False
+    if is_free and quality == "bad":
+        poison = True
+        buff = {"type": "hp", "value": -max(8, int(buff["value"] * 0.5)), "turns": 0}
+    # 自由烹饪 · 完美品质：附带特殊效果（额外持续属性增益）
+    special = None
+    if is_free and quality == "perfect":
+        special = {"type": random.choice(["attack", "defense"]),
+                   "value": max(3, int(buff["value"] * 0.3)), "turns": 3, "source": result_name}
     LS.add_item_to_list(ls["foods"], {"name": result_name, "icon": result_icon, "type": "food",
                                       "buff": buff, "level": result_level,
-                                      **({"free": True, "desc": llm.get("desc", "") if is_free and llm else ""} if is_free else {})}, 1)
+                                      **({"free": True, "desc": (comment if is_free else "")} if is_free else {}),
+                                      **({"poison": True} if poison else {}),
+                                      **({"special": special} if special else {})}, 1)
     xp = LS.resource_value(quality)
     lv = LS.add_xp(ls["skills"], "cooking", xp)
     if recipe_id and recipe_id not in ls["recipes_known"]:
@@ -1733,9 +1767,11 @@ def api_death_mode_life_cook(data: dict):
         "skill": "烹饪", "action": f"烹饪出{result_name}",
         "detail": {"recipe": result_name, "quality": quality, "free": is_free},
     })
-    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通"}.get(quality, quality)
+    quality_name = {"perfect": "完美", "good": "良好", "normal": "普通", "bad": "劣质"}.get(quality, quality)
     return {"success": True, "quality": quality, "quality_name": quality_name,
             "message": f"烹饪成功！得到{result_name}（{quality_name}品质）",
+            "comment": (comment if is_free else ""),
+            "special": special, "poison": poison,
             "xp_gained": xp, "level_up": lv["level_up"], "foods": ls["foods"]}
 
 
@@ -1999,8 +2035,11 @@ def api_death_mode_life_fish(data: dict):
         "name": fish["name"], "icon": fish["icon"], "family": fish["family"],
         "rarity": fish["rarity"], "weight": weight, "value": value, "energy": energy,
     }, 1)
+    LS.mark_fish_dex(ls, fish_id, weight)  # 收集图鉴点亮
     fg = ls.setdefault("fish_gear", {})
     fg["earnings"] = fg.get("earnings", 0) + value
+    # 钓到的鱼直接作为独立食材进背包（按鱼种区分，可自由烹饪出对应料理）
+    LS.add_materials(ls["inventory"], f"fish_{fish_id}", 1, fish["name"], fish["icon"])
     xp = LS.resource_value(quality) + LS.fish_rarity_weight(fish)
     lv = LS.add_xp(ls["skills"], "fishing", xp)
     ls["last_activity"] = f"钓到了{fish['name']}({weight}kg)"
@@ -2106,7 +2145,11 @@ def api_death_mode_life_eat(data: dict):
     buff = item.get("buff") or {}
     msg = f"食用了{name}。"
     # HP/MP 回复
-    if buff.get("type") == "hp":
+    if buff.get("type") == "hp" and buff.get("value", 0) < 0:
+        # 劣质料理：食物中毒，扣血
+        char["hp"] = max(0, char.get("hp", 0) + buff["value"])
+        msg += f" 🦠食材不佳中毒，损失{-buff['value']}点HP！"
+    elif buff.get("type") == "hp":
         char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + buff.get("value", 0))
         msg += f" 回复{min(buff['value'], char.get('max_hp',0)-char.get('hp',0)+buff['value'])}点HP"
     elif buff.get("type") == "mp":
@@ -2121,6 +2164,12 @@ def api_death_mode_life_eat(data: dict):
     elif item.get("energy"):
         char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + item.get("energy", 0))
         msg += f" 回复{item.get('energy',0)}点HP"
+
+    # 完美品质特殊效果：额外持续属性增益
+    special = item.get("special")
+    if special:
+        ls["buffs"].append(dict(special))
+        msg += f" ✨特殊效果：获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
 
     char["hp"] = max(0, char["hp"])
     engine._save()
