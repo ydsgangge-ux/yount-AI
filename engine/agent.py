@@ -1037,12 +1037,44 @@ class ConsciousnessAgent:
                         elif et == "life_skill":
                             skill = ed.get("skill", "生活技能")
                             act = ed.get("action", "")
-                            # 汇总 detail 评价（如：评价=完美、回复=HP+20）
+                            det = ed.get("detail") or {}
+                            # 主语：AI角色和用户角色一起
+                            _uc_name = dm_state.get("user_character", {}).get("name", "用户")
+                            subject = f"{name}和{_uc_name}"
+                            if act:
+                                act = f"{subject} {act}"
+                            # 旧英文键 → 中文键
+                            KEY_ZH = {
+                                "recipe": "菜名", "quality": "评价", "free": "自由组合",
+                                "material": "材料", "qty": "数量", "cost": "花费",
+                                "gear": "装备", "fish": "鱼", "weight": "体重", "value": "价值",
+                                "region": "地点", "zone": "水域", "slot": "部位", "broken": "损坏",
+                                "name": "名称", "target": "对象", "item": "物品", "enchant": "附魔",
+                                "price": "金币", "msg": "说明", "stat_type": "属性类型",
+                                "stat_value": "属性值", "fishing_gear": "钓鱼装备",
+                            }
+                            VAL_ZH = {
+                                "perfect": "完美", "good": "良好", "normal": "普通", "bad": "劣质",
+                                "attack": "攻击", "defense": "防御", "hp": "生命", "mp": "魔法",
+                            }
+                            ZONE_ZH = {"pond": "老磨坊池塘", "lake": "月光湖", "river": "暗礁河", "abyss": "深渊之眼"}
                             detail_parts = []
-                            for k, v in (ed.get("detail") or {}).items():
-                                if v in (None, "", "False", False):
+                            for k, v in det.items():
+                                if v in (None, "", "False", False, "True", True):
                                     continue
-                                detail_parts.append(f"{k}={v}")
+                                key = KEY_ZH.get(k, k)
+                                vs = str(v)
+                                # 值已在动作描述中，跳过避免重复
+                                if vs in act:
+                                    continue
+                                if k == "zone" or key == "水域":
+                                    vs = ZONE_ZH.get(vs, vs)
+                                elif vs in VAL_ZH:
+                                    vs = VAL_ZH[vs]
+                                # 回复=attack+72 → 攻击+72
+                                for en, zh in VAL_ZH.items():
+                                    vs = vs.replace(en, zh)
+                                detail_parts.append(f"{key}: {vs}")
                             if act:
                                 parts.append(f"  [{t}] 🧰{skill}：{act}" + (f"（{'、'.join(detail_parts)}）" if detail_parts else ""))
         except Exception:
