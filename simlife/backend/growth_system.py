@@ -116,25 +116,30 @@ class GrowthSystem:
         返回 (是否成功, 消息)。
         """
         valid_stats = {"strength", "agility", "intelligence", "vitality", "luck"}
-        total_request = sum(v for v in allocations.values() if v > 0)
         available = character.get("stat_points", 0)
+        stats = character.get("stats", {})
 
+        # 只结算"合法且存在于角色属性"的分配项，杜绝无效键白扣点
+        apply = {k: v for k, v in allocations.items()
+                 if k in valid_stats and k in stats and v > 0}
+        if not apply:
+            return False, "请至少分配1点"
+
+        total_request = int(sum(apply.values()))
         if total_request <= 0:
             return False, "请至少分配1点"
         if total_request > available:
             return False, f"属性点不足，剩余{available}点"
 
-        stats = character.get("stats", {})
         _hp_bonus = 0
         _mp_bonus = 0
-        for k, v in allocations.items():
-            if k in valid_stats and k in stats and v > 0:
-                stats[k] += v
-                # vitality 增加max_hp，intelligence 增加 max_mp
-                if k == "vitality":
-                    _hp_bonus += v * 15
-                elif k == "intelligence":
-                    _mp_bonus += v * 10
+        for k, v in apply.items():
+            stats[k] += v
+            # vitality 增加max_hp，intelligence 增加 max_mp
+            if k == "vitality":
+                _hp_bonus += v * 15
+            elif k == "intelligence":
+                _mp_bonus += v * 10
         # 应用体质/智力带来的max_hp/max_mp提升，并同步当前HP/MP
         if _hp_bonus:
             character["max_hp"] = character.get("max_hp", 0) + _hp_bonus

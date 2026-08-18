@@ -11,6 +11,8 @@ import json
 import re
 from typing import Dict, List, Optional
 
+from simlife.backend.world_simulation import WorldSimulation
+
 
 class StoryAgent:
     """场景故事反馈 Agent"""
@@ -319,6 +321,14 @@ class StoryAgent:
         story_summary = state.get("story_summary", "")
         if story_summary:
             text += f"\n\n【剧情摘要】\n{story_summary}"
+
+        # 附加《世界状态·不可更改》：冲突弧/承诺/既定事实——叙事必须遵守，不得编造世界真相
+        try:
+            world_sim_blob = WorldSimulation.build_world_facts_blob(state)
+            if world_sim_blob:
+                text += "\n\n「世界状态·不可更改」\n" + world_sim_blob
+        except Exception:
+            pass
 
         return text
 
@@ -754,7 +764,7 @@ class StoryAgent:
 5. 如果是社交行动，描述对方反应
 6. 保持紧张感，但不透露具体数值
 7. 结尾留下"接下来会发生什么"的悬念
-8. 【地点连续性·最严格】叙事地点必须等于当前地点（{current_location or '未知'}）。区域移动由后端系统自动处理——如果用户想移动到其他区域，系统会自动执行移动并更新位置，你不需要也不能在叙事中描述角色移动到其他区域。你只需要描述当前区域内的行动和场景。
+8. 【地点连续性·最严格】叙事默认地点必须等于当前地点（{current_location or '未知'}）。区域移动由后端系统自动处理——如果用户想移动到其他区域，系统会自动执行移动并更新位置，你不需要也不能在叙事中描述角色移动到其他区域。唯一例外：如果行动是"进入当前区域内某个剧情明确的具体地点"（如跳入井里、钻进地窖、进入钟楼、下到矿洞），这是区域内切换子场景而非跨区域移动，应返回 enter_sub_scene 字段标记（见原则21），系统会同步更新地点。
 11. 【剧情钩子承接】如果上方"必须承接的剧情钩子"列表非空，叙事必须显式呼应其中至少一个钩子（描述其后续），不得装作没看到
 12. 【区域一致性·最严格】当前区域和设定已在【世界观】的"【当前区域】"给出。叙事只能用当前区域真实的【关键地点】【本区危险】【本区人物】【驻留势力】。绝不能凭空发明该区域不存在的地点、势力、NPC或生物。若行动涉及进入新区域（如"进入地下城""前往XX层"），必须在描述中体现该区域的独特设定（环境/危险/势力）。
 13. 【势力一致性】叙事涉及势力时，必须贴合该势力的理念与立场（已在【当前区域】列出），如暗黑公会的杀戮掠夺、法师议会的求索、解放军的纪律等。NPC 的言行要符合其所属势力的立场。
@@ -775,6 +785,7 @@ class StoryAgent:
     - story_progress: 剧情推进关键描述（如"发现了通往深处的隐藏通道"）
     - completed: true（仅当该区域所有核心内容都已探索完毕，不再需要新内容时设为 true）
     如果当前行动没有推进区域剧情，region_story_updates 填 null。
+21. 【子场景切换·可选】当行动是"进入当前区域内某个剧情明确的具体地点"（如跳入井里、钻进地窖、进入钟楼、下到地牢，且该地点在【最近行动记录】或【剧情线】中已有铺垫）时，应在 enter_sub_scene 中返回：{{"name": "子场景名（如 雾谷前哨站·井底）", "scene_description": "该子场景的简短描述（环境、光线、氛围，2-3句）"}}。系统会同步更新当前地点，后续行动与战斗都会发生在这个子场景内。当行动是"离开该子场景"（如爬出井、回到地面、离开地窖）时，返回 exit_sub_scene: true，系统会退回上一地点。其余普通行动 enter_sub_scene 填 null、exit_sub_scene 填 null。
 
 【任务系统联动·重要】
 当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
@@ -833,7 +844,9 @@ class StoryAgent:
   "unresolved_hooks": ["本段叙事留下的悬念1（一句话）", "悬念2"] 或 null,
   "plot_thread_updates": [
     {{"title": "剧情线标题", "action": "introduce/advance/resolve", "new_fact": "新增的关键设定（一句话）"}}
-  ] 或 null
+  ] 或 null,
+  "enter_sub_scene": {{"name": "子场景名", "scene_description": "子场景描述"}} 或 null,
+  "exit_sub_scene": true 或 null
 }}
 
 物品/金币规则：
@@ -904,6 +917,9 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
                 "unresolved_hooks": result.get("unresolved_hooks"),
                 # 剧情线更新（introduce/advance/resolve）
                 "plot_thread_updates": result.get("plot_thread_updates"),
+                # 子场景切换（进入/离开当前区域内的具体地点，如井底）
+                "enter_sub_scene": result.get("enter_sub_scene"),
+                "exit_sub_scene": result.get("exit_sub_scene"),
             }
         except Exception as e:
             print(f"[DeathMode] 行动处理失败: {e}")

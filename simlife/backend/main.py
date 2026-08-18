@@ -2225,7 +2225,8 @@ def api_death_mode_life_eat(data: dict):
     # 临时增益（攻击/防御 持续回合）
     elif buff.get("type") in ("attack", "defense"):
         turns = buff.get("turns", 3)
-        ls["buffs"].append({"type": buff["type"], "value": buff["value"], "turns": turns, "source": name})
+        # target 标记增益属主（ai/user），供战斗前按角色分配
+        ls["buffs"].append({"type": buff["type"], "value": buff["value"], "turns": turns, "source": name, "target": target})
         msg += f" 获得{buff['value']}点{'攻击' if buff['type']=='attack' else '防御'}增益（{turns}回合）"
     # 鱼类能量
     elif item.get("energy"):
@@ -2235,7 +2236,9 @@ def api_death_mode_life_eat(data: dict):
     # 完美品质特殊效果：额外持续属性增益
     special = item.get("special")
     if special:
-        ls["buffs"].append(dict(special))
+        sp = dict(special)
+        sp.setdefault("target", target)  # 特殊效果同样记录属主
+        ls["buffs"].append(sp)
         msg += f" ✨特殊效果：获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
 
     char["hp"] = max(0, char["hp"])

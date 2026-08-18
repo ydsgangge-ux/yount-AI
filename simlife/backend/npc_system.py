@@ -27,6 +27,7 @@ class NPC:
         self.faction = faction      # 所属势力
         self.alive = True
         self.relationship = 0       # 与玩家关系：-100~100（负=敌对，0=中立，正=友好）
+        self.fear = 0               # 对玩家的恐惧：0~100（越高越怕你，越可能跪/逃/让路）
         self.level = 1
         self.hp = 50
         self.max_hp = 50
@@ -46,6 +47,7 @@ class NPC:
             "faction": self.faction,
             "alive": self.alive,
             "relationship": self.relationship,
+            "fear": self.fear,
             "level": self.level,
             "hp": self.hp,
             "max_hp": self.max_hp,
@@ -68,6 +70,7 @@ class NPC:
         )
         npc.alive = data.get("alive", True)
         npc.relationship = data.get("relationship", 0)
+        npc.fear = data.get("fear", 0)
         npc.level = data.get("level", 1)
         npc.hp = data.get("hp", 50)
         npc.max_hp = data.get("max_hp", 50)
@@ -94,6 +97,23 @@ class NPC:
     def change_relationship(self, delta: int):
         """改变关系值"""
         self.relationship = max(-100, min(100, self.relationship + delta))
+
+    def get_fear_label(self) -> str:
+        """获取恐惧标签"""
+        if self.fear >= 90:
+            return "魂飞魄散"
+        elif self.fear >= 75:
+            return "惊惧"
+        elif self.fear >= 55:
+            return "畏惧"
+        elif self.fear >= 35:
+            return "紧张"
+        else:
+            return "无所畏惧"
+
+    def change_fear(self, delta: int):
+        """改变恐惧值（0~100）"""
+        self.fear = max(0, min(100, self.fear + delta))
 
 
 class NPCSystem:
@@ -235,6 +255,13 @@ class NPCSystem:
         elif interaction_type == "help":
             result["message"] = f"你帮助了{npc.name}"
             npc.change_relationship(10)
+            result["relationship"] = npc.relationship
+
+        elif interaction_type == "intimidate":
+            # 实际判定在 death_mode（需玩家属性），此处仅返回基础信息
+            result["message"] = f"你威吓了{npc.name}"
+            result["intimidate"] = True
+            result["fear"] = npc.fear
             result["relationship"] = npc.relationship
 
         elif interaction_type == "attack":

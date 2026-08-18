@@ -163,6 +163,19 @@ class CombatSystem:
     """数值战斗系统 v2：防御三选一、硬直、等级压制、伤势、装备"""
 
     @staticmethod
+    def skill_attack_type(skill_type: str) -> str:
+        """技能类型 → 计算伤害时使用的属性基底类型
+
+        magic → 智力；ranged / finesse → 敏捷；其余(physical/buff/utility等按物理) → 力量
+        让灵活系职业（盗贼等）走敏捷，技能走向由玩家自由选择。
+        """
+        if skill_type == "magic":
+            return "magic"
+        if skill_type in ("finesse", "ranged"):
+            return skill_type
+        return "physical"
+
+    @staticmethod
     def _weapon_bonus_by_type(entity, damage_type: str = "physical") -> int:
         """按伤害类型获取武器加成"""
         equip_list = entity.get("equipment", []) if isinstance(entity, dict) else entity.equipment
@@ -180,7 +193,12 @@ class CombatSystem:
                 total += e.get("bonus", 0) if isinstance(e, dict) else 0
             elif dt == "ranged" and damage_type == "ranged":
                 total += e.get("bonus", 0) if isinstance(e, dict) else 0
+            elif dt == "finesse":
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
             elif damage_type == "physical" and dt in ("physical",):
+                total += e.get("bonus", 0) if isinstance(e, dict) else 0
+            elif damage_type == "finesse" and dt in ("physical", "finesse"):
+                # 灵巧型（盗贼）继承物理型武器（匕首等）加成
                 total += e.get("bonus", 0) if isinstance(e, dict) else 0
         return total
 
@@ -259,7 +277,7 @@ class CombatSystem:
         bonus = CombatSystem._weapon_bonus_by_type(entity, attack_type)
         if attack_type == "magic":
             base = s.get("intelligence", 5) * 2
-        elif attack_type == "ranged":
+        elif attack_type in ("ranged", "finesse"):
             base = s.get("agility", 5) * 2
         else:  # physical
             base = s.get("strength", 5) * 2
@@ -270,14 +288,21 @@ class CombatSystem:
             raw = int(raw * passive["magic_damage_mult"])
         elif attack_type == "ranged" and passive.get("ranged_damage_mult"):
             raw = int(raw * passive["ranged_damage_mult"])
-        elif attack_type == "physical" and passive.get("phys_damage_mult"):
+        elif attack_type in ("physical", "finesse") and passive.get("phys_damage_mult"):
             raw = int(raw * passive["phys_damage_mult"])
+        # 食物增益：攻击力临时加成（生活技能，仅dict实体）
+        if isinstance(entity, dict):
+            raw += int(entity.get("temp_life_attack", 0) or 0)
         return raw
 
     @staticmethod
     def calc_defense(entity) -> int:
         s = CombatSystem._get_stats(entity)
-        return int(s.get("vitality", 5) * 1.5 + CombatSystem._armor_bonus(entity))
+        result = int(s.get("vitality", 5) * 1.5 + CombatSystem._armor_bonus(entity))
+        # 食物增益：防御临时加成（生活技能，仅dict实体）
+        if isinstance(entity, dict):
+            result += int(entity.get("temp_life_defense", 0) or 0)
+        return result
 
     @staticmethod
     def _level_diff_modifiers(attacker, defender) -> Dict[str, float]:

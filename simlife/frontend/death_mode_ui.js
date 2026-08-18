@@ -311,6 +311,27 @@ const DeathModeUI = {
       const expPct = char.exp_to_next > 0 ? (char.experience / char.exp_to_next * 100) : 0;
       const hpColor = hpPct > 60 ? '#3fb950' : hpPct > 30 ? '#d29922' : '#f85149';
 
+      // 职业被动（AI角色）—— 在主状态面板直接展示，便于直观了解职业被动
+      let passiveHtml = '';
+      if (char.class_id) {
+        try {
+          const pResp = await fetch('/api/death-mode/passive-skill?who=ai');
+          if (pResp.ok) {
+            const passive = await pResp.json();
+            if (passive && passive.name) {
+              passiveHtml = `<div style="margin-bottom:10px;padding:8px;background:#1a1a2d;border:1px solid #58a6ff;border-radius:8px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <span style="font-size:13px;">🛡️</span>
+                  <span style="font-size:11px;color:#58a6ff;font-weight:600;">${passive.name}</span>
+                  <span style="font-size:8px;color:#8b949e;background:#161b22;padding:1px 5px;border-radius:3px;">被动</span>
+                </div>
+                <div style="font-size:9px;color:#8b949e;">${passive.description}</div>
+              </div>`;
+            }
+          }
+        } catch(e) {}
+      }
+
       // 缓存用户名（用于替换日志中的"你"）
       const userChar = state.user_character || {};
       if (userChar.name) this._userName = userChar.name;
@@ -447,6 +468,8 @@ const DeathModeUI = {
           <div style="font-size:15px;font-weight:bold;color:#c9d1d9;margin-top:4px;">${char.name || '无名'}</div>
           <div style="font-size:11px;color:#8b949e;">${char.class_name || ''} Lv.${char.level || 1}</div>
         </div>
+
+        ${passiveHtml}
 
         <div style="margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px;">
@@ -1707,6 +1730,23 @@ const DeathModeUI = {
         </div>`;
       }
       html += `</div>`;
+      // ── 属性作用说明（引导正确加点）──
+      const statHelp = [
+        ['strength','💪','力量 · 提升近战/物理攻击力'],
+        ['agility','🏃','敏捷 · 提升命中、闪避与暴击，弓箭/盗贼主属性'],
+        ['intelligence','🧠','智力 · 提升魔法攻击，上限 +10 点蓝（MP）'],
+        ['vitality','❤️','体质 · 提升生命上限 +15 点（HP），增强生存'],
+        ['luck','🍀','运气 · 影响暴击、掉落与稀有事件概率'],
+      ];
+      html += `<div style="margin-bottom:8px;padding:7px 9px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+        <div style="font-size:10px;color:#484f58;margin-bottom:4px;">各属性作用</div>
+        <div style="display:flex;flex-direction:column;gap:2px;">`;
+      for (const [key] of Object.entries(statNames)) {
+        const line = statHelp.find(h => h[0] === key);
+        if (!line) continue;
+        html += `<div style="font-size:10px;color:#8b949e;line-height:1.5;">${line[1]} ${line[2]}</div>`;
+      }
+      html += `</div></div>`;
       if (statPoints > 0) {
         html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;">`;
         for (const [key, name] of Object.entries(statNames)) {
@@ -1715,13 +1755,15 @@ const DeathModeUI = {
           </div>`;
         }
         html += `</div>`;
-        html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
-          <div></div>
-          <div></div>
-          <button onclick="DeathModeUI._allocStat('all',5,'${who}')" style="padding:3px;background:#2d2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;grid-column:span 1;">全+5</button>
-          <div></div>
-          <div></div>
-        </div>`;
+        if (statPoints >= 25) {
+          html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
+            <div></div>
+            <div></div>
+            <button onclick="DeathModeUI._allocStat('all',5,'${who}')" style="padding:3px;background:#2d2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;grid-column:span 1;">全+5</button>
+            <div></div>
+            <div></div>
+          </div>`;
+        }
       }
       html += `</div>`;
 

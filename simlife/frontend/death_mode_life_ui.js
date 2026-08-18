@@ -202,14 +202,18 @@ const LifeSkillsUI = {
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
           <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
           <div style="font-size:9px;color:#8b949e;margin:2px 0;">${this._buffDesc(it.buff)}</div>
-          <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="width:100%;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">AI 食用</button>
+          <div style="display:flex;gap:4px;">
+            <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="flex:1;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">AI 食用</button>
+            <button onclick="LifeSkillsUI._eat('${it.name}','user')" style="flex:1;padding:3px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">玩家食用</button>
+          </div>
         </div>`)}
       ${card('🐟 鱼获', '#58a6ff', fish, it => `
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
           <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
           <div style="font-size:9px;color:#8b949e;margin:2px 0;">${this._rarityName(it.rarity)} · 能量${it.energy} · 价${it.price}</div>
           <div style="display:flex;gap:4px;">
-            <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="flex:1;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">食用</button>
+            <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="flex:1;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">AI吃</button>
+            <button onclick="LifeSkillsUI._eat('${it.name}','user')" style="flex:1;padding:3px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">玩家吃</button>
             <button onclick="LifeSkillsUI._sellFish('${it.name}')" style="flex:1;padding:3px;background:#3d2a1a;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">售</button>
           </div>
         </div>`)}
@@ -225,7 +229,7 @@ const LifeSkillsUI = {
       <div id="enchant-panel" style="margin-bottom:12px;"></div>
       ${d.buffs && d.buffs.length ? card('✨ 生效增益', '#d29922', d.buffs, it => `
         <div style="padding:8px;background:#2d2d0d;border:1px solid #d29922;border-radius:7px;font-size:11px;color:#d29922;">
-          ${it.source}：${it.type==='attack'?'攻击':'防御'}+${it.value}（剩${it.turns}回合）
+          ${it.source}：${it.target==='user'?'玩家':'AI'} ${it.type==='attack'?'攻击':'防御'}+${it.value}（剩${it.turns}回合）
         </div>`) : ''}
     `;
   },

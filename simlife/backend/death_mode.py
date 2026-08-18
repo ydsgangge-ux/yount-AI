@@ -27,10 +27,22 @@ from simlife.backend.npc_system import NPCSystem, NPCGenerator
 from simlife.backend.equipment_system import EquipmentSystem
 from simlife.backend.quest_system import QuestSystem
 from simlife.backend.world_progress import WorldProgress
+from simlife.backend.world_simulation import WorldSimulation
 from simlife.backend.dungeon_agent import DungeonAgent, Dungeon
 from simlife.backend.region_agent import RegionAgent
 from simlife.backend.party_agent import PartyAgent, PartyMember
 from simlife.backend.ending_system import generate_hidden_ending, HiddenEnding
+
+
+# 可刷新小怪关键词：只有命中这些"特别普通"的怪，死后才会重新刷出；
+# 其余有名有姓的怪物一旦击败即永久登记，无法再新生（地区怪物总量控制）。
+REFRESHABLE_MOB_KEYWORDS = (
+    "史莱姆", "软泥", "元素", "植物", "蘑菇", "孢子", "水晶", "藤蔓", "花",
+    "哥布林", "骷髅", "蜘蛛", "蝙蝠", "狼", "虫", "老鼠", "蛇", "鸟", "鱼",
+    "守卫", "卫兵", "士兵", "流浪汉", "佣人", "平民",
+    "slime", "goblin", "skeleton", "spider", "bat", "wolf", "rat",
+    "bug", "snake", "elemental", "plant", "mushroom", "guard", "soldier",
+)
 
 
 class DeathModeEngine:
@@ -1298,6 +1310,34 @@ class DeathModeEngine:
         outcome_type = agent_result.get("outcome_type", "nothing")
         next_tension = agent_result.get("next_tension", "medium")
 
+        # 3.1 子场景切换：进入/离开当前区域内的具体地点（如井底）。
+        # 在战斗触发前应用，确保随后的叙事与战斗都发生在子场景内。
+        try:
+            _enter_sub = agent_result.get("enter_sub_scene")
+            _exit_sub = agent_result.get("exit_sub_scene")
+            if _enter_sub and isinstance(_enter_sub, dict):
+                _sub_name = str(_enter_sub.get("name", "")).strip()
+                if _sub_name:
+                    stack = state.setdefault("sub_scene_stack", [])
+                    if state.get("story", {}).get("current_location") != _sub_name:
+                        stack.append({
+                            "location": state["story"].get("current_location", ""),
+                            "scene_description": state["story"].get("scene_description", ""),
+                        })
+                        state["story"]["current_location"] = _sub_name
+                        _sub_desc = str(_enter_sub.get("scene_description", "")).strip()
+                        state["story"]["scene_description"] = _sub_desc or _sub_name
+                        print(f"[DeathMode] 子场景进入：{_sub_name}")
+            elif _exit_sub:
+                stack = state.get("sub_scene_stack", [])
+                if stack:
+                    _prev = stack.pop()
+                    state["story"]["current_location"] = _prev.get("location") or state["story"].get("current_location", "")
+                    state["story"]["scene_description"] = _prev.get("scene_description") or state["story"].get("scene_description", "")
+                    print(f"[DeathMode] 子场景离开，退回：{state['story']['current_location']}")
+        except Exception as e:
+            print(f"[DeathMode] 子场景切换异常: {e}")
+
         # 4. 如果移动成功 → 在叙事后添加到达描述
         if _region_moved and _region_move_result:
             _target = _region_move_result["region"]
@@ -1348,6 +1388,36 @@ class DeathModeEngine:
         except Exception:
             pass
 
+        # 恫吓自由行动：用户明确输入"恫吓/恐吓/威慑 X" → 确定性亮威判定（当面行为，NPC 必感知）
+        try:
+            _intimidate_kw = ("恫吓", "威吓", "恐吓", "威慑", "吓唬", "威胁他", "威胁她")
+            if any(k in _action_lower for k in _intimidate_kw):
+                _cur_region = ""
+                try:
+                    _cur_region = str(state.get("world_map", {}).get("current_region_id", "") or "")
+                except Exception:
+                    pass
+                for _npc in (self.npc_system.npcs.values() if self.npc_system else []):
+                    if not _npc.alive or not _npc.name:
+                        continue
+                    if _cur_region and _npc.location != _cur_region:
+                        continue
+                    _npc_name_lower = _npc.name.lower()
+                    if _npc_name_lower not in _action_lower:
+                        continue
+                    _intim = self._resolve_intimidation(state, _npc)
+                    _intim_line = f"\n\n【恫吓】{_intim.get('message', '')}" \
+                                  + (f"（{_npc.name}对你已是『{_intim.get('fear_label', '')}』）" if _intim.get("success") else "")
+                    narrative += _intim_line
+                    agent_result["narrative"] = narrative
+                    self._log_action("npc_interact", {
+                        "npc_name": _npc.name, "interaction": "intimidate",
+                        "message": _intim.get("message", ""),
+                        "success": _intim.get("success"), "fear": _intim.get("fear"),
+                    })
+        except Exception:
+            pass
+
         # 叙事中提到的敌人 → 保存到 state，战斗时优先使用
         # 只过滤已击败的特殊敌人（elite/boss），小怪允许重复出现
         # 名字规范化：去连字符、统一空格，防止同一敌人因变体名（Crystal-Scale vs Crystal Scale）被重复生成
@@ -1355,6 +1425,16 @@ class DeathModeEngine:
             return re.sub(r'\s+', ' ', n.replace('-', ' ')).strip().lower()
 
         unique_defeated_set = set(_normalize_enemy_name(d) for d in state.get("defeated_unique_enemies", []))
+        killed_named_set = set(_normalize_enemy_name(d) for d in state.get("killed_monsters", []))
+        def _is_dead(sname):
+            """特殊敌人(elite/boss)或有名怪物(非普通小怪)已死 → 禁止再出现"""
+            _sname_l = (sname).lower()
+            _key = _normalize_enemy_name(sname)
+            if _key in unique_defeated_set:
+                return True
+            if _key in killed_named_set and not any(k in _sname_l for k in REFRESHABLE_MOB_KEYWORDS):
+                return True
+            return False
         spotted = agent_result.get("spotted_enemies")
         if spotted and isinstance(spotted, list):
             filtered = []
@@ -1363,7 +1443,7 @@ class DeathModeEngine:
                 if isinstance(s, dict):
                     sname = str(s.get("name", "")).strip()
                     normalized = _normalize_enemy_name(sname)
-                    if sname and normalized not in unique_defeated_set and normalized not in seen_normalized:
+                    if sname and not _is_dead(sname) and normalized not in seen_normalized:
                         # 统一去除连字符，保持名字一致性
                         s["name"] = sname.replace('-', ' ')
                         filtered.append(s)
@@ -1374,9 +1454,9 @@ class DeathModeEngine:
         else:
             # 兜底：LLM 可能叙事里提到了怪物但没填 spotted_enemies
             _extracted = self._extract_enemy_names_from_narrative(narrative)
-            if _extracted and unique_defeated_set:
+            if _extracted and (unique_defeated_set or killed_named_set):
                 _extracted = [s for s in _extracted
-                              if _normalize_enemy_name(str(s.get("name", "")).strip()) not in unique_defeated_set]
+                              if not _is_dead(str(s.get("name", "")).strip())]
             state["spotted_enemies"] = _extracted
 
         # 未解决的剧情钩子 → 累积保存（最多 4 个）
@@ -1954,6 +2034,21 @@ class DeathModeEngine:
         except Exception:
             pass
 
+        # 世界模拟引擎自转：冲突弧/承诺待办按天自动推进（纯数据，不阻塞叙事）
+        try:
+            _sim_events = WorldSimulation.tick_by_day(state)
+            if _sim_events:
+                _sim_msgs = []
+                for _ev in _sim_events:
+                    if _ev.get("type") == "gate":
+                        _sim_msgs.append(f"【世界暗流】{_ev.get('arc', '')}：{_ev.get('title', '')}")
+                    elif _ev.get("type") == "commitment_done":
+                        _sim_msgs.append(f"{_ev.get('npc', '')} 兑现了承诺：{_ev.get('task', '')}")
+                if _sim_msgs:
+                    result["world_sim_events"] = _sim_msgs
+        except Exception as _sim_e:
+            print(f"[DeathMode] 世界模拟自转异常: {_sim_e}")
+
         # ── 隐藏结局进度检查 ──
         try:
             ending_data = state.get("hidden_ending")
@@ -2189,21 +2284,67 @@ class DeathModeEngine:
         self._save()
 
     @staticmethod
+    def _monster_name_key(name: str) -> str:
+        """怪物名字规范化（去连字符、统一空格、转小写）"""
+        return re.sub(r'\s+', ' ', (name or '').replace('-', ' ')).strip().lower()
+
+    @staticmethod
+    def _is_refreshable_mob(enemy: Dict) -> bool:
+        """是否为可刷新的普通小怪：命中关键词且非特殊敌人(精英/BOSS)。
+        特殊敌人永远不刷新（区容 boss 等），普通小怪死后可重新刷出。"""
+        from simlife.backend.enemy_agent import EnemyAgent
+        if EnemyAgent.is_unique_enemy(enemy):
+            return False
+        _name = (enemy.get("name") or "").lower()
+        return any(k in _name for k in REFRESHABLE_MOB_KEYWORDS)
+
+    @staticmethod
     def _record_defeated(state: Dict, enemies: list):
-        """记录已击败的敌人：小怪不屏蔽（允许重复），特殊敌人（elite/boss）永久屏蔽"""
+        """记录已击败的敌人。
+        1) 特殊敌人(elite/boss)：永久屏蔽（原有逻辑）；
+        2) 有名有姓的怪物（非普通小怪）：永久登记击杀名单 + 分地区计数，
+           死后不再生成，实现「地区怪物总量控制」。普通小怪允许刷新。
+        """
         from simlife.backend.enemy_agent import EnemyAgent
         unique_list = state.setdefault("defeated_unique_enemies", [])
+        killed = state.setdefault("killed_monsters", [])          # 全局击杀名单（有名怪物）
+        region_key = str(state.get("world_map", {}).get("current_region_id")
+                         or state.get("story", {}).get("current_location", ""))
+        region_killed = state.setdefault("region_killed_monsters", {})
+        r_list = region_killed.setdefault(region_key, [])          # 分地区清单
+        _unique_hits = 0                                          # 本次合战击杀的特殊/BOSS数量
         for e in enemies:
             _name = e.get("name", "")
-            _etype = e.get("type", "normal")
             if not _name:
                 continue
-            # 规范化名字（去连字符），保持与 spotted_enemies 处理一致
-            _name_normalized = re.sub(r'\s+', ' ', _name.replace('-', ' ')).strip()
-            # 只有特殊敌人（elite/boss）加入永久屏蔽列表
-            if EnemyAgent.is_unique_enemy(e) and _name_normalized not in unique_list:
-                unique_list.append(_name_normalized)
+            _key = DeathModeEngine._monster_name_key(_name)
+            # A. 特殊敌人(elite/boss)加入永久屏蔽
+            if EnemyAgent.is_unique_enemy(e) and _key not in unique_list:
+                unique_list.append(_key)
+                _unique_hits += 1
+            # B. 有名怪物（非普通小怪）→ 永久击杀登记，普通小怪不入此列
+            if not DeathModeEngine._is_refreshable_mob(e):
+                if _key not in killed:
+                    killed.append(_key)
+                if _key not in r_list:
+                    r_list.append(_key)
+        # 击杀名单全局保留（不截断，防止跨区"复活"同名怪物）
         state["defeated_unique_enemies"] = unique_list[-50:]  # 保留最近50个特殊敌人
+
+        # 世界模拟引擎·因果结算：击杀大敌(特殊/boss) → 抵消正在崩坏的暗流（可测量影响力）
+        if _unique_hits > 0:
+            try:
+                from simlife.backend.world_simulation import WorldSimulation
+                _declining = [
+                    {"arc": _aid, "delta": min(_unique_hits, 3) * 2.0,
+                     "note": "击杀大敌，暂缓暗流"}
+                    for _aid, _arc in state.get("world_sim", {}).get("arcs", {}).items()
+                    if float(_arc.get("tick_rate", 0)) < 0
+                ]
+                if _declining:
+                    WorldSimulation.apply_influence(state, _declining, by="战斗")
+            except Exception:
+                pass
 
     def _record_npc_kills(self, state: Dict, defeated_enemy_names: list, killer: str = "未知"):
         """战斗胜利后，检查被击败的敌人是否匹配NPC，如果是则记录NPC死亡。
@@ -2623,8 +2764,12 @@ class DeathModeEngine:
                     continue
                 # 特殊敌人已被击败 → 跳过（永久屏蔽）
                 from simlife.backend.enemy_agent import EnemyAgent
-                if EnemyAgent.is_already_defeated(state, name):
-                    print(f"[DeathMode] 跳过已击败的特殊敌人: {name}")
+                _spot_key = DeathModeEngine._monster_name_key(name)
+                # 有名怪物（非普通小怪）已在击杀名单 → 禁止再生成
+                _named_dead = _spot_key in state.setdefault("killed_monsters", []) and \
+                              not any(k in name.lower() for k in REFRESHABLE_MOB_KEYWORDS)
+                if EnemyAgent.is_already_defeated(state, name) or _named_dead:
+                    print(f"[DeathMode] 跳过已击败的怪物: {name}")
                     continue
                 count = min(count, 5)  # 上限防止过载
                 # 等级和类型按 risk_level + 数量决定
@@ -2770,7 +2915,17 @@ class DeathModeEngine:
 
             # 如果区域文件有完整怪物数据，优先使用
             if region_monsters:
-                chosen = random.choice(region_monsters)
+                # 过滤已死的名怪：有名怪物(非普通小怪)不能重生，普通小怪可刷新
+                _alive_pool = region_monsters
+                try:
+                    _killed_set = set(state.get("killed_monsters", []))
+                    _alive_pool = [m for m in region_monsters if
+                                   DeathModeEngine._monster_name_key(str(m.get("name", ""))) not in _killed_set
+                                   or any(k in str(m.get("name", "")).lower() for k in REFRESHABLE_MOB_KEYWORDS)]
+                    _alive_pool = _alive_pool or region_monsters  # 全被击杀则回退原列表（彻底清空该区怪物）
+                except Exception:
+                    pass
+                chosen = random.choice(_alive_pool)
                 enemy["name"] = chosen.get("name", enemy.get("name", "怪物"))
                 # 应用区域怪物的战斗数据（如果有）
                 if chosen.get("level"):
@@ -2803,6 +2958,42 @@ class DeathModeEngine:
 
         return enemies
 
+    def _apply_life_buffs(self, state: Dict, char: Dict, user_char: Dict):
+        """战斗开始前应用生活技能食物增益（攻击/防御）并递减回合数。
+        buff 由 main.py 的 eat 记录 owner（target: ai/user），这里按属主累加。
+        """
+        try:
+            ls = state.get("life_state") or {}
+            buffs = list(ls.get("buffs") or [])
+            # 清空旧的临时增益，保证只反映当前生效的食物增益
+            char["temp_life_attack"] = 0
+            char["temp_life_defense"] = 0
+            if user_char:
+                user_char["temp_life_attack"] = 0
+                user_char["temp_life_defense"] = 0
+            if not buffs:
+                return
+            alive = []
+            for b in buffs:
+                try:
+                    b["turns"] = int(b.get("turns", 0)) - 1
+                except (TypeError, ValueError):
+                    b["turns"] = 0
+                if not isinstance(b, dict):
+                    continue
+                owner = user_char if (b.get("target") == "user" and user_char) else char
+                _t = b.get("type")
+                _v = int(b.get("value", 0) or 0)
+                if _t == "attack":
+                    owner["temp_life_attack"] = owner.get("temp_life_attack", 0) + _v
+                elif _t == "defense":
+                    owner["temp_life_defense"] = owner.get("temp_life_defense", 0) + _v
+                if b["turns"] > 0:
+                    alive.append(b)
+            ls["buffs"] = alive
+        except Exception as e:
+            print(f"[DeathMode] 应用食物增益异常: {e}")
+
     def _combat_round(self, state: Dict, enemies: list, ai_alone: bool = False,
                       action_text: str = "", sender: str = "user",
                       cmd_override: dict = None) -> Dict:
@@ -2818,6 +3009,8 @@ class DeathModeEngine:
 
         char = state["character"]  # AI角色
         user_char = state.get("user_character", {})  # 用户角色
+        # 战斗前应用生活技能食物增益（攻击/防御），按属主分配到AI或用户角色
+        self._apply_life_buffs(state, char, user_char)
         # 注入职业被动效果到Dict实体
         world_type = state.get("world_type", "fantasy")
         char["passive_effects"] = SkillSystem.get_passive_effects(char, world_type)
@@ -3000,22 +3193,22 @@ class DeathModeEngine:
             mp = role_char.get("mp", 0)
             for sid in learned:
                 sk = SkillSystem.get_skill(sid)
-                if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+                if sk and sk.type in ("physical", "magic", "finesse", "ranged") and sk.mp_cost <= mp:
                     atk_skill = sk
                     break
             if atk_skill:
                 skill_mult = atk_skill.effects[0].value if atk_skill.effects else 1.0
-                is_magic = atk_skill.type == "magic"
+                _atk_type = CombatSystem.skill_attack_type(atk_skill.type)
                 role_char["mp"] = mp - atk_skill.mp_cost
                 skill_name = atk_skill.name
             else:
                 skill_mult = 1.0
-                is_magic = False
+                _atk_type = "physical"
                 skill_name = ""
             # 先手攻击：敌人无防御
             preemptive_result = CombatSystem.attack(role_char, target_enemy,
                                                      defense_action=DefenseAction.NONE,
-                                                     attack_type="magic" if is_magic else "physical",
+                                                     attack_type=_atk_type,
                                                      skill_multiplier=skill_mult)
             preemptive_log.append(f"{role_char.get('name','?')}{'【'+skill_name+'】' if skill_name else ''}先手突袭{preemptive_result['description']} → {target_enemy.get('name', '?')}")
             _check_drop(target_enemy, role_char.get("stats", {}))
@@ -3064,6 +3257,7 @@ class DeathModeEngine:
                     is_magic = decision.get("is_magic", False)
                     skill_mult = decision.get("skill_mult", 1.0)
                     _pm_skill_name = ""
+                    _atk_type = "magic" if is_magic else "physical"
                     # 消耗MP
                     if decision.get("action") == "skill":
                         sk_id = decision.get("skill_id", "")
@@ -3072,8 +3266,9 @@ class DeathModeEngine:
                             pm_obj.mp -= sk.mp_cost
                             attacker["mp"] = pm_obj.mp
                             _pm_skill_name = f"【{sk.name}】"
+                            _atk_type = CombatSystem.skill_attack_type(sk.type)
                     atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
-                                                     attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
+                                                     attack_type=_atk_type, skill_multiplier=skill_mult)
                     _pm_log_prefix = f"{pm_obj.name}{_pm_skill_name}" if _pm_skill_name else f"{pm_obj.name} "
                     round_log.append(f"{_pm_log_prefix}{atk_result['description']} → {target.get('name', '?')}")
                     _check_drop(target, attacker.get("stats", {}))
@@ -3128,12 +3323,14 @@ class DeathModeEngine:
                 skill_mult = cmd.get(f"{role}_skill_mult", 1.0)
                 _used_skill_id = cmd.get(f"{role}_skill")
                 _used_skill_name = ""
+                _atk_type = "magic" if is_magic else "physical"
                 if _used_skill_id:
                     _sk_obj = SkillSystem.get_skill(_used_skill_id)
                     if _sk_obj:
                         _used_skill_name = f"【{_sk_obj.name}】"
+                        _atk_type = CombatSystem.skill_attack_type(_sk_obj.type)
                 atk_result = CombatSystem.attack(attacker, target, defense_action=_enemy_defense(target),
-                                                 attack_type="magic" if is_magic else "physical", skill_multiplier=skill_mult)
+                                                 attack_type=_atk_type, skill_multiplier=skill_mult)
                 # 战术加成
                 if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
                     atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
@@ -3163,7 +3360,9 @@ class DeathModeEngine:
                             for _ht in heal_targets:
                                 if _ht.get("hp", 0) <= 0:
                                     continue
-                                heal_amount = int(_ht.get("stats", {}).get("intelligence", 5) * 3 * _e_value)
+                                # 循环治疗加成：叠加施法者职业被动"治疗效果+X%"
+                                heal_mult = (attacker.get("passive_effects", {}) or {}).get("heal_mult", 1.0)
+                                heal_amount = int(_ht.get("stats", {}).get("intelligence", 5) * 3 * _e_value * heal_mult)
                                 max_hp = _ht.get("max_hp", 50)
                                 _ht["hp"] = min(max_hp, _ht.get("hp", 0) + heal_amount)
                                 round_log.append(f"  💚 {_ht.get('name','?')}【{_sk_obj.name}】治疗{heal_amount}HP")
@@ -5140,6 +5339,79 @@ class DeathModeEngine:
             "npcs": npcs_info,
         }
 
+    def _resolve_intimidation(self, state: Dict, npc) -> Dict:
+        """恫吓判定（确定性结算）：玩家威慑力 vs NPC 胆量。
+        成功 → 恐惧暴涨，越高恐惧越可能跪地求饶/让路；失败 → 反被讥讽，关系再降。
+        由 interact_npc 接口与自由行动两种入口共用。"""
+        import random
+        char = state.get("character", {}) or {}
+        stats = char.get("stats", {}) or {}
+        level = int(char.get("level", 1) or 1)
+        strength = float(stats.get("strength", 5) or 5)
+        intelligence = float(stats.get("intelligence", 5) or 5)
+        agility = float(stats.get("agility", 5) or 5)
+        luck = float(stats.get("luck", 5) or 5)
+
+        # 玩家威慑力 = 等级*4 + 看家属性(力量/智力/敏捷取最高)*1.2 + 运气*0.5
+        # 取最高：力量系(战士/剑客)靠蛮力，智力系(法师/魂修)靠威压，敏捷系(盗贼/弓箭手/刺客)靠"能无声取你性命"的威胁
+        _best_stat = max(strength, intelligence, agility)
+        threat = level * 4 + _best_stat * 1.2 + luck * 0.5
+
+        # 威慑方式按看家属性区分（力量系逼近压制 / 智力系无形威压 / 敏捷系无声杀机）
+        if strength >= intelligence and strength >= agility:
+            _flavor = "你步步逼近，周身煞气逼人，沉重的压迫感扑面而来"
+        elif intelligence >= strength and intelligence >= agility:
+            _flavor = "你目光幽深冷冽，无形的威压如远古深渊般罩下"
+        else:
+            _flavor = "你无声无息地贴近，指尖寒光一闪，杀意已锁死他身上要害"
+
+        # NPC 胆量（已有恐惧越大越易怂；胆大性格与硬派身份更坚韧）
+        resolute_keys = ("沉稳", "坚定", "冷酷", "严肃", "严厉", "固执", "正义", "果断",
+                         "冷漠", "睿智", "超然", "胆大", "正直", "硬气", "刚烈")
+        timid_keys = ("胆小", "懦弱", "怯懦", "惊恐", "紧张", "猥琐", "圆滑", "市侩",
+                      "畏缩", "心虚", "怕事", "怕死")
+        resolve = npc.level * 2 + 30
+        resolve -= npc.fear * 0.25
+        if any(k in (npc.personality or "") for k in resolute_keys):
+            resolve += 12
+        if any(k in (npc.personality or "") for k in timid_keys):
+            resolve -= 15
+        if npc.role in ("守卫", "护卫", "领袖", "长老", "剑客", "将军", "镖师", "舰长",
+                        "教官", "侠客", "隐世高手", "掌门"):
+            resolve += 8
+
+        roll = threat + random.uniform(0, 22)
+        success = roll > resolve
+
+        # 结算恐惧与关系
+        fear_gain = 16 + random.randint(0, 18) if success else 5
+        rel_change = -8 if success else -12
+        npc.change_fear(fear_gain)
+        npc.change_relationship(rel_change)
+        new_fear = npc.fear
+
+        # 结果行为（高恐惧 → 爽文出口：跪地求饶 / 让路 / 服软）
+        if success:
+            if new_fear >= 85:
+                word = (f"{npc.name}「扑通」一声跪倒在地，浑身筛糠般发抖，连声磕头："
+                        f"「大…大人饶命！小的什么都听您的！求您高抬贵手！」眼泪鼻涕糊了一脸。")
+            elif new_fear >= 65:
+                word = (f"{npc.name}脸色煞白，本能地往后缩，声音都抖了："
+                        f"「别、别杀我…我这就让开，您要什么都可以商量…」") 
+            elif new_fear >= 45:
+                word = (f"{npc.name}瞳孔一缩，强装镇定却止不住发抖，声音发飘："
+                        f"「你、你究竟想怎样…我劝你冷静点。」脚已经悄悄往后挪了一步。")
+            else:
+                word = f"{npc.name}被你一瞪，下意识退后半步，微微避开你的目光，不敢再吭声。"
+        else:
+            word = (f"{npc.name}先是一愣，随即冷笑一声，面不改色："
+                    f"「就这点本事也想吓住我？省省吧。」反把你呛了个没趣。")
+
+        return {"success": success, "npc_name": npc.name, "type": "intimidate",
+                "fear": npc.fear, "fear_label": npc.get_fear_label(),
+                "relationship": npc.relationship,
+                "message": (f"{_flavor}。" + word) if success else word}
+
     def interact_npc(self, npc_name: str, interaction_type: str = "talk") -> Dict:
         """与NPC交互"""
         state = self._load()
@@ -5161,6 +5433,25 @@ class DeathModeEngine:
         # 检查是否在同一区域
         if self.world_map and npc.location != self.world_map.current_region_id:
             return {"error": "not_same_location", "message": f"{npc_name}不在这里"}
+
+        # 敌对后果：关系为敌对/死敌时，拒绝对话/交易/求助，只可攻击或消除敌意
+        if npc.relationship <= -50 and interaction_type in ("talk", "quest", "trade"):
+            return {"success": False, "npc_name": npc.name, "type": interaction_type,
+                    "message": f"{npc.name}冷冷盯着你，把手按在武器上：「少来套近乎，我不愿待见你。」",
+                    "hostile": True, "relationship": npc.relationship}
+
+        # 恫吓：确定性判定（威慑 vs 胆量），当面亮威，NPC 必然感知
+        if interaction_type == "intimidate":
+            result = self._resolve_intimidation(state, npc)
+            self._save()
+            # 记录交互日志
+            if result.get("success"):
+                self._log_action("npc_interact", {
+                    "npc_name": npc_name, "interaction": "intimidate",
+                    "message": result.get("message", ""),
+                })
+                self._save()
+            return result
 
         result = self.npc_system.interact(npc.npc_id, interaction_type)
         self._save()

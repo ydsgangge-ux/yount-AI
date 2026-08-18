@@ -288,14 +288,14 @@ SKILL_DATABASE = {
         ],
         "rogue": [
             # 1级
-            {"id": "rog_backstab", "name": "偷袭", "type": "physical", "mp_cost": 6,
-             "effects": _s("physical", 1.5), "req_level": 1, "description": "从暗处偷袭，造成额外伤害"},
+            {"id": "rog_backstab", "name": "偷袭", "type": "finesse", "mp_cost": 6,
+             "effects": _s("finesse", 1.5), "req_level": 1, "description": "从暗处偷袭，造成额外伤害"},
             {"id": "rog_dodge", "name": "闪避", "type": "buff", "mp_cost": 8,
              "effects": [{"type": "buff_stat", "target": "self", "value": 8, "duration": 2, "stat": "agility"}],
              "req_level": 1, "description": "进入闪避姿态，大幅提升敏捷"},
             # 3级
-            {"id": "rog_poison_blade", "name": "毒刃", "type": "physical", "mp_cost": 10,
-             "effects": _s("physical", 1.1) + [{"type": "dot", "target": "single_enemy", "value": 0.3, "duration": 3}],
+            {"id": "rog_poison_blade", "name": "毒刃", "type": "finesse", "mp_cost": 10,
+             "effects": _s("finesse", 1.1) + [{"type": "dot", "target": "single_enemy", "value": 0.3, "duration": 3}],
              "req_level": 3, "description": "淬毒攻击，造成持续中毒伤害"},
             # 5级
             {"id": "rog_shadow_clone", "name": "影分身", "type": "utility", "mp_cost": 20,
@@ -303,7 +303,7 @@ SKILL_DATABASE = {
                          {"type": "buff_stat", "target": "self", "value": -3, "duration": 3, "stat": "strength"}],
              "req_level": 5, "cooldown": 3, "description": "制造影分身，敏捷大幅提升"},
             # 7级
-            {"id": "rog_assassinate", "name": "暗杀", "type": "physical", "mp_cost": 25,
+            {"id": "rog_assassinate", "name": "暗杀", "type": "finesse", "mp_cost": 25,
              "effects": [{"type": "execute", "target": "single_enemy", "value": 2.8}],
              "req_level": 7, "req_stats": {"agility": 16}, "cooldown": 2,
              "description": "对低血量敌人的致命刺杀"},
@@ -317,13 +317,13 @@ SKILL_DATABASE = {
              "effects": [{"type": "counter", "target": "self", "value": 2.0, "duration": 2}],
              "req_level": 10, "cooldown": 4, "description": "进入潜行状态，下一次攻击伤害翻倍"},
             # 12级
-            {"id": "rog_bleed", "name": "割喉", "type": "physical", "mp_cost": 18,
-             "effects": _s("physical", 1.4) + [{"type": "dot", "target": "single_enemy", "value": 0.5, "duration": 2}],
+            {"id": "rog_bleed", "name": "割喉", "type": "finesse", "mp_cost": 18,
+             "effects": _s("finesse", 1.4) + [{"type": "dot", "target": "single_enemy", "value": 0.5, "duration": 2}],
              "req_level": 12, "req_stats": {"agility": 20}, "cooldown": 1,
              "description": "割喉攻击，造成大量流血"},
             # 15级
-            {"id": "rog_blade_flurry", "name": "剑刃乱舞", "type": "physical", "mp_cost": 25,
-             "effects": _s("physical", 1.5, "all_enemies") + [{"type": "life_steal", "target": "self", "value": 0.2}],
+            {"id": "rog_blade_flurry", "name": "剑刃乱舞", "type": "finesse", "mp_cost": 25,
+             "effects": _s("finesse", 1.5, "all_enemies") + [{"type": "life_steal", "target": "self", "value": 0.2}],
              "req_level": 15, "req_stats": {"agility": 24}, "cooldown": 3,
              "description": "快速挥舞武器攻击所有敌人并吸血"},
             # 20级
@@ -1295,7 +1295,7 @@ class SkillSystem:
             return False, "技能名称不能为空"
 
         skill_type = skill_data.get("type", "physical")
-        if skill_type not in ("physical", "magic", "heal", "buff", "utility"):
+        if skill_type not in ("physical", "magic", "heal", "buff", "utility", "finesse", "ranged"):
             return False, "无效的技能类型"
 
         effects = skill_data.get("effects", [])
@@ -1444,10 +1444,11 @@ class SkillSystem:
                     result["log"].append(f"恢复{t.get('name','?')}{mp_recover}MP")
                     total_heal += mp_recover
                 else:
-                    # HP治疗：基于目标max_hp百分比 + 智力加成
+                    # HP治疗：基于目标max_hp百分比 + 智力加成，叠加施法者职业被动"治疗效果+X%"
                     max_hp = t.get("max_hp", 50)
                     heal_stat = caster.get("stats", {}).get("intelligence", 5)
-                    heal_amount = int(max_hp * effect.value * (1 + heal_stat * 0.02))
+                    heal_mult = (caster.get("passive_effects", {}) or {}).get("heal_mult", 1.0)
+                    heal_amount = int(max_hp * effect.value * (1 + heal_stat * 0.02) * heal_mult)
                     t["hp"] = min(max_hp, t.get("hp", 0) + heal_amount)
                     total_heal += heal_amount
                     result["log"].append(f"治疗{t.get('name','?')}{heal_amount}点HP")

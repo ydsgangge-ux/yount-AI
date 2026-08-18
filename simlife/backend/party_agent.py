@@ -151,7 +151,7 @@ class PartyAgent:
         usable_skills = []
         for sid in member.skills:
             sk = SkillSystem.get_skill(sid)
-            if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+            if sk and sk.type in ("physical", "magic", "finesse", "ranged") and sk.mp_cost <= mp:
                 dmg_mult = sk.effects[0].value if sk.effects else 1.0
                 usable_skills.append((sk, dmg_mult))
 
@@ -212,7 +212,7 @@ class PartyAgent:
         usable = []
         for sid in member.skills:
             sk = SkillSystem.get_skill(sid)
-            if sk and sk.type in ("physical", "magic") and sk.mp_cost <= mp:
+            if sk and sk.type in ("physical", "magic", "finesse", "ranged") and sk.mp_cost <= mp:
                 usable.append(sk)
 
         if not usable:
