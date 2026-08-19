@@ -87,7 +87,7 @@ class OpenAICompatClient:
 
 # ── DeepSeek（V4 默认开启思考）─────────────────────────────────────────
 class DeepSeekClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "deepseek-chat"):
+    def __init__(self, api_key: str, model: str = "deepseek-v4-pro"):
         super().__init__(api_key,
                          "https://api.deepseek.com/v1",
                          model)
@@ -103,7 +103,7 @@ class DeepSeekClient(OpenAICompatClient):
 
 # ── OpenAI（o-series 支持 reasoning_effort）───────────────────────────
 class OpenAIClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str, model: str = "gpt-5.6-terra"):
         super().__init__(api_key,
                          "https://api.openai.com/v1",
                          model)
@@ -114,9 +114,24 @@ class OpenAIClient(OpenAICompatClient):
         return {}
 
 
+# ── 小米 MiMo（OpenAI 兼容协议，思考模式同 DeepSeek 风格）────────────
+class MimoClient(OpenAICompatClient):
+    def __init__(self, api_key: str, model: str = "mimo-v2.5"):
+        super().__init__(api_key,
+                         "https://api.xiaomimimo.com/v1",
+                         model)
+
+    def _build_thinking_params(self, thinking, thinking_effort, thinking_budget):
+        if thinking is False:
+            return {"thinking": {"type": "disabled"}}
+        if thinking is True:
+            return {"thinking": {"type": "enabled"}}
+        return {}  # None = 跟随模型默认
+
+
 # ── Groq（免费额度充足，速度极快，无思考模式）─────────────────────────
 class GroqClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, api_key: str, model: str = "gpt-oss-120b"):
         super().__init__(api_key,
                          "https://api.groq.com/openai/v1",
                          model)
@@ -124,7 +139,7 @@ class GroqClient(OpenAICompatClient):
 
 # ── 通义千问 (Qwen / 阿里云 DashScope) ────────────────────────────────
 class QwenClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "qwen-plus"):
+    def __init__(self, api_key: str, model: str = "qwen3.8-max"):
         super().__init__(api_key,
                          "https://dashscope.aliyuncs.com/compatible-mode/v1",
                          model)
@@ -140,7 +155,7 @@ class QwenClient(OpenAICompatClient):
 
 # ── 智谱 GLM (ZhipuAI) ───────────────────────────────────────────────
 class ZhipuClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "glm-4-flash"):
+    def __init__(self, api_key: str, model: str = "glm-5.2"):
         super().__init__(api_key,
                          "https://open.bigmodel.cn/api/paas/v4",
                          model)
@@ -156,7 +171,7 @@ class ZhipuClient(OpenAICompatClient):
 
 # ── 豆包 (Doubao / 字节跳动 火山引擎) ─────────────────────────────────
 class DoubaoClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "doubao-pro-32k"):
+    def __init__(self, api_key: str, model: str = "doubao-seed-2-0-pro-260215"):
         super().__init__(api_key,
                          "https://ark.cn-beijing.volces.com/api/v3",
                          model)
@@ -171,7 +186,7 @@ class DoubaoClient(OpenAICompatClient):
 
 # ── Kimi (Moonshot / 月之暗面) ────────────────────────────────────────
 class KimiClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "moonshot-v1-8k"):
+    def __init__(self, api_key: str, model: str = "kimi-k3"):
         super().__init__(api_key,
                          "https://api.moonshot.cn/v1",
                          model)
@@ -186,7 +201,7 @@ class KimiClient(OpenAICompatClient):
 
 # ── 文心一言 (Baidu ERNIE) ─────────────────────────────────────────────
 class BaiduClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "ernie-speed-128k"):
+    def __init__(self, api_key: str, model: str = "ernie-5.1"):
         super().__init__(api_key,
                          "https://qianfan.baidubce.com/v2",
                          model)
@@ -194,7 +209,7 @@ class BaiduClient(OpenAICompatClient):
 
 # ── 讯飞星火 (SparkDesk) ─────────────────────────────────────────────
 class SparkClient(OpenAICompatClient):
-    def __init__(self, api_key: str, model: str = "generalv3.5"):
+    def __init__(self, api_key: str, model: str = "spark-x"):
         super().__init__(api_key,
                          "https://spark-api-open.xf-yun.com/v1",
                          model)
@@ -204,7 +219,7 @@ class SparkClient(OpenAICompatClient):
 class ClaudeClient:
     BASE_URL = "https://api.anthropic.com/v1/messages"
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-haiku-20241022"):
+    def __init__(self, api_key: str, model: str = "claude-opus-5"):
         self.api_key = api_key
         self.model   = model
 
@@ -270,7 +285,7 @@ class ClaudeClient:
 class GeminiClient:
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.7-flash"):
         self.api_key = api_key
         self.model   = model
 
@@ -416,7 +431,7 @@ class MockClient:
             }, ensure_ascii=False)
         return ("(Mock mode) Please configure an API key in Settings.\n"
                 "Supported: DeepSeek / OpenAI / Claude / Gemini / Groq / "
-                "Qwen / Zhipu / Doubao / Kimi / Baidu / SparkDesk / Ollama")
+                "Qwen / Zhipu / Doubao / Kimi / Baidu / SparkDesk / MiMo / Ollama")
 
 
 # ── 工厂函数 ─────────────────────────────────────────────────────────
@@ -424,88 +439,109 @@ PROVIDER_INFO = {
     "deepseek": {
         "name": "DeepSeek",
         "url":  "https://platform.deepseek.com",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
-        "default_model": "deepseek-chat",
+        # V4 全系列（2026-08 正式版）；1M 上下文，思考档位 low/high/max
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "default_model": "deepseek-v4-pro",
         "thinking_capable": True,
     },
     "openai": {
         "name": "OpenAI",
         "url":  "https://platform.openai.com",
-        "models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo",
-                   "o3-mini", "o4-mini"],
-        "default_model": "gpt-4o-mini",
+        # GPT-5.6 系列（2026-07 旗舰）/ GPT-5.5 / GPT-5.4 系列
+        "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+                   "gpt-5.5", "gpt-5.4-pro", "gpt-5.4",
+                   "gpt-5.4-mini", "gpt-5.4-nano"],
+        "default_model": "gpt-5.6-terra",
         "thinking_capable": True,
     },
     "claude": {
         "name": "Anthropic Claude",
         "url":  "https://console.anthropic.com",
-        "models": ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
-                   "claude-3-opus-20240229"],
-        "default_model": "claude-3-5-haiku-20241022",
+        # Claude 5 系列（2026-06/07 发布），1M 上下文；Fable5=最强 / Opus5=编程旗舰
+        "models": ["claude-fable-5", "claude-opus-5", "claude-sonnet-5",
+                   "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        "default_model": "claude-opus-5",
         "thinking_capable": True,
     },
     "gemini": {
         "name": "Google Gemini",
         "url":  "https://aistudio.google.com",
-        "models": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp",
-                   "gemini-2.5-flash-preview-05-20"],
-        "default_model": "gemini-1.5-flash",
+        # Gemini 3.x（gemini-3.7-flash 2026-08-13 上线）
+        "models": ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+                   "gemini-3.5-flash-lite", "gemini-3.1-pro"],
+        "default_model": "gemini-3.7-flash",
         "thinking_capable": True,
     },
     "groq": {
         "name": "Groq (Free tier available)",
         "url":  "https://console.groq.com",
-        "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
-                   "mixtral-8x7b-32768", "gemma2-9b-it"],
-        "default_model": "llama-3.3-70b-versatile",
+        # Groq 托管开源模型：gpt-oss-120b 为当前旗舰（llama-3.3-70b 已下线）
+        "models": ["gpt-oss-120b", "gpt-oss-20b", "llama-3-3-70b-versatile",
+                   "qwen3-32b", "gemma3-27b-it"],
+        "default_model": "gpt-oss-120b",
         "thinking_capable": False,
     },
     # ── 国产大模型 ──
     "qwen": {
         "name": "通义千问 Qwen",
         "url":  "https://dashscope.console.aliyun.com",
-        "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long",
-                   "qwen-vl-plus", "qwen-math-plus"],
-        "default_model": "qwen-plus",
+        # qwen3.8-max（2026-08-03 旗舰，2.4T/1M，原生视觉）/ 3.7 / 3.6；默认思考开
+        "models": ["qwen3.8-max", "qwen3.7-max", "qwen3.7-plus",
+                   "qwen3.7-flash", "qwen3.6-plus", "qwen3.6-flash"],
+        "default_model": "qwen3.8-max",
         "thinking_capable": True,
     },
     "zhipu": {
         "name": "智谱 GLM",
         "url":  "https://open.bigmodel.cn",
-        "models": ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4-long",
-                   "glm-4v-plus"],
-        "default_model": "glm-4-flash",
+        # GLM-5.2(2026-06 旗舰, 1M 上下文)/ GLM-5 / GLM-4.7；GLM-4.7-flash 免费
+        "models": ["glm-5.2", "glm-5", "glm-4.7", "glm-4.7-flash",
+                   "glm-4.5-air"],
+        "default_model": "glm-5.2",
         "thinking_capable": True,
     },
     "doubao": {
         "name": "豆包 Doubao",
         "url":  "https://console.volcengine.com/ark",
-        "models": ["doubao-pro-32k", "doubao-pro-128k", "doubao-lite-32k",
-                   "doubao-pro-4k"],
-        "default_model": "doubao-pro-32k",
+        # Doubao Seed 2.0（2026-02 发布，深度思考 + Agent + 多模态）
+        "models": ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215",
+                   "doubao-seed-2-0-mini-260215", "doubao-seed-1-8-251228"],
+        "default_model": "doubao-seed-2-0-pro-260215",
         "thinking_capable": True,
     },
     "kimi": {
         "name": "Kimi (Moonshot)",
         "url":  "https://platform.moonshot.cn",
-        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
-        "default_model": "moonshot-v1-8k",
+        # K3 (2026-07 开源旗舰, 2.8T/1M) / K2.7 / K2.6（kimi-k2 系列已下线）
+        "models": ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed",
+                   "kimi-k2.6"],
+        "default_model": "kimi-k3",
         "thinking_capable": True,
     },
     "baidu": {
         "name": "文心一言 Baidu",
         "url":  "https://console.bce.baidu.com/qianfan",
-        "models": ["ernie-speed-128k", "ernie-lite-8k", "ernie-4.0-8k",
-                   "ernie-4.0-turbo-8k"],
-        "default_model": "ernie-speed-128k",
-        "thinking_capable": False,
+        # ERNIE 5.x（2026 旗舰，原生全模态）
+        "models": ["ernie-5.1", "ernie-5.0", "ernie-4.5-turbo",
+                   "ernie-speed-128k"],
+        "default_model": "ernie-5.1",
+        "thinking_capable": True,
     },
     "spark": {
         "name": "讯飞星火 SparkDesk",
         "url":  "https://xinghuo.xfyun.cn",
-        "models": ["generalv3.5", "generalv3", "4.0Ultra"],
-        "default_model": "generalv3.5",
-        "thinking_capable": False,
+        # 星火深度推理 X2（spark-x，256K；思考模式 thinking 开关）；spark-lite 免费
+        "models": ["spark-x", "x1.5", "4.0Ultra", "generalv4.0", "spark-lite"],
+        "default_model": "spark-x",
+        "thinking_capable": True,
+    },
+    "mimo": {
+        "name": "小米 MiMo",
+        "url":  "https://platform.xiaomimimo.com",
+        # MiMo-V2.5（2026-04 开源，Pro 1M 上下文；v2.5 为原生全模态 Omni）
+        "models": ["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-flash"],
+        "default_model": "mimo-v2.5",
+        "thinking_capable": True,
     },
     "ollama": {
         "name": "Ollama (Local, Free)",
@@ -564,6 +600,9 @@ def create_client(api_key: str = None, provider: str = "deepseek",
     elif provider == "kimi":
         print(f"✅ Kimi configured ({effective_model})")
         return KimiClient(api_key, model=effective_model)
+    elif provider == "mimo":
+        print(f"✅ 小米 MiMo configured ({effective_model})")
+        return MimoClient(api_key, model=effective_model)
     elif provider == "baidu":
         print(f"✅ 文心一言 configured ({effective_model})")
         return BaiduClient(api_key, model=effective_model)

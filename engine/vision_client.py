@@ -23,39 +23,45 @@ from pathlib import Path
 # ── 多模态服务商信息 ──────────────────────────────────────────
 VISION_PROVIDER_INFO = {
     "openai": {
-        "name": "OpenAI (GPT-4o)",
+        "name": "OpenAI (GPT-5.6 + GPT-4o)",
         "url": "https://platform.openai.com",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-        "default_model": "gpt-4o",
+        "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-4o", "gpt-4o-mini"],
+        "default_model": "gpt-5.6-sol",
         "supports": ["image", "video_note"],
     },
     "claude": {
         "name": "Anthropic Claude (Vision)",
         "url": "https://console.anthropic.com",
-        "models": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-                   "claude-3-opus-20240229"],
-        "default_model": "claude-3-5-sonnet-20241022",
+        "models": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+        "default_model": "claude-opus-5",
         "supports": ["image"],
     },
     "gemini": {
         "name": "Google Gemini (Multimodal)",
         "url": "https://aistudio.google.com",
-        "models": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
-        "default_model": "gemini-2.0-flash",
+        "models": ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"],
+        "default_model": "gemini-3.7-flash",
         "supports": ["image", "video", "audio"],
     },
     "qwen": {
         "name": "通义千问 Qwen-VL",
         "url": "https://dashscope.console.aliyun.com",
-        "models": ["qwen-vl-plus", "qwen-vl-max"],
-        "default_model": "qwen-vl-plus",
-        "supports": ["image"],
+        "models": ["qwen3.8-max", "qwen-vl-plus", "qwen-vl-max"],
+        "default_model": "qwen3.8-max",
+        "supports": ["image", "video"],
     },
     "zhipu": {
-        "name": "智谱 GLM-4V",
+        "name": "智谱 GLM-Vision",
         "url": "https://open.bigmodel.cn",
-        "models": ["glm-4v-plus", "glm-4v"],
-        "default_model": "glm-4v-plus",
+        "models": ["glm-4.5v", "glm-4v-plus", "glm-4v"],
+        "default_model": "glm-4.5v",
+        "supports": ["image"],
+    },
+    "mimo": {
+        "name": "小米 MiMo (Vision)",
+        "url": "https://platform.xiaomimimo.com",
+        "models": ["mimo-v2.5"],
+        "default_model": "mimo-v2.5",
         "supports": ["image"],
     },
     "ollama": {
@@ -163,6 +169,9 @@ class VisionClient:
                 return self._call_openai_compat(b64_str, media_type, prompt,
                                                 max_tokens, temperature)
             elif self.provider == "zhipu":
+                return self._call_openai_compat(b64_str, media_type, prompt,
+                                                max_tokens, temperature)
+            elif self.provider == "mimo":
                 return self._call_openai_compat(b64_str, media_type, prompt,
                                                 max_tokens, temperature)
             elif self.provider == "ollama":
@@ -295,6 +304,8 @@ class VisionClient:
                 self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
             elif self.provider == "zhipu":
                 self.base_url = "https://open.bigmodel.cn/api/paas/v4"
+            elif self.provider == "mimo":
+                self.base_url = "https://api.xiaomimimo.com/v1"
 
         payload = json.dumps({
             "model": self.model,
@@ -388,7 +399,7 @@ def create_vision_client(
     if not eff_provider:
         # 自动推断：如果没有专门配 vision，看主 LLM 是否支持多模态
         main_provider = config.get("api_provider", "")
-        if main_provider in ("openai", "claude", "gemini", "qwen", "zhipu", "ollama"):
+        if main_provider in ("openai", "claude", "gemini", "qwen", "zhipu", "ollama", "mimo"):
             eff_provider = main_provider
             eff_api_key = eff_api_key or config.get("api_key", "")
             if main_provider == "ollama":
@@ -439,7 +450,7 @@ def check_vision_available(config: dict = None) -> Dict:
     # 没有专门配置 vision
     if not eff_provider:
         main_provider = config.get("api_provider", "")
-        if main_provider in ("openai", "claude", "gemini", "qwen", "zhipu", "ollama"):
+        if main_provider in ("openai", "claude", "gemini", "qwen", "zhipu", "ollama", "mimo"):
             info = VISION_PROVIDER_INFO.get(main_provider, {})
             return {
                 "available": bool(config.get("api_key") or main_provider == "ollama"),

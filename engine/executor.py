@@ -331,13 +331,13 @@ class BLayerExecutor:
             OllamaClient, DeepSeekClient, OpenAIClient, GroqClient,
             ClaudeClient, GeminiClient,
             QwenClient, ZhipuClient, DoubaoClient, KimiClient,
-            BaiduClient, SparkClient,
+            BaiduClient, SparkClient, MimoClient,
         )
         # OpenAI 兼容格式（DeepSeek / OpenAI / Groq / 国产大模型）
         _openai_compat = (
             DeepSeekClient, OpenAIClient, GroqClient,
             QwenClient, ZhipuClient, DoubaoClient, KimiClient,
-            BaiduClient, SparkClient,
+            BaiduClient, SparkClient, MimoClient,
         )
         if isinstance(self.llm, _openai_compat):
             return self._call_openai_tools(messages, system, tools, max_tokens)
