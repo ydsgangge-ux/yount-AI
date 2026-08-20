@@ -2116,8 +2116,8 @@ class ConsciousnessAgent:
             recent_context=recent_context,
             current_time=datetime.now().strftime("%Y年%m月%d日 %H:%M")
         )
-        raw = self.b.generate(prompt, max_tokens=800, temperature=0.5,
-                             thinking=self._should_think(thinking_mode, complexity, task_type))
+        raw = self.b.generate(prompt, max_tokens=1500, temperature=0.5,
+                             thinking=False)
         return self._parse_json(raw, {
             "inner_reasoning":  "需要认真考虑",
             "response_intent":  "给出真实的回应",
