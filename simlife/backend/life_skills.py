@@ -34,13 +34,23 @@ RAW_MATERIALS: List[Dict] = [
     {"id": "salt", "name": "盐", "type": "ingredient", "price": 2, "icon": "🧂"},
     {"id": "honey", "name": "蜂蜜", "type": "ingredient", "price": 7, "icon": "🍯"},
     {"id": "fruit", "name": "水果", "type": "ingredient", "price": 5, "icon": "🍎"},
-    # ── 锻造材料 ──
-    {"id": "iron_ore", "name": "铁矿石", "type": "ore", "price": 10, "icon": "⛏"},
-    {"id": "copper_ore", "name": "铜矿石", "type": "ore", "price": 7, "icon": "⛏"},
-    {"id": "silver_ore", "name": "银矿石", "type": "ore", "price": 15, "icon": "⛏"},
-    {"id": "gold_ore", "name": "金矿石", "type": "ore", "price": 20, "icon": "⛏"},
-    {"id": "coal", "name": "煤炭", "type": "ore", "price": 5, "icon": "🪨"},
-    {"id": "mithril", "name": "秘银", "type": "ore", "price": 40, "icon": "✨"},
+    # ── 锻造材料（分层矿脉：随生活等级/区域逐步解锁，参考魔兽世界矿系） ──
+    # 层级：铜(1)→锡(1)→铁(2)→银(3)→金(3)→秘银(4)→真银(4)→瑟银(5)→钴(5)
+    #       →精金(6)→黑曜石(6)→源质(7)→恒金(8)
+    {"id": "copper_ore", "name": "铜矿石", "type": "ore", "price": 7, "tier": 1, "icon": "⛏"},
+    {"id": "tin_ore", "name": "锡矿石", "type": "ore", "price": 8, "tier": 1, "icon": "⛏"},
+    {"id": "iron_ore", "name": "铁矿石", "type": "ore", "price": 10, "tier": 2, "icon": "⛏"},
+    {"id": "silver_ore", "name": "银矿石", "type": "ore", "price": 15, "tier": 3, "icon": "⛏"},
+    {"id": "gold_ore", "name": "金矿石", "type": "ore", "price": 20, "tier": 3, "icon": "⛏"},
+    {"id": "mithril", "name": "秘银", "type": "ore", "price": 40, "tier": 4, "icon": "✨"},
+    {"id": "truesilver", "name": "真银矿石", "type": "ore", "price": 48, "tier": 4, "icon": "🌫️"},
+    {"id": "thorium_ore", "name": "瑟银矿石", "type": "ore", "price": 55, "tier": 5, "icon": "🪨"},
+    {"id": "cobalt_ore", "name": "钴矿石", "type": "ore", "price": 62, "tier": 5, "icon": "💎"},
+    {"id": "adamantite", "name": "精金矿石", "type": "ore", "price": 80, "tier": 6, "icon": "💠"},
+    {"id": "obsidian_ore", "name": "黑曜石", "type": "ore", "price": 95, "tier": 6, "icon": "🌑"},
+    {"id": "elementium", "name": "源质矿石", "type": "ore", "price": 120, "tier": 7, "icon": "🔷"},
+    {"id": "khorium", "name": "恒金矿石", "type": "ore", "price": 150, "tier": 8, "icon": "🌟"},
+    {"id": "coal", "name": "煤炭", "type": "ore", "price": 5, "tier": 1, "icon": "🪨"},
     {"id": "leather", "name": "皮革", "type": "misc", "price": 8, "icon": "👜"},
     {"id": "wood", "name": "木材", "type": "misc", "price": 4, "icon": "🪵"},
     {"id": "string", "name": "丝线", "type": "misc", "price": 3, "icon": "🧵"},
@@ -48,13 +58,43 @@ RAW_MATERIALS: List[Dict] = [
     {"id": "worm", "name": "蚯蚓", "type": "bait", "price": 2, "icon": "🪱"},
     {"id": "bait", "name": "高级鱼饵", "type": "bait", "price": 8, "icon": "🎣"},
     # ── 附魔材料（锻造附魔工序专用，探索/战斗掉落，商店限级购买） ──
-    {"id": "magic_stone", "name": "魔法石", "type": "enchant", "price": 25, "icon": "🔮"},
-    {"id": "life_petal", "name": "生命花瓣", "type": "enchant", "price": 28, "icon": "🌸"},
-    {"id": "fire_rune", "name": "火焰符文", "type": "enchant", "price": 30, "icon": "🔥"},
-    {"id": "frost_rune", "name": "寒冰符文", "type": "enchant", "price": 30, "icon": "❄️"},
-    {"id": "storm_rune", "name": "雷霆符文", "type": "enchant", "price": 35, "icon": "⚡"},
-    {"id": "soul_crystal", "name": "灵魂水晶", "type": "enchant", "price": 60, "icon": "💎"},
-    {"id": "dragon_scale", "name": "龙鳞", "type": "enchant", "price": 80, "icon": "🐉"},
+    # 每种材料自带特效词缀(effect)：附魔时决定特殊机制，而非仅加数值
+    # strength: 特效强度系数（供战斗系统缩放）；chance: 触发概率
+    {"id": "magic_stone", "name": "魔法石", "type": "enchant", "price": 25, "icon": "🔮",
+     "effect": {"type": "crit", "name": "幸运术", "desc": "暴击率提高8%", "strength": 0.08}},
+    {"id": "life_petal", "name": "生命花瓣", "type": "enchant", "price": 28, "icon": "🌸",
+     "effect": {"type": "vampiric", "name": "吸血", "desc": "攻击时吸取伤害25%回复HP", "strength": 0.25}},
+    {"id": "fire_rune", "name": "火焰符文", "type": "enchant", "price": 30, "icon": "🔥",
+     "effect": {"type": "burn", "name": "灼烧", "desc": "命中后35%附加持续灼烧伤害", "chance": 0.35, "strength": 0.6, "duration": 3}},
+    {"id": "frost_rune", "name": "寒冰符文", "type": "enchant", "price": 30, "icon": "❄️",
+     "effect": {"type": "freeze", "name": "冰封", "desc": "命中后25%冻结敌人1回合", "chance": 0.25, "strength": 1, "duration": 1}},
+    {"id": "storm_rune", "name": "雷霆符文", "type": "enchant", "price": 35, "icon": "⚡",
+     "effect": {"type": "splash", "name": "雷击", "desc": "攻击时30%对另一敌人溅射60%伤害", "chance": 0.30, "strength": 0.6}},
+    {"id": "soul_crystal", "name": "灵魂水晶", "type": "enchant", "price": 60, "icon": "💎",
+     "effect": {"type": "thorns", "name": "荆棘", "desc": "受近战攻击时反弹30%伤害", "strength": 0.3}},
+    {"id": "dragon_scale", "name": "龙鳞", "type": "enchant", "price": 80, "icon": "🐉",
+     "effect": {"type": "wrath", "name": "狂怒", "desc": "暴击时造成额外50%爆发伤害", "strength": 0.5}},
+    {"id": "poison_sac", "name": "剧毒之囊", "type": "enchant", "price": 45, "icon": "☠️",
+     "effect": {"type": "poison", "name": "剧毒", "desc": "命中后40%附加中毒持续伤害", "chance": 0.40, "strength": 0.5, "duration": 3}},
+    {"id": "time_sand", "name": "时光之沙", "type": "enchant", "price": 50, "icon": "⏳",
+     "effect": {"type": "slow", "name": "迟滞", "desc": "命中后30%降低敌人闪避/敏捷", "chance": 0.30, "strength": 0.35, "duration": 3}},
+    {"id": "moon_crystal", "name": "月光结晶", "type": "enchant", "price": 55, "icon": "🌙",
+     "effect": {"type": "mana", "name": "法力共鸣", "desc": "攻击命中时回复自身少量MP", "strength": 4}},
+    # ── BOSS 专属稀有材料（仅高级怪/BOSS掉落，商店不出售） ──
+    {"id": "demon_core", "name": "恶魔之核", "type": "rare", "price": 120, "tier": 5, "icon": "😈",
+     "effect": {"type": "burn", "name": "地狱火", "desc": "强力持续灼烧，恶魔系BOSS专属", "chance": 0.5, "strength": 1.0, "duration": 3}},
+    {"id": "element_essence", "name": "元素精华", "type": "rare", "price": 130, "tier": 6, "icon": "🌀",
+     "effect": {"type": "splash", "name": "元素狂潮", "desc": "强化溅射，元素系BOSS专属", "chance": 0.5, "strength": 0.9}},
+    {"id": "void_shard", "name": "虚空碎片", "type": "rare", "price": 150, "tier": 7, "icon": "🕳️",
+     "effect": {"type": "freeze", "name": "虚空禁锢", "desc": "强化冰封，暗影/亡灵系BOSS专属", "chance": 0.45, "strength": 2, "duration": 2}},
+    {"id": "titan_alloy", "name": "泰坦合金", "type": "rare", "price": 200, "tier": 8, "icon": "⚙️",
+     "effect": {"type": "thorns", "name": "泰坦壁垒", "desc": "强化反伤，泰坦/机械系BOSS专属", "strength": 0.5}},
+    {"id": "dragon_heart", "name": "巨龙之心", "type": "rare", "price": 180, "tier": 8, "icon": "❤️‍🔥",
+     "effect": {"type": "wrath", "name": "龙威", "desc": "强化暴击爆发，龙系BOSS专属", "strength": 0.9}},
+    {"id": "beast_fang", "name": "魔兽之牙", "type": "rare", "price": 110, "tier": 5, "icon": "🦷",
+     "effect": {"type": "vampiric", "name": "噬血", "desc": "强化吸血，野兽系BOSS专属", "strength": 0.45}},
+    {"id": "ancient_wood", "name": "远古之木", "type": "rare", "price": 100, "tier": 5, "icon": "🌳",
+     "effect": {"type": "slow", "name": "古木束缚", "desc": "强化迟滞，植物系BOSS专属", "chance": 0.5, "strength": 0.6, "duration": 3}},
 ]
 
 
@@ -231,6 +271,40 @@ FORGE_BLUEPRINTS: List[Dict] = [
     {"id": "forge_line3", "name": "氟碳钓线", "icon": "🧵", "level": 4, "materials": [["string", 4], ["mithril", 1], ["silver_ore", 1]],
      "steps": ["选材", "锻打", "淬火", "成型"],
      "fishing_gear": {"slot": "line", "gear_id": "line3"}},
+    # ── 高级武器/防具（使用高级矿种 + BOSS稀有材料，自带特效） ──
+    # result.effect: 锻造自带特效（战斗中触发），此类装备不可再附魔
+    {"id": "thorium_sword", "name": "瑟银长剑", "icon": "⚔️", "level": 5, "materials": [["thorium_ore", 3], ["truesilver", 2], ["coal", 3]],
+     "steps": ["选材", "加热", "锻打", "折叠锻打", "淬火", "回火", "成型"],
+     "result": {"name": "瑟银长剑", "type": "weapon", "icon": "⚔️", "damage_type": "physical", "bonus": 34}},
+    {"id": "cobalt_plate", "name": "钴制战甲", "icon": "🛡️", "level": 5, "materials": [["cobalt_ore", 3], ["thorium_ore", 2], ["coal", 3]],
+     "steps": ["选材", "加热", "锻打", "淬火", "回火", "成型"],
+     "result": {"name": "钴制战甲", "type": "outfit", "icon": "🛡️", "damage_type": "defense", "bonus": 30}},
+    {"id": "adamantite_greatsword", "name": "精金大剑", "icon": "🗡️", "level": 6, "materials": [["adamantite", 3], ["cobalt_ore", 2], ["coal", 3]],
+     "steps": ["选材", "加热", "锻打", "折叠锻打", "淬火", "回火", "打磨", "成型"],
+     "result": {"name": "精金大剑", "type": "weapon", "icon": "🗡️", "damage_type": "physical", "bonus": 44}},
+    {"id": "obsidian_armor", "name": "黑曜石重铠", "icon": "🛡️", "level": 6, "materials": [["obsidian_ore", 3], ["adamantite", 2], ["coal", 3]],
+     "steps": ["选材", "加热", "锻打", "淬火", "回火", "打磨", "成型"],
+     "result": {"name": "黑曜石重铠", "type": "outfit", "icon": "🛡️", "damage_type": "defense", "bonus": 40}},
+    {"id": "elementium_blade", "name": "源质之刃", "icon": "🔷", "level": 7, "materials": [["elementium", 3], ["obsidian_ore", 2], ["coal", 4]],
+     "steps": ["选材", "加热", "锻打", "折叠锻打", "淬火", "回火", "附魔淬炼", "成型"],
+     "result": {"name": "源质之刃", "type": "weapon", "icon": "🔷", "damage_type": "physical", "bonus": 56,
+                "effect": {"type": "burn", "name": "源质烈焰", "desc": "命中后概率附加灼烧", "chance": 0.4, "strength": 0.8, "duration": 3}}},
+    {"id": "khorium_warhammer", "name": "恒金战锤", "icon": "🔨", "level": 8, "materials": [["khorium", 3], ["elementium", 2], ["coal", 4]],
+     "steps": ["选材", "加热", "锻打", "折叠锻打", "淬火", "回火", "打磨", "成型"],
+     "result": {"name": "恒金战锤", "type": "weapon", "icon": "🔨", "damage_type": "physical", "bonus": 68,
+                "effect": {"type": "wrath", "name": "恒金震击", "desc": "暴击时追加爆发伤害", "strength": 0.7}}},
+    {"id": "titan_bulwark", "name": "泰坦壁垒", "icon": "⚙️", "level": 8, "materials": [["titan_alloy", 2], ["khorium", 2], ["obsidian_ore", 2]],
+     "steps": ["选材", "加热", "锻打", "淬火", "回火", "镶嵌加固", "成型"],
+     "result": {"name": "泰坦壁垒", "type": "outfit", "icon": "⚙️", "damage_type": "defense", "bonus": 62,
+                "effect": {"type": "thorns", "name": "泰坦壁垒", "desc": "受近战攻击时反弹伤害", "strength": 0.45}}},
+    {"id": "demon_cleaver", "name": "恶魔战刃", "icon": "😈", "level": 8, "materials": [["demon_core", 2], ["elementium", 2], ["coal", 4]],
+     "steps": ["选材", "锻打", "淬火", "邪能淬炼", "回火", "成型"],
+     "result": {"name": "恶魔战刃", "type": "weapon", "icon": "😈", "damage_type": "physical", "bonus": 66,
+                "effect": {"type": "burn", "name": "地狱火", "desc": "强力持续灼烧", "chance": 0.5, "strength": 1.0, "duration": 4}}},
+    {"id": "dragonheart_blade", "name": "龙心之剑", "icon": "🐲", "level": 8, "materials": [["dragon_heart", 1], ["khorium", 3], ["elementium", 2]],
+     "steps": ["选材", "加热", "锻打", "折叠锻打", "淬火", "龙血淬炼", "回火", "成型"],
+     "result": {"name": "龙心之剑", "type": "weapon", "icon": "🐲", "damage_type": "physical", "bonus": 74,
+                "effect": {"type": "wrath", "name": "龙威", "desc": "暴击时造成巨量爆发伤害", "strength": 0.9}}},
 ]
 
 
@@ -238,32 +312,35 @@ FORGE_BLUEPRINTS: List[Dict] = [
 
 def build_shop(life_level: int) -> List[Dict]:
     """构建商店商品列表：随生活技能整体等级解锁更多原材料"""
+    # 附魔材料解锁等级
+    enchant_level = {
+        "magic_stone": 2, "life_petal": 2,
+        "fire_rune": 3, "frost_rune": 3, "storm_rune": 3,
+        "poison_sac": 4, "time_sand": 4, "moon_crystal": 4,
+        "soul_crystal": 5, "dragon_scale": 5,
+    }
+    # 高级矿种解锁等级
+    ore_level = {
+        "silver_ore": 3, "gold_ore": 3,
+        "mithril": 4, "truesilver": 4,
+        "thorium_ore": 5, "cobalt_ore": 5,
+        "adamantite": 6, "obsidian_ore": 6,
+        "elementium": 7, "khorium": 8,
+    }
     shop = []
     for mat in RAW_MATERIALS:
-        # 基础材料全解锁，等级高解锁高级材料
-        if mat["id"] in ("mithril",):
-            if life_level >= 4:
-                shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                             "type": mat["type"], "price": mat["price"]})
-        elif mat["id"] in ("magic_stone", "life_petal"):
-            if life_level >= 2:
-                shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                             "type": mat["type"], "price": mat["price"]})
-        elif mat["id"] in ("fire_rune", "frost_rune", "storm_rune"):
-            if life_level >= 3:
-                shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                             "type": mat["type"], "price": mat["price"]})
-        elif mat["id"] in ("soul_crystal", "dragon_scale"):
-            if life_level >= 5:
-                shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                             "type": mat["type"], "price": mat["price"]})
-        elif mat["id"] in ("silver_ore", "gold_ore"):
-            if life_level >= 3:
-                shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                             "type": mat["type"], "price": mat["price"]})
-        else:
-            shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
-                         "type": mat["type"], "price": mat["price"]})
+        need = None
+        if mat["id"] in enchant_level:
+            need = enchant_level[mat["id"]]
+        elif mat["id"] in ore_level:
+            need = ore_level[mat["id"]]
+        if need is not None and life_level < need:
+            continue  # 未达到等级，商店不售
+        # BOSS 专属稀有材料不出售
+        if mat["type"] == "rare":
+            continue
+        shop.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
+                     "type": mat["type"], "price": mat["price"]})
     return shop
 
 
@@ -757,13 +834,56 @@ def forge_fishing_gear(ls: Dict, slot: str, gear_id: str) -> bool:
     return gear_id in owned
 
 
-def apply_enchant(item: Dict, stat_type: str, stat_value: int, name: str) -> Dict:
-    """附魔：为装备附加属性（写入 enchant 字段，并在 bonus 上体现）"""
-    item.setdefault("enchant", {"name": name, "stat_type": stat_type, "stat_value": stat_value})
+def apply_enchant(item: Dict, stat_type: str, stat_value: int, name: str, effects: Optional[List[Dict]] = None) -> Dict:
+    """附魔：为装备附加属性与特效（写入 enchant 字段，并在 bonus 上体现）
+
+    effects: 特效列表（取自附魔材料的 effect 词缀），战斗中触发特殊机制
+    """
+    ench = {"name": name, "stat_type": stat_type, "stat_value": stat_value}
+    if effects:
+        ench["effects"] = effects
+    item["enchant"] = ench
     # 攻击/防御类附魔直接叠加到 bonus；hp/mp 附魔记录到 enchant 供穿戴时结算
     if stat_type in ("attack", "defense"):
         item["bonus"] = item.get("bonus", 0) + stat_value
     return item
+
+
+# 特效优先级：数值越大，作为主特效的优先级越高（多材料附魔时决定主要机制）
+_ENCHANT_EFFECT_PRIORITY = {
+    "crit": 1, "mana": 2, "vampiric": 3, "slow": 4, "freeze": 5,
+    "splash": 6, "poison": 7, "burn": 8, "thorns": 9, "wrath": 10,
+}
+
+
+def pick_enchant_effects(materials: List[List], max_effects: int = 2) -> List[Dict]:
+    """从附魔材料中提取特效：按优先级取前 N 个不同种类的特效。
+
+    同种特效只保留强度最高的一个（如 火焰符文+恶魔之核 都属 burn，取地狱火）。
+    返回特效 dict 列表，供附魔接口写入装备 enchant.effects。
+    """
+    picked: Dict[str, Dict] = {}
+    for mid, qty in materials:
+        m = _find_mat(mid)
+        if not m or not isinstance(m.get("effect"), dict):
+            continue
+        eff = m["effect"]
+        etype = eff.get("type", "")
+        if not etype:
+            continue
+        # 同种特效取强度更高者
+        if etype in picked:
+            cur_strength = picked[etype].get("strength", 0) or 0
+            new_strength = eff.get("strength", 0) or 0
+            if new_strength > cur_strength:
+                picked[etype] = eff
+        else:
+            picked[etype] = eff
+    # 按优先级排序，取前 max_effects 个
+    ordered = sorted(picked.values(),
+                     key=lambda e: _ENCHANT_EFFECT_PRIORITY.get(e.get("type", ""), 0),
+                     reverse=True)
+    return ordered[:max_effects]
 
 
 def enchant_materials() -> List[Dict]:

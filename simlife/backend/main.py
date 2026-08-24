@@ -1970,8 +1970,12 @@ def api_death_mode_life_enchant(data: dict):
         return {"error": "not_found", "message": "没有这件可附魔的物品"}
     if item.get("enchant"):
         return {"error": "enchanted", "message": "该物品已附魔，无法重复附魔"}
+    if item.get("effect"):
+        return {"error": "enchanted", "message": "该装备自带特殊特效，无法再附魔"}
 
     mat_val = LS.material_value(ls["inventory"], materials)
+    # 从附魔材料提取特效（特殊机制，非仅加数值）
+    effects = LS.pick_enchant_effects(materials)
     # LLM 生成附魔效果
     mat_desc = "、".join(
         f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in materials)
@@ -1995,21 +1999,28 @@ def api_death_mode_life_enchant(data: dict):
         LS.remove_materials(ls["inventory"], mid, qty)
 
     if target == "equipment":
-        LS.apply_enchant(item, stat_type, stat_value, enchant_name)
+        LS.apply_enchant(item, stat_type, stat_value, enchant_name, effects=effects)
     else:
         # 钓鱼装备附魔：记录在 fish 上（供钓鱼属性参考），暂仅存字段
-        item["enchant"] = {"name": enchant_name, "stat_type": stat_type, "stat_value": stat_value}
+        ench = {"name": enchant_name, "stat_type": stat_type, "stat_value": stat_value}
+        if effects:
+            ench["effects"] = effects
+        item["enchant"] = ench
 
     ls["last_activity"] = f"为{name}附魔成功：{enchant_name}"
     stat_label = {"attack": "攻击", "defense": "防御", "hp": "生命", "mp": "魔法"}.get(stat_type, stat_type)
+    effect_desc = "、".join(eff.get("name", "") for eff in effects) if effects else "无"
     engine._log_action("life_skill", {
         "skill": "附魔", "action": f"为{name}附魔「{enchant_name}」",
         "detail": {"装备": name, "附魔": enchant_name,
-                   "效果": f"{stat_label}+{stat_value}"},
+                   "效果": f"{stat_label}+{stat_value}", "特效": effect_desc},
     })
     engine._save()
     stat_name = {"attack": "攻击", "defense": "防御", "hp": "生命", "mp": "法力"}.get(stat_type, stat_type)
-    return {"success": True, "message": f"附魔成功！{name}获得「{enchant_name}」：{stat_name}+{stat_value}",
+    msg = f"附魔成功！{name}获得「{enchant_name}」：{stat_name}+{stat_value}"
+    if effects:
+        msg += "；特效：" + "、".join(eff.get("name", "") for eff in effects)
+    return {"success": True, "message": msg,
             "equipment": ls["equipment"], "fish_caught": ls["fish_caught"],
             "inventory": ls["inventory"]}
 
@@ -2182,17 +2193,30 @@ def api_death_mode_life_fish_set_zone(data: dict):
 
 @app.post("/api/death-mode/life-skills/eat")
 def api_death_mode_life_eat(data: dict):
-    """食用食物/鱼：获得增益或回复 HP/MP"""
+    """食用食物/鱼：获得增益或回复 HP/MP
+    target: ai / user / both（一起食用，两人分食同一份，各获 80% 效果）
+    """
     from simlife.backend import life_skills as LS
     engine, state = _life_engine()
     if not state:
         return {"error": "no_game"}
-    target = data.get("target", "ai")  # ai / user
+    target = data.get("target", "ai")  # ai / user / both
     name = data.get("name", "")
     ls = state["life_state"]
-    char = state["character"] if target == "ai" else state.get("user_character")
-    if not char:
-        return {"error": "no_target", "message": f"目标角色不存在"}
+
+    # 确定食用对象列表
+    if target == "both":
+        ai_char = state["character"]
+        user_char = state.get("user_character")
+        if not user_char:
+            return {"error": "no_target", "message": "用户角色不存在，无法一起食用"}
+        targets = [("ai", ai_char), ("user", user_char)]
+    else:
+        char = state["character"] if target == "ai" else state.get("user_character")
+        if not char:
+            return {"error": "no_target", "message": "目标角色不存在"}
+        targets = [(target, char)]
+
     # 从食物或鱼中查找
     item = next((f for f in ls["foods"] if f["name"] == name), None)
     source = "foods"
@@ -2204,54 +2228,65 @@ def api_death_mode_life_eat(data: dict):
     if item.get("qty", 0) <= 0:
         return {"error": "empty", "message": "数量不足"}
 
-    # 扣除
+    # 一起食用：同一份两人分食，各获 80% 效果
+    scale = 0.8 if target == "both" else 1.0
+
+    # 扣除一份
     item["qty"] -= 1
     if item["qty"] <= 0:
         ls[source].remove(item)
 
-    buff = item.get("buff") or {}
-    msg = f"食用了{name}。"
-    # HP/MP 回复
-    if buff.get("type") == "hp" and buff.get("value", 0) < 0:
-        # 劣质料理：食物中毒，扣血
-        char["hp"] = max(0, char.get("hp", 0) + buff["value"])
-        msg += f" 🦠食材不佳中毒，损失{-buff['value']}点HP！"
-    elif buff.get("type") == "hp":
-        char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + buff.get("value", 0))
-        msg += f" 回复{min(buff['value'], char.get('max_hp',0)-char.get('hp',0)+buff['value'])}点HP"
-    elif buff.get("type") == "mp":
-        char["mp"] = min(char.get("max_mp", char["mp"]), char.get("mp", 0) + buff.get("value", 0))
-        msg += f" 回复{buff['value']}点MP"
-    # 临时增益（攻击/防御 持续回合）
-    elif buff.get("type") in ("attack", "defense"):
-        turns = buff.get("turns", 3)
-        # target 标记增益属主（ai/user），供战斗前按角色分配
-        ls["buffs"].append({"type": buff["type"], "value": buff["value"], "turns": turns, "source": name, "target": target})
-        msg += f" 获得{buff['value']}点{'攻击' if buff['type']=='attack' else '防御'}增益（{turns}回合）"
-    # 鱼类能量
-    elif item.get("energy"):
-        char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + item.get("energy", 0))
-        msg += f" 回复{item.get('energy',0)}点HP"
+    msgs = []
+    for role, char in targets:
+        buff = item.get("buff") or {}
+        msg = f"食用了{name}。"
+        # HP/MP 回复
+        if buff.get("type") == "hp" and buff.get("value", 0) < 0:
+            # 劣质料理：食物中毒，扣血（分食按比例）
+            dmg = int(round(-buff["value"] * scale))
+            char["hp"] = max(0, char.get("hp", 0) - dmg)
+            msg += f" 🦠食材不佳中毒，损失{dmg}点HP！"
+        elif buff.get("type") == "hp":
+            heal = int(round(buff.get("value", 0) * scale))
+            char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + heal)
+            msg += f" 回复{heal}点HP"
+        elif buff.get("type") == "mp":
+            heal = int(round(buff.get("value", 0) * scale))
+            char["mp"] = min(char.get("max_mp", char["mp"]), char.get("mp", 0) + heal)
+            msg += f" 回复{heal}点MP"
+        # 临时增益（攻击/防御 持续回合）
+        elif buff.get("type") in ("attack", "defense"):
+            turns = buff.get("turns", 3)
+            val = int(round(buff["value"] * scale))
+            # role 标记增益属主（ai/user），供战斗前按角色分配
+            ls["buffs"].append({"type": buff["type"], "value": val, "turns": turns, "source": name, "target": role})
+            msg += f" 获得{val}点{'攻击' if buff['type']=='attack' else '防御'}增益（{turns}回合）"
+        # 鱼类能量
+        elif item.get("energy"):
+            eng = int(round(item.get("energy", 0) * scale))
+            char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + eng)
+            msg += f" 回复{eng}点HP"
 
-    # 完美品质特殊效果：额外持续属性增益
-    special = item.get("special")
-    if special:
-        sp = dict(special)
-        sp.setdefault("target", target)  # 特殊效果同样记录属主
-        ls["buffs"].append(sp)
-        msg += f" ✨特殊效果：获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
+        # 完美品质特殊效果：额外持续属性增益
+        special = item.get("special")
+        if special:
+            sp = dict(special)
+            sp["value"] = int(round(sp.get("value", 0) * scale))
+            sp["target"] = role  # 特殊效果同样记录属主
+            ls["buffs"].append(sp)
+            msg += f" ✨特殊效果：获得{sp['value']}点{'攻击' if sp['type'] == 'attack' else '防御'}增益（{sp['turns']}回合）"
 
-    char["hp"] = max(0, char["hp"])
-    actor = "AI角色" if target == "ai" else "玩家"
-    detail = {"对象": actor, "食物": name, "效果": msg}
-    if special:
-        detail["特殊"] = f"获得{special['value']}点{'攻击' if special['type'] == 'attack' else '防御'}增益（{special['turns']}回合）"
-    engine._log_action("life_skill", {
-        "skill": "饮食", "action": f"{actor}食用了{name}",
-        "detail": detail,
-    })
+        char["hp"] = max(0, char["hp"])
+        actor = "AI角色" if role == "ai" else "玩家"
+        msgs.append(f"{actor}：{msg}")
+        engine._log_action("life_skill", {
+            "skill": "饮食", "action": f"{actor}食用了{name}",
+            "detail": {"对象": actor, "食物": name, "效果": msg},
+        })
+
+    msg_all = "、".join(msgs)
     engine._save()
-    return {"success": True, "message": msg, "hp": char.get("hp"), "mp": char.get("mp"),
+    return {"success": True, "message": msg_all, "hp": state["character"].get("hp"), "mp": state["character"].get("mp"),
             "buffs": ls["buffs"], "foods": ls["foods"], "fish_caught": ls["fish_caught"]}
 
 

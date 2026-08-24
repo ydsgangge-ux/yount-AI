@@ -2118,6 +2118,8 @@ class ConsciousnessAgent:
         )
         raw = self.b.generate(prompt, max_tokens=1500, temperature=0.5,
                              thinking=False)
+        # [临时诊断] 定位"解析失败"：打印 LLM 返回的原始内容，找到后再移除
+        print(f"[诊断·_reason raw] len={len(raw) if raw else 0} | {raw!r}")
         return self._parse_json(raw, {
             "inner_reasoning":  "需要认真考虑",
             "response_intent":  "给出真实的回应",

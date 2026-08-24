@@ -101,6 +101,7 @@ class DeathModeEngine:
     def _drop_life_materials(self, enemy: Dict, combat_log: List):
         """战斗掉落：生活技能原材料（LLM 自由组合的物料来源之一）。
         敌人等级越高、类型越强，掉落越高级材料。
+        BOSS/精英/特定系敌人额外掉落专属稀有材料（锻造/附魔用）。
         """
         try:
             from simlife.backend import life_skills as LS
@@ -109,11 +110,42 @@ class DeathModeEngine:
             ls = LS.ensure_life_state(self.state)
             level = enemy.get("level", 1) or 1
             etype = enemy.get("type", "normal") or "normal"
-            # 掉落概率：普通 30%，精英 55%，BOSS 100%；等级越高越容易出
+            ename = enemy.get("name", "") or ""
+
+            # ── BOSS/精英专属稀有材料：按敌人系别掉落 ──
+            rare_rules = (
+                (("恶魔", "地狱", "邪魔", "深渊魔", "魔鬼", "魔王"), "demon_core"),
+                (("火元素", "水元素", "风元素", "土元素", "雷元素", "元素", "岩浆", "烈焰领主"), "element_essence"),
+                (("亡灵", "骷髅", "幽灵", "怨灵", "巫妖", "死灵", "虚空", "暗影", "尸鬼"), "void_shard"),
+                (("泰坦", "机械", "机甲", "构装", "傀儡", "铁人", "石像鬼"), "titan_alloy"),
+                (("龙", "幼龙", "巨龙", "飞龙", "龙裔"), "dragon_heart"),
+                (("兽王", "魔狼", "巨熊", "虎王", "恐兽", "凶兽", "野猪王", "魔兽"), "beast_fang"),
+                (("藤蔓", "古树", "树精", "花妖", "魔菇", "孢子", "植物"), "ancient_wood"),
+            )
+            matched = None
+            for kws, mat_id in rare_rules:
+                if any(k in ename for k in kws):
+                    matched = mat_id
+                    break
+            rare_chance = {"boss": 1.0, "elite": 0.45, "normal": 0.04}.get(etype, 0.04)
+            if matched and random.random() < rare_chance:
+                rare = LS._find_mat(matched)
+                if rare:
+                    qty = random.randint(1, 2)
+                    LS.add_materials(ls["inventory"], rare["id"], qty, rare["name"], rare["icon"])
+                    eff_name = (rare.get("effect") or {}).get("name", "特殊材料")
+                    if combat_log is not None:
+                        combat_log.append(f"✨ 稀有战利品：{rare['icon']} {rare['name']}×{qty}（{eff_name}）")
+                    self._log_action("life_skill", {
+                        "skill": "采集", "action": f"从{ename}身上获得稀有材料{rare['name']}×{qty}",
+                        "detail": {"material": rare["name"], "qty": qty, "enemy": ename, "rare": True},
+                    })
+                    return
+
+            # ── 常规材料掉落 ──
             base_chance = {"normal": 0.30, "elite": 0.55, "boss": 1.0}.get(etype, 0.30)
             if random.random() > min(0.95, base_chance + level * 0.01):
                 return
-            # 按敌人等级决定可掉落材料池
             pool = [m for m in LS.RAW_MATERIALS if m["type"] in ("ingredient", "ore", "misc", "enchant")]
             high = [m for m in pool if m["type"] == "enchant" or m["price"] >= 15]
             if level >= 8 and high:
@@ -128,8 +160,8 @@ class DeathModeEngine:
             if combat_log is not None:
                 combat_log.append(f"采获：{mat['icon']} {mat['name']}×{qty}（生活材料）")
             self._log_action("life_skill", {
-                "skill": "采集", "action": f"从{enemy.get('name', '敌人')}身上采获{mat['name']}×{qty}",
-                "detail": {"material": mat["name"], "qty": qty, "enemy": enemy.get("name", "")},
+                "skill": "采集", "action": f"从{ename}身上采获{mat['name']}×{qty}",
+                "detail": {"material": mat["name"], "qty": qty, "enemy": ename},
             })
         except Exception:
             pass
@@ -603,6 +635,108 @@ class DeathModeEngine:
             "choices": scene["choices"],
         }
 
+    def _eat_food_from_action(self, state: Dict, action: str, sender: str = "user") -> Optional[Dict]:
+        """对话触发"吃菜"：输入中提及料理/鱼名（如"吃清汤鱼片蘑菇"）时直接食用。
+        匹配成功则扣除一份并应用增益/回复，返回叙事结果；未匹配返回 None 走正常流程。
+        效果逻辑与 /api/death-mode/life-skills/eat 保持一致。
+        """
+        from simlife.backend import life_skills as LS
+        ls = state.get("life_state")
+        if not ls:
+            ls = LS.ensure_life_state(state)
+            state["life_state"] = ls
+        ai_char = state.get("character", {})
+        user_char = state.get("user_character")
+
+        # 在料理与鱼获中按名称匹配（要求数量>0）
+        food, source = None, None
+        for _src_key in ("foods", "fish_caught"):
+            for f in ls.get(_src_key, []):
+                if f.get("qty", 0) > 0 and f.get("name") and f["name"] in action:
+                    food, source = f, _src_key
+                    break
+            if food:
+                break
+        if not food:
+            return None
+
+        name = food["name"]
+        # 判定食用对象：一起食用 > 明确提到AI/用户 > 按发言方
+        _want_both = user_char and any(k in action for k in ("一起", "分食", "都吃", "share"))
+        _mentions_ai = bool(ai_char.get("name")) and ai_char["name"] in action
+        _mentions_user = bool(user_char) and (user_char.get("name", "") in action or ("我" in action and sender == "user"))
+        if _want_both:
+            target = "both"
+        elif _mentions_ai and not _mentions_user:
+            target = "ai"
+        elif _mentions_user and not _mentions_ai:
+            target = "user"
+        else:
+            target = "ai" if sender == "ai" else "user"
+
+        # 扣除一份
+        food["qty"] -= 1
+        if food["qty"] <= 0:
+            ls[source].remove(food)
+
+        scale = 0.8 if target == "both" else 1.0
+        targets = []
+        if target == "both":
+            targets = [("ai", ai_char), ("user", user_char)]
+        elif target == "user" and user_char:
+            targets = [("user", user_char)]
+        else:
+            targets = [("ai", ai_char)]
+
+        msgs = []
+        for role, char in targets:
+            buff = food.get("buff") or {}
+            msg = f"食用了{name}。"
+            if buff.get("type") == "hp" and buff.get("value", 0) < 0:
+                dmg = int(round(-buff["value"] * scale))
+                char["hp"] = max(0, char.get("hp", 0) - dmg)
+                msg += f" 🦠食材不佳中毒，损失{dmg}点HP！"
+            elif buff.get("type") == "hp":
+                heal = int(round(buff.get("value", 0) * scale))
+                char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + heal)
+                msg += f" 回复{heal}点HP"
+            elif buff.get("type") == "mp":
+                heal = int(round(buff.get("value", 0) * scale))
+                char["mp"] = min(char.get("max_mp", char["mp"]), char.get("mp", 0) + heal)
+                msg += f" 回复{heal}点MP"
+            elif buff.get("type") in ("attack", "defense"):
+                turns = buff.get("turns", 3)
+                val = int(round(buff["value"] * scale))
+                ls["buffs"].append({"type": buff["type"], "value": val, "turns": turns, "source": name, "target": role})
+                msg += f" 获得{val}点{'攻击' if buff['type'] == 'attack' else '防御'}增益（{turns}回合）"
+            elif food.get("energy"):
+                eng = int(round(food.get("energy", 0) * scale))
+                char["hp"] = min(char.get("max_hp", char["hp"]), char.get("hp", 0) + eng)
+                msg += f" 回复{eng}点HP"
+            special = food.get("special")
+            if special:
+                sp = dict(special)
+                sp["value"] = int(round(sp.get("value", 0) * scale))
+                sp["target"] = role
+                ls["buffs"].append(sp)
+                msg += f" ✨特殊效果：获得{sp['value']}点{'攻击' if sp['type'] == 'attack' else '防御'}增益（{sp['turns']}回合）"
+            char["hp"] = max(0, char["hp"])
+            actor = "AI角色" if role == "ai" else "玩家"
+            msgs.append(f"{actor}：{msg}")
+
+        msg_all = "、".join(msgs)
+        narrative = f"🍽️ {msg_all}"
+        result = {"narrative": narrative, "in_combat": False, "message": msg_all,
+                  "hp": ai_char.get("hp"), "mp": ai_char.get("mp")}
+        self._log_action("life_skill", {
+            "action": f"🍽️ 食用{name}",
+            "narrative": narrative,
+            "description": msg_all,
+            "detail": {"食物": name, "效果": msg_all},
+        })
+        self._record_history_and_save(state, action, narrative, "life_skill", None, result)
+        return result
+
     def process_choice(self, choice_id: str = None, free_action: str = None, sender: str = "user") -> Dict:
         """
         处理用户选择或自由行动。
@@ -756,6 +890,14 @@ class DeathModeEngine:
         enemies = state.get("enemies", [])
         is_sweep = False
         is_new_sweep = False  # 非战斗状态触发新扫荡
+
+        # ── 对话触发"吃菜"：说"吃/食用 XXX料理"直接食用生活技能食物/鱼 ──
+        if not in_combat and action:
+            _eat_kws = ("吃", "食用", "吃掉", "进食", "享用", "尝尝", "eat")
+            if any(k in action for k in _eat_kws):
+                _eat_result = self._eat_food_from_action(state, action, sender)
+                if _eat_result:
+                    return _eat_result
 
         # 恢复/使用物品意图 → 不触发扫荡
         restore_keywords = ("药水", "恢复", "治疗", "疗伤", "使用", "喝", "服用", "补给",
@@ -3211,6 +3353,7 @@ class DeathModeEngine:
                                                      attack_type=_atk_type,
                                                      skill_multiplier=skill_mult)
             preemptive_log.append(f"{role_char.get('name','?')}{'【'+skill_name+'】' if skill_name else ''}先手突袭{preemptive_result['description']} → {target_enemy.get('name', '?')}")
+            preemptive_log += CombatSystem.enchant_on_hit(role_char, target_enemy, preemptive_result, enemies)
             _check_drop(target_enemy, role_char.get("stats", {}))
         if preemptive_log:
             combat_log.append("🏹 远程先手攻击：")
@@ -3226,6 +3369,23 @@ class DeathModeEngine:
                 break
 
             round_log = []
+
+            # ── 回合开始：结算敌人身上的持续伤害（附魔灼烧/剧毒/技能dot）──
+            for e in enemies:
+                if e.get("hp", 0) <= 0:
+                    continue
+                dots = e.get("temp_dots") or []
+                if not dots:
+                    continue
+                for dot in dots[:]:
+                    if dot.get("remaining", 0) > 0:
+                        dot["remaining"] -= 1
+                        dot_dmg = int(dot.get("value", 1))
+                        e["hp"] = max(0, e.get("hp", 0) - dot_dmg)
+                        label = dot.get("label") or dot.get("source", "")
+                        round_log.append(f"🔥 {e.get('name', '?')}受到「{label}」持续伤害{dot_dmg}点")
+                    if dot.get("remaining", 0) <= 0:
+                        dots.remove(dot)
 
             # ── 按出手顺序攻击 ──
             for initiative, role, attacker in actors:
@@ -3271,6 +3431,7 @@ class DeathModeEngine:
                                                      attack_type=_atk_type, skill_multiplier=skill_mult)
                     _pm_log_prefix = f"{pm_obj.name}{_pm_skill_name}" if _pm_skill_name else f"{pm_obj.name} "
                     round_log.append(f"{_pm_log_prefix}{atk_result['description']} → {target.get('name', '?')}")
+                    round_log += CombatSystem.enchant_on_hit(attacker, target, atk_result, enemies)
                     _check_drop(target, attacker.get("stats", {}))
                     continue
 
@@ -3335,6 +3496,7 @@ class DeathModeEngine:
                 if tactic_result and (role == "ai" or cmd["tactic"] in ("focus", "flank")):
                     atk_result = TacticalSystem.apply_tactic_modifiers(atk_result, tactic_result)
                 round_log.append(f"{attacker.get('name','?')}{_used_skill_name}{' ' if not _used_skill_name else ''}{atk_result['description']} → {target.get('name', '?')}")
+                round_log += CombatSystem.enchant_on_hit(attacker, target, atk_result, enemies)
                 _check_drop(target, attacker.get("stats", {}))
 
                 # ── 多效果技能：处理额外效果（heal/buff/stun/dot等）──
@@ -3395,6 +3557,12 @@ class DeathModeEngine:
             # ── 存活敌人反击（智能承伤 + EnemyAgent）──
             for enemy in enemies:
                 if enemy.get("hp", 0) <= 0:
+                    continue
+
+                # 冰封/硬直：无法行动（附魔冰封、虚空禁锢等）
+                if enemy.get("stagger_turns", 0) > 0:
+                    enemy["stagger_turns"] = enemy.get("stagger_turns", 0) - 1
+                    round_log.append(f"❄️ {enemy.get('name', '?')}被冰封，无法行动")
                     continue
 
                 # 检查是否有EnemyAgent（用id作key）
@@ -3559,6 +3727,9 @@ class DeathModeEngine:
                         )
 
                 round_log.append(f"{enemy.get('name', '?')}{enemy_skill_name}{' ' if not enemy_skill_name else ''}{def_result['description']} → {target_name}")
+
+                # 荆棘/反伤附魔：受击后反弹伤害给攻击者（护甲附魔特效）
+                CombatSystem.enchant_on_defend(target_char, enemy, def_result.get("damage", 0), round_log)
 
                 # 死亡判定
                 if target_char["hp"] <= 0:

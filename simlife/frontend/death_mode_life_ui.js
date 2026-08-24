@@ -148,6 +148,7 @@ const LifeSkillsUI = {
           <div style="padding:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;">
             <div style="font-size:13px;color:#c9d1d9;">${m.icon} ${m.name}</div>
             <div style="font-size:10px;color:#8b949e;margin:4px 0;">${this._typeName(m.type)} · 持有${invMap[m.id]||0}</div>
+            ${m.effect?`<div style="font-size:9px;color:#f0883e;margin:2px 0;">✨${m.effect.name}: ${m.effect.desc||''}</div>`:''}
             <div style="display:flex;align-items:center;gap:6px;">
               <button onclick="LifeSkillsUI._buy('${m.id}',1)" style="flex:1;padding:4px;background:#1a3a1a;border:1px solid #3fb950;border-radius:5px;color:#3fb950;cursor:pointer;font-size:11px;">💰${m.price}</button>
               <button onclick="LifeSkillsUI._buy('${m.id}',5)" style="flex:1;padding:4px;background:#1a2a1a;border:1px solid #d29922;border-radius:5px;color:#d29922;cursor:pointer;font-size:11px;">×5</button>
@@ -157,7 +158,7 @@ const LifeSkillsUI = {
   },
 
   _typeName(t) {
-    return { ingredient: '食材', ore: '矿材', misc: '材料', bait: '鱼饵', enchant: '附魔材料' }[t] || t;
+    return { ingredient: '食材', ore: '矿材', misc: '材料', bait: '鱼饵', enchant: '附魔材料', rare: '稀有材料' }[t] || t;
   },
 
   async _buy(id, qty) {
@@ -196,7 +197,7 @@ const LifeSkillsUI = {
       ${card('🧱 原材料', '#58a6ff', sorted, it => `
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
           <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
-          <div style="font-size:9px;color:#484f58;">${this._typeName(it.type)}</div>
+          <div style="font-size:9px;color:#484f58;">${this._typeName(it.type)}${it.effect?` · <span style="color:#f0883e;">✨${it.effect.name}: ${it.effect.desc||''}</span>`:''}</div>
         </div>`)}
       ${card('🍲 食物', '#3fb950', foods, it => `
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
@@ -205,6 +206,7 @@ const LifeSkillsUI = {
           <div style="display:flex;gap:4px;">
             <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="flex:1;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">AI 食用</button>
             <button onclick="LifeSkillsUI._eat('${it.name}','user')" style="flex:1;padding:3px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">玩家食用</button>
+            <button onclick="LifeSkillsUI._eat('${it.name}','both')" style="flex:1;padding:3px;background:#3d2a1a;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">一起食用</button>
           </div>
         </div>`)}
       ${card('🐟 鱼获', '#58a6ff', fish, it => `
@@ -214,6 +216,7 @@ const LifeSkillsUI = {
           <div style="display:flex;gap:4px;">
             <button onclick="LifeSkillsUI._eat('${it.name}','ai')" style="flex:1;padding:3px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:10px;">AI吃</button>
             <button onclick="LifeSkillsUI._eat('${it.name}','user')" style="flex:1;padding:3px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">玩家吃</button>
+            <button onclick="LifeSkillsUI._eat('${it.name}','both')" style="flex:1;padding:3px;background:#3d2a1a;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">一起吃</button>
             <button onclick="LifeSkillsUI._sellFish('${it.name}')" style="flex:1;padding:3px;background:#3d2a1a;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">售</button>
           </div>
         </div>`)}

@@ -328,6 +328,10 @@ class CombatSystem:
     def calc_dodge_chance(entity) -> float:
         s = CombatSystem._get_stats(entity)
         dodge = s.get("agility", 5) / 200.0
+        # 附魔迟滞减益：降低闪避
+        if isinstance(entity, dict):
+            debuffs = entity.get("temp_debuffs", {}) or {}
+            dodge += (debuffs.get("agility", 0) or 0) / 200.0
         passive = CombatSystem._get_passive(entity)
         dodge += passive.get("dodge_bonus", 0)
         return min(MAX_DODGE_CHANCE + passive.get("dodge_bonus", 0), dodge)
@@ -338,6 +342,10 @@ class CombatSystem:
         crit = (s.get("agility", 5) + s.get("luck", 5)) / 200.0
         passive = CombatSystem._get_passive(entity)
         crit += passive.get("crit_rate_bonus", 0)
+        # 附魔暴击强化（幸运术/狂怒等）
+        for eff in CombatSystem._equipment_enchant_effects(entity):
+            if eff.get("type") in ("crit", "wrath"):
+                crit += eff.get("strength", 0) or 0
         return min(0.75, crit)
 
     @staticmethod
@@ -541,6 +549,144 @@ class CombatSystem:
         if isinstance(character, CombatEntity):
             return character.is_dead()
         return character.get("hp", 0) <= 0
+
+    # ------------------------------------------------------------
+    # 附魔/锻造特效（特殊机制，非纯数值）
+    # ------------------------------------------------------------
+
+    @staticmethod
+    def _add_hp(entity, amount: int):
+        """增/减生命（兼容 Dict 与 CombatEntity），结果限制在 [0, max_hp]"""
+        if isinstance(entity, dict):
+            mx = entity.get("max_hp", 50) or 50
+            entity["hp"] = max(0, min(mx, entity.get("hp", 0) + amount))
+        else:
+            mx = entity.max_hp or 50
+            entity.hp = max(0, min(mx, entity.hp + amount))
+
+    @staticmethod
+    def _equipment_enchant_effects(entity) -> List[Dict]:
+        """收集装备上的附魔/锻造特效（equipment[i].enchant.effects / enchant.effect / 自带 effect）"""
+        equip_list = entity.get("equipment", []) if isinstance(entity, dict) else entity.equipment
+        effects = []
+        for e in equip_list or []:
+            if not isinstance(e, dict):
+                continue
+            ench = e.get("enchant")
+            if isinstance(ench, dict):
+                if isinstance(ench.get("effects"), list):
+                    effects.extend(x for x in ench["effects"] if isinstance(x, dict))
+                elif isinstance(ench.get("effect"), dict):
+                    effects.append(ench["effect"])
+            elif isinstance(e.get("effect"), dict):
+                effects.append(e["effect"])
+        return effects
+
+    @staticmethod
+    def enchant_on_hit(attacker, defender, atk_result: Dict, enemies: Optional[List] = None, log: Optional[List] = None) -> List[str]:
+        """武器附魔特效（命中后触发）：吸血/灼烧/剧毒/冰封/迟滞/雷击/狂怒/法力共鸣。
+
+        返回触发日志行列表；已有命中日志由调用方拼接。
+        """
+        effects = CombatSystem._equipment_enchant_effects(attacker)
+        if not effects:
+            return []
+        if not atk_result or not atk_result.get("hit") or atk_result.get("damage", 0) <= 0:
+            return []
+        logs = []
+        atk_name = CombatSystem._get_name(attacker)
+        def_name = CombatSystem._get_name(defender)
+        damage = atk_result.get("damage", 0)
+        raw = atk_result.get("raw_damage", damage) or damage
+        for eff in effects:
+            etype = eff.get("type", "")
+            ename = eff.get("name", etype) or etype
+            strength = eff.get("strength", 0.5) or 0.5
+            # 吸血 / 噬血
+            if etype == "vampiric":
+                amount = int(damage * strength)
+                if amount > 0:
+                    CombatSystem._add_hp(attacker, amount)
+                    logs.append(f"❤️‍🔥 {atk_name}的「{ename}」吸血{amount}HP")
+            # 灼烧 / 剧毒：持续伤害
+            elif etype in ("burn", "poison"):
+                chance = eff.get("chance", 0.35)
+                if random.random() < chance:
+                    duration = int(eff.get("duration", 3))
+                    dot_val = max(2, int(raw * strength))
+                    dots = defender.get("temp_dots") if isinstance(defender, dict) else \
+                        defender.__dict__.setdefault("temp_dots", [])
+                    dots.append({"type": etype, "value": dot_val, "remaining": duration,
+                                 "source": atk_name, "label": ename})
+                    logs.append(f"🔥 {def_name}被「{ename}」命中，持续{int(duration)}回合掉血")
+            # 冰封 / 虚空禁锢：无法行动
+            elif etype == "freeze":
+                chance = eff.get("chance", 0.25)
+                if random.random() < chance:
+                    turns = max(1, int(strength))
+                    if isinstance(defender, dict):
+                        defender["stagger_turns"] = max(defender.get("stagger_turns", 0), turns)
+                    else:
+                        defender.stagger_turns = max(defender.stagger_turns, turns)
+                    logs.append(f"❄️ {def_name}被「{ename}」冰封，{turns}回合无法行动")
+            # 迟滞：降低闪避（通过 temp_debuffs 生效）
+            elif etype == "slow":
+                chance = eff.get("chance", 0.30)
+                if random.random() < chance:
+                    penalty = max(2, int(15 * strength))
+                    db = defender.setdefault("temp_debuffs", {}) if isinstance(defender, dict) \
+                        else defender.__dict__.setdefault("temp_debuffs", {})
+                    db["agility"] = db.get("agility", 0) - penalty
+                    logs.append(f"⏳ {def_name}被「{ename}」迟滞，闪避-{int(penalty/2)}%")
+            # 雷击 / 元素狂潮：溅射另一敌人
+            elif etype == "splash":
+                chance = eff.get("chance", 0.30)
+                if random.random() < chance and enemies:
+                    others = [e for e in enemies if e is not defender and e.get("hp", 0) > 0]
+                    if others:
+                        other = random.choice(others)
+                        splash = max(1, int(damage * strength))
+                        if isinstance(other, dict):
+                            other["hp"] = max(0, other.get("hp", 0) - splash)
+                        else:
+                            other.hp = max(0, other.hp - splash)
+                        logs.append(f"⚡「{ename}」溅射！{CombatSystem._get_name(other)}受到{splash}点伤害")
+            # 狂怒 / 龙威：暴击时追加爆发
+            elif etype == "wrath" and atk_result.get("crit"):
+                burst = int(damage * strength)
+                if burst > 0:
+                    CombatSystem._add_hp(defender, -burst)
+                    logs.append(f"💥「{ename}」爆发！追加{burst}点伤害")
+            # 法力共鸣：命中回复MP
+            elif etype == "mana":
+                if isinstance(attacker, dict) and attacker.get("mp") is not None:
+                    mx = attacker.get("max_mp", 20) or 20
+                    attacker["mp"] = min(mx, attacker.get("mp", 0) + int(strength))
+                    logs.append(f"🔷 {atk_name}「{ename}」回复{int(strength)}MP")
+        if log is not None and isinstance(log, list):
+            log.extend(logs)
+        return logs
+
+    @staticmethod
+    def enchant_on_defend(defender, attacker, damage: int, log: Optional[List] = None) -> List[str]:
+        """护甲附魔特效（受击后触发）：荆棘/泰坦壁垒反伤。"""
+        if damage <= 0:
+            return []
+        effects = CombatSystem._equipment_enchant_effects(defender)
+        if not effects:
+            return []
+        logs = []
+        def_name = CombatSystem._get_name(defender)
+        atk_name = CombatSystem._get_name(attacker)
+        for eff in effects:
+            if eff.get("type") == "thorns":
+                reflect = int(damage * (eff.get("strength", 0.3) or 0.3))
+                if reflect > 0:
+                    CombatSystem._add_hp(attacker, -reflect)
+                    logs.append(f"🌵 {def_name}的「{eff.get('name', '荆棘')}」反弹{reflect}点伤害给{atk_name}")
+        if log is not None and isinstance(log, list):
+            log.extend(logs)
+        return logs
 
     # ------------------------------------------------------------
     # 敌人生成
