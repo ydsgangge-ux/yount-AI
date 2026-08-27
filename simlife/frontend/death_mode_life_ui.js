@@ -88,19 +88,20 @@ const LifeSkillsUI = {
     const side = document.getElementById('ls-side');
     const skills = d.skills || {};
     const L = (k) => skills[k] || { level: 1, xp: 0, name: k, icon: '❔' };
-    const bar = (s) => { const need = s.level * 50; const p = Math.min(100, s.xp / need * 100); return `${p.toFixed(0)}%`; };
+    const stat = (k) => { const s = L(k); const need = s.level * 50; return { lv: s.level, xp: `${s.xp}/${need}`, pct: Math.min(100, s.xp / need * 100) }; };
     const tabs = [
       { id: 'shop', icon: '🏪', label: '商店' },
-      { id: 'cook', icon: skills.cooking.icon, label: '烹饪', lv: L('cooking').level, xp: bar(L('cooking')) },
-      { id: 'forge', icon: skills.forging.icon, label: '锻造', lv: L('forging').level, xp: bar(L('forging')) },
-      { id: 'fish', icon: skills.fishing.icon, label: '钓鱼', lv: L('fishing').level, xp: bar(L('fishing')) },
+      { id: 'cook', icon: skills.cooking.icon, label: '烹饪', ...stat('cooking') },
+      { id: 'forge', icon: skills.forging.icon, label: '锻造', ...stat('forging') },
+      { id: 'fish', icon: skills.fishing.icon, label: '钓鱼', ...stat('fishing') },
       { id: 'dex', icon: '📖', label: '鱼类图鉴' },
       { id: 'bag', icon: '🎁', label: '背包' },
     ];
     side.innerHTML = tabs.map(t => `
       <div onclick="LifeSkillsUI._switchTab('${t.id}')" id="ls-tab-${t.id}" style="padding:9px 10px;margin-bottom:6px;border-radius:8px;border:1px solid #30363d;background:#161b22;cursor:pointer;">
         <div style="font-size:12px;color:#c9d1d9;">${t.icon} ${t.label}</div>
-        ${t.lv ? `<div style="font-size:9px;color:#8b949e;margin-top:2px;">Lv.${t.lv} · ${t.xp}</div>` : ''}
+        ${t.lv ? `<div style="font-size:9px;color:#8b949e;margin-top:2px;">Lv.${t.lv} · 经验 ${t.xp}</div>
+        <div style="height:4px;background:#0d1117;border-radius:2px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:${t.pct}%;background:#a371f7;"></div></div>` : ''}
       </div>`).join('');
     document.getElementById('ls-gold').textContent = `💰 ${d.gold ?? 0} 金币`;
   },
@@ -694,23 +695,42 @@ const LifeSkillsUI = {
     const invMap = {};
     (d.inventory || []).forEach(it => { invMap[it.id] = it.qty || 0; });
     const forging = (d.skills || {}).forging || { level: 1 };
+    const need = forging.level * 50;
+    const fXp = forging.xp || 0;
+    const fPct = Math.min(100, fXp / need * 100);
+    const fRemain = Math.max(0, need - fXp);
 
     const cards = bps.map(b => {
       const can = b.materials.every(([id, q]) => (invMap[id] || 0) >= q);
       const lvOk = forging.level >= b.level;
       const isGear = !!b.fishing_gear;
       const sub = isGear ? '🎣 钓鱼装备' : `加成+${b.result.bonus}`;
+      const missing = b.materials.filter(([id, q]) => (invMap[id] || 0) < q);
+      const reasons = [];
+      if (!lvOk) reasons.push(`需要锻造Lv.${b.level}`);
+      if (missing.length) reasons.push(`缺：${missing.map(([id, q]) => `${this._matName(id)}×${q}`).join('、')}`);
+      const ok = lvOk && can;
       return `
-        <div style="padding:10px;background:#161b22;border:1px solid ${lvOk&&can?'#a371f7':'#30363d'};border-radius:8px;">
+        <div style="padding:10px;background:#161b22;border:1px solid ${ok?'#a371f7':'#30363d'};border-radius:8px;">
           <div style="font-size:13px;color:#c9d1d9;">${b.icon} ${b.name} ${isGear?'🎣':''}</div>
           <div style="font-size:10px;color:#8b949e;margin:3px 0;">Lv.${b.level} · ${sub}</div>
-          <div style="font-size:9px;color:#8b949e;margin-bottom:4px;">材料：${b.materials.map(([id,q])=>`${this._matName(id)}${(invMap[id]||0)>=q?'':'(!)'}×${q}`).join(' ')}</div>
-          <button onclick="LifeSkillsUI._startForge('${b.id}')" ${lvOk&&can?'':'disabled'} style="width:100%;padding:4px;background:#1a2a3a;border:1px solid #a371f7;border-radius:5px;color:#a371f7;cursor:pointer;font-size:11px;">开始锻造</button>
+          <div style="font-size:9px;color:#8b949e;margin-bottom:4px;">材料：${b.materials.map(([id,q])=>`${this._matName(id)}×${q}`).join(' ')}${missing.length?`<span style="color:#f85149;">（缺：${missing.map(([id,q])=>`${this._matName(id)}×${q}`).join('、')}）</span>`:''}</div>
+          <button onclick="LifeSkillsUI._startForge('${b.id}')" ${ok?'':'disabled'} title="${reasons.join('；')}" style="width:100%;padding:4px;background:${ok?'#1a2a3a':'#161b22'};border:1px solid ${ok?'#a371f7':'#30363d'};border-radius:5px;color:${ok?'#a371f7':'#6e7681'};cursor:${ok?'pointer':'not-allowed'};font-size:11px;">${ok?'开始锻造':'❌ '+(missing.length?'材料不足':'等级不足')}</button>
         </div>`;
     }).join('');
 
     main.innerHTML = `
       <h4 style="margin:0 0 10px;color:#a371f7;font-size:14px;">🔨 锻造</h4>
+      <div style="padding:10px;background:#1a1224;border:1px solid #a371f7;border-radius:10px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+          <span style="color:#a371f7;font-weight:600;">锻造等级 Lv.${forging.level}</span>
+          <span style="color:#8b949e;">经验 ${fXp}/${need}</span>
+        </div>
+        <div style="height:8px;background:#0d1117;border-radius:4px;margin-top:6px;overflow:hidden;">
+          <div style="height:100%;width:${fPct}%;background:linear-gradient(90deg,#a371f7,#6e40c9);"></div>
+        </div>
+        <div style="font-size:10px;color:#8b949e;margin-top:4px;">距升级还差 ${fRemain} 经验 · 每次锻造成功都会获得经验</div>
+      </div>
       <div id="forge-minigame" style="margin-bottom:12px;"></div>
       <div style="padding:12px;background:#1a1224;border:1px solid #a371f7;border-radius:10px;margin-bottom:12px;">
         <div style="font-size:13px;color:#a371f7;font-weight:600;margin-bottom:4px;">🧪 自由锻造 <span style="font-size:10px;color:#8b949e;font-weight:normal;">（LLM 动态成形，材料任意搭配）</span></div>
