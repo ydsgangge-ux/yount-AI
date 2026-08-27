@@ -1288,11 +1288,28 @@ const LifeSkillsUI = {
     // 岸边码头
     ctx.fillStyle = '#4a3a28'; ctx.fillRect(0, waterLine - 6, 120, 14);
     ctx.fillStyle = '#3a2c1e'; ctx.fillRect(0, waterLine - 6, 120, 6);
-    // 鱼竿
-    const rod = f.rod, angle = -0.6 + rod.sway, len = 150;
+    // 鱼竿（按装备的竿换造型/颜色/粗细；竿身末端即鱼线起点，保持对齐）
+    const _rodMap = {
+      rod1: { body:'#8a6a3a', lw:5, len:140, reel:'#7a6a55' },   // 木竿
+      rod2: { body:'#3b4450', lw:3.5, len:160, reel:'#93a0ae' }, // 碳素竿
+      rod3: { body:'#5a4632', lw:8, len:120, reel:'#8a6b3f' },   // 鲟鱼重竿
+      rod4: { body:'#1a5a66', lw:3, len:170, reel:'#3fd0e0' },   // 深渊神竿
+    };
+    const _eqRod = (this._equipped() || {}).rod || {};
+    const _rs = _rodMap[_eqRod.id] || _rodMap.rod1;
+    const rod = f.rod, angle = -0.6 + rod.sway, len = _rs.len;
     const tipX = rod.x + Math.cos(angle) * len, tipY = (waterLine - 6) + Math.sin(angle) * len;
-    ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    // 竿身（末端即鱼线连接处，鱼线从这里垂出）
+    ctx.strokeStyle = _rs.body; ctx.lineWidth = _rs.lw; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(rod.x, waterLine - 6); ctx.lineTo(tipX, tipY); ctx.stroke();
+    // 卷线轮（竿身中段）
+    const _rx = rod.x + Math.cos(angle) * (len * 0.34);
+    const _ry = (waterLine - 6) + Math.sin(angle) * (len * 0.34);
+    ctx.save(); ctx.translate(_rx, _ry); ctx.rotate(angle);
+    ctx.fillStyle = _rs.reel;
+    ctx.beginPath(); ctx.ellipse(0, 0, _rs.lw + 4, _rs.lw + 1, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
     // 鱼线
     if (f.bobber.active || f.phase === 'fighting') {
       ctx.strokeStyle = 'rgba(230,230,230,0.7)'; ctx.lineWidth = 1;

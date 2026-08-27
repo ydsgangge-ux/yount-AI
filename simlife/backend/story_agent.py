@@ -854,6 +854,7 @@ class StoryAgent:
 - 如果角色出售了物品，在gold_gained中填写获得金额
 - 如果角色使用了药水/食物恢复，在hp_change/mp_change中填写恢复量
 - 战斗伤害不要填在hp_change里，战斗系统会自动处理
+- 如果角色翻找尸体、搜索房间、拾取掉落物、收起战利品等，必须在items_gained中列出获得的物品名（剧情物品也要列出，如"冰晶地图"、"黑色骨片"等）
 - 如果没有任何物品/金币变动，对应字段填null
 
 任务生成规则：
@@ -1046,6 +1047,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
 6. Boss/精英的对话和技能必须与日志一致
 7. 角色名只能使用：{char_name}（系统角色）和{user_name}（用户角色）
 8. spotted_enemies 必须填 null（战斗中不生成新敌人）
+9. 如果角色在战斗中/战斗后翻找尸体、拾取掉落物、收起战利品，必须在 items_gained 中列出获得的物品名
 
 返回JSON格式：
 {{
@@ -1053,7 +1055,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
   "outcome_type": "combat_success" 或 "combat_fail" 或 "combat_ongoing",
   "next_tension": "low/medium/high",
   "region_story_updates": null,
-  "items_gained": null,
+  "items_gained": ["翻找/拾取获得的物品名"] 或 null,
   "gold_spent": null,
   "gold_gained": null,
   "hp_change": null,
@@ -1079,7 +1081,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
                 "outcome_type": str(result.get("outcome_type", "combat_ongoing")),
                 "next_tension": str(result.get("next_tension", "medium")),
                 "region_story_updates": None,  # 战斗中不更新区域状态
-                "items_gained": None,
+                "items_gained": result.get("items_gained"),
                 "gold_spent": None,
                 "gold_gained": None,
                 "hp_change": None,

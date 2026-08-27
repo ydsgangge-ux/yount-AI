@@ -124,6 +124,7 @@ body {
 }
 .item-card.owned { opacity: 0.85; }
 .item-card.equipped { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.ic-icon { font-size: 32px; text-align: center; margin-bottom: 4px; }
 .ic-name { font-size: 16px; font-weight: 700; }
 .item-card.equipped .ic-name { color: var(--accent); }
 .ic-stats { display: flex; flex-wrap: wrap; gap: 6px; }

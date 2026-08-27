@@ -1194,6 +1194,14 @@ class DeathModeEngine:
         _is_flee_action = ("逃跑" in action or "撤退" in action)
 
         if in_combat_now and _enemies_now and not _is_flee_action:
+            # 战斗中与NPC话疗：劝降/谈判/威胁/询问/求饶（确定性判定，不单独消耗回合）
+            _cd = self._combat_dialogue(state, action, _enemies_now, sender=sender)
+            if _cd and _cd.get("combat_ended"):
+                # 对话成功结束战斗：记录历史并返回
+                self._record_history_and_save(state, action, _cd.get("narrative", ""),
+                                              "combat_dialogue", None, _cd)
+                return _cd
+
             # 战斗回合：先执行战斗系统
             combat_result = self._combat_round(state, _enemies_now, action_text=action, sender=sender)
 
@@ -1202,6 +1210,10 @@ class DeathModeEngine:
             narrative = agent_result.get("narrative", "")
             outcome_type = agent_result.get("outcome_type", "combat_ongoing")
             next_tension = agent_result.get("next_tension", "high")
+
+            # 对话未结束战斗 → 本回合一边对话一边继续战斗，对话内容前置展示
+            if _cd:
+                narrative = (_cd.get("narrative", "") + "\n\n" + narrative).strip()
 
             # 处理战斗结果
             result = {
@@ -1214,6 +1226,8 @@ class DeathModeEngine:
                 "exp_gained": 0,
                 "gold_gained": 0,
             }
+            if _cd:
+                result["dialogue"] = _cd.get("dialogue")
 
             if combat_result.get("player_died"):
                 result["character_died"] = True
@@ -1292,6 +1306,29 @@ class DeathModeEngine:
                 state["in_combat"] = True
                 result["in_combat"] = True
                 result["enemies"] = alive_enemies
+
+            # 处理战斗叙事中LLM返回的拾取物品（翻找尸体/收起战利品等）
+            _items_gained = agent_result.get("items_gained")
+            if _items_gained and isinstance(_items_gained, list):
+                shared_inv = state.setdefault("shared_inventory", [])
+                for _item_name in _items_gained:
+                    _eq = self._create_item_from_name(_item_name, state)
+                    if _eq:
+                        shared_inv.append(_eq)
+                        result.setdefault("items_to_backpack", []).append(_eq.get("name", _item_name))
+                    else:
+                        _char_lv = state.get("character", {}).get("level", 1)
+                        _cons = self._create_consumable_from_name(_item_name, _char_lv)
+                        if _cons:
+                            shared_inv.append(_cons)
+                            result.setdefault("items_to_backpack", []).append(_cons["name"])
+                        else:
+                            # 剧情物品兜底：创建杂项物品确保进背包
+                            _story_item = {"name": _item_name, "type": "story",
+                                           "rarity": "common", "description": "剧情物品",
+                                           "equippable": False}
+                            shared_inv.append(_story_item)
+                            result.setdefault("items_to_backpack", []).append(_item_name)
 
             # 记录历史并保存
             self._record_history_and_save(state, action, narrative, outcome_type, combat_result, result)
@@ -1717,6 +1754,17 @@ class DeathModeEngine:
                     result["in_combat"] = True
                     result["enemies"] = [e for e in enemies if e.get("hp", 0) > 0]
             else:
+                # 战斗中与NPC话疗：劝降/谈判/威胁/询问/求饶（确定性判定，不单独消耗回合）
+                _cd = self._combat_dialogue(state, action, enemies, sender=sender)
+                if _cd:
+                    if _cd.get("combat_ended"):
+                        # 对话成功结束战斗：记录历史并返回
+                        self._record_history_and_save(state, action, _cd.get("narrative", ""),
+                                                      "combat_dialogue", None, _cd)
+                        return _cd
+                    # 对话未结束战斗 → 本回合一边对话一边继续战斗
+                    result["narrative"] = _cd.get("narrative", result["narrative"])
+                    result["dialogue"] = _cd.get("dialogue")
                 # 执行一回合战斗
                 combat_result = self._combat_round(state, enemies, action_text=action, sender=sender)
                 result["combat_result"] = combat_result
@@ -2040,6 +2088,13 @@ class DeathModeEngine:
                         if cons_item:
                             shared_inv.append(cons_item)
                             result.setdefault("items_to_backpack", []).append(cons_item["name"])
+                        else:
+                            # 剧情物品兜底：装备/消耗品都匹配不到时创建杂项物品，确保进背包
+                            story_item = {"name": item_name, "type": "story",
+                                          "rarity": "common", "description": "剧情物品",
+                                          "equippable": False}
+                            shared_inv.append(story_item)
+                            result.setdefault("items_to_backpack", []).append(item_name)
                 # 任务进度：收集物品触发（传入叙事文本用于 fallback 匹配）
                 try:
                     QuestSystem.record_progress(state, "collect",
@@ -2974,6 +3029,7 @@ class DeathModeEngine:
                             enemy["npc_id"] = ""  # 动态注册时填充
                             enemy["max_hp"] = int(enemy.get("max_hp", 50) * 1.5)
                             enemy["hp"] = enemy["max_hp"]
+
                     enemies.append(enemy)
             if enemies:
                 # 清理 spotted_enemies（已实体化）
@@ -3135,6 +3191,361 @@ class DeathModeEngine:
             ls["buffs"] = alive
         except Exception as e:
             print(f"[DeathMode] 应用食物增益异常: {e}")
+
+    def _combat_dialogue(self, state: Dict, action: str, enemies: list, sender: str = "user") -> Optional[Dict]:
+        """战斗中与NPC对话：劝降/谈判/求和/威胁/询问/求饶（确定性判定，无需LLM）。
+
+        解决"不能一边战斗一边对话"的问题：战斗回合中对话不单独消耗回合，
+        成功结束战斗（combat_ended=True）；失败/询问则对话并入本回合战斗，
+        敌人继续攻击，我方照常作战。
+
+        返回 None → 非对话行为或对方不再理会，走正常战斗回合。
+        返回 dict → 对话结果（combat_ended 决定是否结束战斗）。
+        """
+        import random
+        if not action or not enemies:
+            return None
+        a = (action or "").strip()
+
+        # 强对话意图才拦截，避免"攻击/杀"等战斗口令被误判成对话
+        # 注意："威胁"不入talk_kw，由下方 is_threaten 单独判定（排除"威胁到/的威胁"等隐患语义）
+        talk_kw = ("劝降", "谈判", "求和", "和谈", "言和", "停战", "休战", "停手", "住手",
+                   "交涉", "求饶", "投降", "饶命", "认输", "臣服", "放过我", "饶了我",
+                   "饶命啊", "请饶", "恫吓", "恐吓", "威慑", "吓唬",
+                   "对话", "交谈", "聊天", "聊聊", "沟通", "商量", "谈条件",
+                   "询问", "打听", "问问", "说服", "劝他", "劝她")
+        # ── 单字"问"判定：只匹配作为动词前缀使用的"问XX"，排除"问题/问号/问罪"等非对话语义。
+        # 必须满足：问后面紧跟对象名（含敌人名或疑问词如"他/她/它/对方/敌人"或至少1个字符不是特定字）
+        _is_ask_verb = False
+        if "问" in a:
+            for _seg in a.split("问")[1:]:
+                _head = _seg[:3] if len(_seg) >= 3 else _seg
+                # 排除"问题/问号/问罪/问卷/问诊"这类非对话动词用法
+                if _head and not any(_head.startswith(bw) for bw in ("题", "号", "罪", "卷", "诊", "世", "鼎", "荆", "候", "安")):
+                    _is_ask_verb = True
+                    break
+        # "说话/说"也是常见对话指令（"和XX说话"），但"说XX"也可能是战斗口号，需搭配对话前置词
+        _is_talk_pattern = any(p in a for p in (
+            "说话", "说一下", "说几句话", "聊聊看", "谈一谈", "问一问",
+            "聊几句", "聊一聊", "说说话", "唠几句", "唠唠", "聊聊吧",
+            "谈谈", "说几句", "说一声"))
+        # "威胁到/的威胁/威胁性"是"危及/隐患"含义（如"它的存在威胁到我"），非恫吓动作，需排除
+        is_threaten = (("威胁" in a and not any(k in a for k in ("威胁到", "的威胁", "威胁性", "构成威胁", "存在威胁")))
+                       or any(k in a for k in ("恫吓", "恐吓", "威慑", "吓唬")))
+        if not (any(k in a for k in talk_kw) or _is_ask_verb or _is_talk_pattern or is_threaten):
+            return None
+
+        alive = [e for e in enemies if e.get("hp", 0) > 0]
+        if not alive:
+            return None
+
+        # ── 目标敌人：口令点名 > 别名/类型 > 首个NPC敌人 > 首个敌人 ──
+        target = None
+        for e in alive:
+            _en = e.get("name", "")
+            if _en and _en in a:
+                target = e
+                break
+        if not target:
+            # 反转子串："灰袍神秘人"在口令里，敌人名是"神秘灰袍人"，匹配双方共享字符
+            for e in alive:
+                _en = e.get("name", "")
+                if not _en:
+                    continue
+                # 简化子串互含检查
+                for _word in a.replace("？", "?").replace("。", "").replace("，", "").split():
+                    pass
+                _sk = lambda s: set(s.replace(" ", "").replace("的", ""))
+                # 模糊：如果敌人名与口令有至少3个共同字符且共同字符>=敌人名字符数的60%，直接锁定
+                _chars_action = _sk(a)
+                _chars_en = _sk(_en)
+                _inter = _chars_action & _chars_en
+                if len(_en) >= 3 and len(_inter) >= max(3, int(len(_chars_en) * 0.6)):
+                    target = e
+                    break
+        if not target:
+            for e in alive:
+                if any((e.get("alias", "") and e.get("alias", "") in a) or
+                       (e.get("race", "") and e.get("race", "") in a) or
+                       (e.get("monster_type", "") and e.get("monster_type", "") in a) or
+                       (e.get("species", "") and e.get("species", "") in a)):
+                    target = e
+                    break
+        if not target:
+            # 字符集合相似度：处理"灰袍神秘人"vs"神秘灰袍人"字序颠倒。
+            # 先从口令中截取对话对象名（对话动词后的文本，截到标点/疑问词），再与敌人名比对
+            _cand = ""
+            for _v in ("问问", "询问", "打听", "对话", "交谈", "聊聊", "问", "对", "跟", "和", "向"):
+                if _v in a:
+                    _cand = a.split(_v, 1)[-1].strip()
+                    break
+            for _cut in ("有什么", "什么", "想说什么", "？", "?", "，", ",", "。", "！", "!", "、", "；", ";"):
+                if _cut and _cut in _cand:
+                    _cand = _cand.split(_cut, 1)[0].strip()
+                    break
+            if _cand:
+                _sk = lambda s: set(s.replace(" ", "").replace("的", ""))
+                _best, _best_i = None, 0
+                for e in alive:
+                    _en = e.get("name", "")
+                    if not _en:
+                        continue
+                    _inter = len(_sk(_cand) & _sk(_en))
+                    if 2 <= _inter <= len(_sk(_cand)) and _inter > _best_i:
+                        _best, _best_i = e, _inter
+                target = _best
+        if not target:
+            for e in alive:
+                if e.get("is_npc") or e.get("npc_id"):
+                    target = e
+                    break
+        if not target:
+            target = alive[0]
+
+        tname = target.get("name", "怪物")
+        is_npc = bool(target.get("is_npc") or target.get("npc_id"))
+
+        # ── 汇聚NPC性格/恐惧/关系（战斗敌人携带 is_npc/npc_id → 回查npc_system） ──
+        personality = target.get("personality", "") or ""
+        # 世界BOSS的identity字段（如"凶残的暴君"）直接当personality用
+        if not personality and target.get("identity"):
+            personality = target.get("identity", "")
+            target["personality"] = personality
+        fear = float(target.get("fear", 0) or 0)
+        relationship = float(target.get("relationship", 0) or 0)
+        npc = None
+        if self.npc_system and target.get("npc_id"):
+            npc = self.npc_system.npcs.get(target.get("npc_id"))
+            if npc:
+                personality = npc.personality or personality
+                fear = float(npc.fear or 0)
+                relationship = float(npc.relationship or 0)
+                target["personality"] = personality
+                target["fear"] = fear
+                target["relationship"] = relationship
+
+        char = state["character"]
+        char_level = int(char.get("level", 1) or 1)
+        stats = char.get("stats", {}) or {}
+        strength = float(stats.get("strength", 5) or 5)
+        intelligence = float(stats.get("intelligence", 5) or 5)
+        agility = float(stats.get("agility", 5) or 5)
+        luck = float(stats.get("luck", 5) or 5)
+        best_stat = max(strength, intelligence, agility)
+        threat = char_level * 4 + best_stat * 1.2 + luck * 0.5
+
+        tlevel = int(target.get("level", 1) or 1)
+        tmax = float(target.get("max_hp", 1) or 1)
+        hp_ratio = (float(target.get("hp", 0) or 0)) / tmax if tmax > 0 else 1.0
+
+        resolute_kw = ("沉稳", "坚定", "冷酷", "严肃", "固执", "正义", "果断", "冷漠", "睿智",
+                       "超然", "胆大", "正直", "硬气", "刚烈", "凶残", "残忍", "嗜杀", "无情",
+                       "冷血", "暴虐", "残暴", "嗜血", "疯狂", "阴狠", "狰狞", "高傲", "自负")
+        timid_kw = ("胆小", "懦弱", "怯懦", "惊恐", "紧张", "猥琐", "圆滑", "市侩", "畏缩",
+                    "心虚", "怕事", "怕死", "仁慈", "宽厚", "惜才", "宽容", "心软", "犹豫")
+        is_resolute = any(k in personality for k in resolute_kw)
+        is_timid = any(k in personality for k in timid_kw)
+
+        is_persuade = any(k in a for k in ("劝降", "谈判", "求和", "和谈", "言和", "停战", "休战",
+                                           "停手", "住手", "商量", "谈条件", "交涉", "说服"))
+        is_surrender = any(k in a for k in ("求饶", "投降", "饶命", "认输", "臣服", "放过我",
+                                            "饶了我", "饶命啊", "请饶"))
+        is_ask = not (is_threaten or is_persuade or is_surrender)
+
+        # 对话频率限制：同一敌人(按id，跨战斗自动重置)连续无效对话2次后不再理会，防无限刷
+        counts = state.setdefault("_combat_talked", {})
+        _key = f"e{id(target)}"
+        cnt = counts.get(_key, 0)
+        if cnt >= 2 and not is_threaten:
+            return None
+        counts[_key] = cnt + 1
+
+        def _end_combat(narrative: str):
+            state["in_combat"] = False
+            state["enemies"] = []
+            state["spotted_enemies"] = []
+            for _e in enemies:
+                _e["hp"] = 0
+            return {
+                "narrative": narrative,
+                "dialogue": {"narrative": narrative, "succeeded": True},
+                "combat_ended": True,
+                "in_combat": False,
+                "combat": {"victory": True, "enemy_names": [e.get("name", "") for e in enemies],
+                           "combat_log": [narrative]},
+            }
+
+        def _continue(narrative: str, succeeded: bool = False):
+            return {
+                "narrative": narrative,
+                "dialogue": {"narrative": narrative, "succeeded": succeeded},
+                "combat_ended": False,
+                "in_combat": True,
+            }
+
+        # 纯怪物（非NPC）：大多无灵智，仅威胁有几率吓退。
+        # 但如果是"有名有姓"（如 BOSS/特殊敌人），即使 is_npc=False 也允许对话（例如"灰袍人"这种带称号的）。
+        _has_proper_name = (bool(tname) and len(tname) >= 3
+                            and any(k in tname for k in ("人", "者", "王", "皇", "帝", "使", "士",
+                                                         "师", "客", "侠", "灵", "魔", "龙", "主",
+                                                         "BOSS", "boss", "精英"))
+                            or target.get("is_boss") or target.get("rank") in ("elite", "boss"))
+        if not is_npc and not _has_proper_name and not is_threaten:
+            return _continue(f"你试图与{tname}沟通，可它只是一只没有灵智的怪物，毫无反应地继续扑了上来。")
+        if not is_npc and _has_proper_name:
+            # 有名字的BOSS/精英：当作有人格的NPC处理
+            is_npc = True
+
+        # ── 威胁：威慑 vs 胆量（与恫吓判定一致） ──
+        if is_threaten:
+            resolve = tlevel * 2 + 30 - fear * 0.25
+            if is_resolute:
+                resolve += 12
+            if is_timid:
+                resolve -= 15
+            if npc and npc.role in ("守卫", "护卫", "领袖", "长老", "剑客", "将军", "镖师",
+                                    "教官", "侠客", "隐世高手", "掌门"):
+                resolve += 8
+            success = (threat + random.uniform(0, 22)) > resolve
+            fear_gain = 16 + random.randint(0, 18) if success else 5
+            fear = max(0.0, min(100.0, fear + fear_gain))
+            target["fear"] = fear
+            if npc:
+                npc.change_fear(int(fear_gain))
+                npc.change_relationship(-8 if success else -12)
+            if success:
+                if fear >= 75 or (is_npc and fear >= 55 and hp_ratio < 0.4):
+                    word = (f"你爆发出的威慑让{tname}魂飞魄散，当场跪地求饶：「大人饶命！小的再也不敢了！」战斗结束。"
+                            if fear >= 75 else
+                            f"你的杀气逼得{tname}肝胆俱裂，丢下武器转身就逃，战斗结束。")
+                    return _end_combat(word)
+                word = (f"你的威慑让{tname}脸色煞白，下意识后退半步，气势弱了几分：「你…你想怎样？」但对方仍不肯认输。"
+                        if is_npc else f"你气势汹汹地逼近，{tname}似乎有些发怵，却仍未退却。")
+            else:
+                word = (f"{tname}冷笑一声：「就这点本事也想吓住我？省省吧！」"
+                        if is_npc else f"{tname}被你的挑衅激怒，攻势更猛了！")
+            return _continue(word, success)
+
+        # ── 求饶（我方） ──
+        if is_surrender:
+            base = 0.5 + fear / 100 * 0.25
+            if relationship <= -50:
+                base -= 0.15
+            if is_resolute:
+                base -= 0.2
+            if is_timid:
+                base += 0.15
+            if hp_ratio < 0.3:
+                base += 0.1
+            if random.random() < min(0.9, max(0.05, base)):
+                return _end_combat(
+                    f"{tname}见你服软，冷哼一声收起杀意：「罢了，滚吧，别再出现在我面前。」你侥幸脱身，战斗结束。")
+            return _continue(
+                f"{tname}冷笑：「求饶？太迟了，刀剑无眼！」话音未落，攻势更猛。"
+                if is_npc else f"你对{tname}的求饶毫无回应，对方依旧扑了上来。")
+
+        # ── 劝降/谈判/求和 ──
+        if is_persuade:
+            base = 0.25 + fear / 100 * 0.3
+            if relationship > 20:
+                base += 0.1
+            elif relationship <= -50:
+                base -= 0.15
+            if hp_ratio < 0.3:
+                base += 0.25
+            elif hp_ratio < 0.5:
+                base += 0.15
+            if tlevel > char_level:
+                base -= 0.15
+            if is_resolute:
+                base -= 0.2
+            if is_timid:
+                base += 0.2
+            if random.random() < min(0.9, max(0.05, base)):
+                return _end_combat(
+                    f"你晓之以理、动之以情，{tname}沉默片刻，最终收起兵器：「……也罢，今日休战，各走各路。」战斗结束。")
+            return _continue(
+                f"{tname}冷冷摇头：「你的说辞打动不了我。」话音刚落，刀光再起。"
+                if is_npc else f"你试图与{tname}讲和，可它只是一只没有灵智的怪物，毫无反应地继续攻击。")
+
+        # ── 询问/对话（不结束战斗，对方边打边回应）──
+        # 回复动态化：综合恐惧/好感/血量/性格，不再只给三选一固定台词
+        hint = target.get("dialogue_hint") or (npc.dialogue_hint if npc else "") or ""
+
+        # 根据综合状态动态生成回复
+        _low_hp = hp_ratio < 0.35
+        _mid_hp = 0.35 <= hp_ratio < 0.65
+        _high_fear = fear >= 55
+        _mid_fear = 35 <= fear < 55
+        _foe = relationship <= -30   # 敌对
+        _friend = relationship >= 20  # 友好
+
+        if hint and not _low_hp:
+            # 有预设台词且不在残血 → 用预设台词
+            reply = hint
+        elif _low_hp and (_high_fear or _mid_fear):
+            # 残血 + 有恐惧 → 破防吐露信息
+            if is_timid:
+                reply = "别…别杀我！你想知道什么我都说！求你放过我！"
+            else:
+                reply = random.choice([
+                    f"咳…咳…你真想知道？好，我告诉你，但你得放我一条生路！",
+                    f"你…够狠。行，我透露些消息，只求你手下留情！",
+                    f"咳血…罢了，我认栽。想知道什么，问吧！",
+                ])
+        elif _low_hp and is_resolute:
+            # 残血但性格坚毅 → 嘴硬但透露些许
+            reply = random.choice([
+                "咳…想从我嘴里套话？哼…但我也不是不讲理之人…你想知道什么？",
+                "打吧…就算死，我也…咳…不过你问的事，我可以说说…",
+                "哼…你把我逼到这份上…有什么想问的，快问！",
+            ])
+        elif _high_fear:
+            # 高恐惧（不残血）→ 紧张但不愿多说
+            reply = random.choice([
+                "你…你想知道什么？我说…我说就是了…但别动手！",
+                "我…我说！但只能告诉你一部分…别逼我！",
+                "好…好，我开口…但你得保证不杀我！",
+            ])
+        elif _friend:
+            # 好感高 → 友善，愿意多说
+            reply = random.choice([
+                "既然你问了，我便告诉你…其实…",
+                "你倒是个讲道理的人。行，我透露些消息给你…",
+                "哼，看在你的份上…你想知道什么？",
+            ])
+        elif _foe and is_resolute:
+            # 敌对 + 坚毅 → 嘲讽拒绝
+            reply = random.choice([
+                "想从我嘴里套情报？做梦！有本事打死我！",
+                "哼，凭你？等你能站着走出此地再说吧！",
+                "少废话！要打便打，要杀便杀！",
+            ])
+        elif is_resolute:
+            # 坚毅但不敌对 → 冷淡但给机会
+            reply = random.choice([
+                "哼，等你打赢我再说！",
+                "想让我开口？先证明你有那个实力！",
+                "废话少说，手底下见真章！",
+            ])
+        elif is_timid:
+            # 胆小 → 紧张配合
+            reply = random.choice([
+                "别…别打！你想问什么？我知道的都说…",
+                "我…我说就是了！别伤害我！",
+                "好好好…你问，我答就是…",
+            ])
+        else:
+            # 普通 → 中立回应
+            reply = random.choice([
+                "哼，等你打赢我再说！",
+                "你问这做什么？打完了再谈也不迟。",
+                "边打边说？行吧，但你得先过了我这关！",
+            ])
+
+        return _continue(
+            f"你一边交手一边向{tname}喊话，{tname}边招架边回应：「{reply}」"
+            if is_npc else f"你向{tname}喊话，可它毫无灵智，依旧扑了上来。")
 
     def _combat_round(self, state: Dict, enemies: list, ai_alone: bool = False,
                       action_text: str = "", sender: str = "user",
@@ -3555,6 +3966,7 @@ class DeathModeEngine:
                                 round_log.append(f"  ❤️‍🔥 {attacker.get('name','?')}吸血{ls_amount}HP")
 
             # ── 存活敌人反击（智能承伤 + EnemyAgent）──
+            _round_target_names = []  # 本回合敌人已攻击目标（防集火分散）
             for enemy in enemies:
                 if enemy.get("hp", 0) <= 0:
                     continue
@@ -3687,6 +4099,25 @@ class DeathModeEngine:
                             protector = _rng.choice(other_allies)
                             target_char, target_defense, target_name = protector[1], protector[2], protector[1].get("name", "?")
                             combat_log.append(f"🛡️ {target_name}挺身而出，为{pick[1].get('name','?')}挡下攻击！")
+
+                # ── 防集火分散：无坦克托管时，本回合敌人避免重复锁定同一队友，防止脆皮被集火秒杀 ──
+                if not tank_role:
+                    _tname = target_char.get("name", "?")
+                    if _tname in _round_target_names:
+                        _avail = []
+                        for _rc in (char, user_char):
+                            if _rc.get("hp", 0) > 0 and (_rc is char or user_in_combat) \
+                                    and _rc.get("name", "?") not in _round_target_names:
+                                _avail.append(_rc)
+                        if not _avail:
+                            for _pm in party_in_combat:
+                                if _pm.hp > 0 and _pm.name not in _round_target_names:
+                                    _avail.append(_pm.to_combat_entity())
+                        if _avail:
+                            target_char = _avail[0]
+                            target_name = target_char.get("name", "?")
+                            target_defense = DefenseAction.BLOCK
+                    _round_target_names.append(target_char.get("name", "?"))
 
                 if target_char.get("stagger_turns", 0) > 0:
                     target_defense = DefenseAction.NONE
@@ -4483,21 +4914,58 @@ class DeathModeEngine:
                 result["tactic"] = tactic_id
                 break
 
-        # ── 目标选择 ──
-        target_keywords = ("打", "攻击", "揍", "杀", "瞄准", "锁定", "对")
+        # ── 目标选择：优先匹配显式目标；目标名=动词后内容，截到标点再模糊匹配 ──
+        # 更具体的多字指令优先（如"攻击"先于"打"），避免"打成残血"里的"打"抢先截断目标
+        target_keywords = ("优先攻击", "集火", "锁定", "瞄准", "攻击", "干掉", "先杀", "揍", "杀", "打")
+        target_keywords = sorted(target_keywords, key=len, reverse=True)  # 长词优先
+        alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
+        _matched = None
         for kw in target_keywords:
-            if kw in t:
-                idx = t.index(kw) + len(kw)
-                target_name = t[idx:].strip()
-                if target_name:
-                    # 模糊匹配敌人
-                    alive_enemies = [e for e in enemies if e.get("hp", 0) > 0]
-                    for e in alive_enemies:
-                        if target_name in e.get("name", "") or e.get("name", "") in target_name:
-                            result["ai_target"] = e
-                            result["user_target"] = e
+            if kw not in t:
+                continue
+            raw = t.split(kw, 1)[1].strip()
+            if not raw:
+                continue
+            # 目标名截取到第一个标点前（句中后续是"打成残血/打到死"等结果短语，不属目标）
+            _cuts = [p for p in (raw.find("，"), raw.find(","), raw.find("。"), raw.find("；"),
+                                 raw.find(";"), raw.find("！"), raw.find("!"), raw.find("？"),
+                                 raw.find("?"), raw.find("、")) if p != -1]
+            if _cuts:
+                raw = raw[:min(_cuts)].strip()
+            if not raw:
+                continue
+            # 模糊匹配敌人：子串 → 别名/系别 → 字符集合相似度（处理"灰袍神秘人"vs"神秘灰袍人"字序颠倒）
+            _m = None
+            for e in alive_enemies:
+                _en = e.get("name", "")
+                if _en and (raw in _en or _en in raw):
+                    _m = e
+                    break
+            if not _m:
+                for e in alive_enemies:
+                    for _al in (e.get("alias", ""), e.get("race", ""), e.get("monster_type", ""), e.get("species", "")):
+                        if _al and (_al in raw or raw in _al):
+                            _m = e
                             break
+                    if _m:
+                        break
+            if not _m:
+                _sk = lambda s: set(s.replace(" ", "").replace("的", ""))
+                _best, _best_i = None, 0
+                for e in alive_enemies:
+                    _en = e.get("name", "")
+                    if not _en:
+                        continue
+                    _inter = len(_sk(raw) & _sk(_en))
+                    if 2 <= _inter <= len(_sk(raw)) and _inter > _best_i:
+                        _best, _best_i = e, _inter
+                _m = _best
+            if _m:
+                _matched = _m
                 break
+        if _matched:
+            result["ai_target"] = _matched
+            result["user_target"] = _matched
 
         # ── 智能自动选择技能（用户未指定技能时）──
         # 优先级：用户口令明确指定 > 智能选择（治疗/辅助优先保命，输出按效率+随机）> 普通攻击

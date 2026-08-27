@@ -41,10 +41,18 @@ const DATA = (() => {
   // ---------- 装备定义 ----------
   // 鱼竿 rods: cast(抛投力) fight(刺鱼/控鱼加成)
   const RODS = [
-    { id:'rod1', name:'木竿',      price:0,   cast:40,  fight:10,  desc:'新手木竿，够用。' },
-    { id:'rod2', name:'碳素竿',    price:300, cast:60,  fight:20,  desc:'轻盈坚韧，抛得更远。' },
-    { id:'rod3', name:'鲟鱼重竿',  price:1200,cast:80,  fight:35,  desc:'专为巨物打造的强竿。' },
-    { id:'rod4', name:'深渊神竿',  price:4000,cast:100, fight:55,  desc:'传世神兵，无所不钓。' },
+    { id:'rod1', name:'木竿',      icon:'🎣', price:0,   cast:40,  fight:10,  desc:'新手木竿，够用。',
+      body:'#8a5a2a', tip:'#a8723a', len:90, lw:5, tipLen:24, tipLw:3,
+      reel:'#7a6a55', hand:'#6b4e2e', style:'wood' },
+    { id:'rod2', name:'碳素竿',   icon:'🎋', price:300, cast:60,  fight:20,  desc:'轻盈坚韧，抛得更远。',
+      body:'#3b4450', tip:'#55606e', len:105, lw:3.5, tipLen:32, tipLw:2,
+      reel:'#93a0ae', hand:'#2f3742', style:'carbon' },
+    { id:'rod3', name:'鲟鱼重竿', icon:'⚓', price:1200,cast:80,  fight:35,  desc:'专为巨物打造的强竿。',
+      body:'#5a4632', tip:'#7c6040', len:80, lw:8, tipLen:20, tipLw:4,
+      reel:'#8a6b3f', hand:'#4a3826', style:'heavy' },
+    { id:'rod4', name:'深渊神竿', icon:'🔱', price:4000,cast:100, fight:55,  desc:'传世神兵，无所不钓。',
+      body:'#1a5a66', tip:'#2e8a99', len:120, lw:3, tipLen:40, tipLw:2,
+      reel:'#3fd0e0', hand:'#0f3b44', style:'abyss' },
   ];
   // 卷线轮 reels: speed(收线速度) drag(泄力/张力吸收)
   const REELS = [

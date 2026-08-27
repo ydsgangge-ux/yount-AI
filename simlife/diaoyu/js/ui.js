@@ -35,6 +35,7 @@ const UI = (() => {
       const div = document.createElement('div');
       div.className = 'item-card' + (owned ? ' equipped' : '');
       div.innerHTML = `
+        <div class="ic-icon">${def.icon || '🎣'}</div>
         <div class="ic-name">${def.name}</div>
         <div class="ic-stats">${equipStats(item.type, def).map(s => `<span>${s}</span>`).join('')}</div>
         <div class="ic-desc">${def.desc}</div>
@@ -65,6 +66,7 @@ const UI = (() => {
       const div = document.createElement('div');
       div.className = 'item-card' + (owned ? ' owned' : '') + (equipped ? ' equipped' : '');
       div.innerHTML = `
+        <div class="ic-icon">${def.icon || '🎣'}</div>
         <div class="ic-name">${def.name}</div>
         <div class="ic-stats">${equipStats(type, def).map(s => `<span>${s}</span>`).join('')}</div>
         <div class="ic-desc">${def.desc}</div>
@@ -170,6 +172,9 @@ const UI = (() => {
     const reel = DATA.REELS.find(x => x.id === eq.reel.id);
     const line = DATA.LINES.find(x => x.id === eq.line.id);
     const bait = DATA.BAITS.find(x => x.id === eq.bait.id);
+    // 鱼竿：更新图标+名称
+    const rodSlot = document.querySelector('.equip-slot[data-slot="rod"] .es-icon');
+    if (rodSlot) rodSlot.textContent = rod.icon || '🎣';
     document.getElementById('eq-rod').textContent = rod.name;
     document.getElementById('eq-reel').textContent = reel.name;
     document.getElementById('eq-line').textContent = line.name;

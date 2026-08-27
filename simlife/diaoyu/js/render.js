@@ -251,21 +251,58 @@ const Render = (() => {
   // ===== 鱼竿 =====
   function drawRod() {
     const e = Game.engine;
+    const rod = Game.equip().rod;
     const baseX = W * 0.08, baseY = H * 0.92;
     const ang = e.phase === 'aim' ? -0.5 : -0.9;
-    const len = 90;
-    ctx.strokeStyle = '#8a5a2a';
-    ctx.lineWidth = 5;
+    const len = rod.len || 90;
+    const lw = rod.lw || 5;
+    const tipLen = rod.tipLen || 24;
+    const tipLw = rod.tipLw || 3;
+    const ex = baseX + Math.cos(ang) * len;
+    const ey = baseY + Math.sin(ang) * len;
+
+    // 竿身（主段）
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = rod.body || '#8a5a2a';
+    ctx.lineWidth = lw;
     ctx.beginPath();
     ctx.moveTo(baseX, baseY);
-    ctx.lineTo(baseX + Math.cos(ang) * len, baseY + Math.sin(ang) * len);
+    ctx.lineTo(ex, ey);
     ctx.stroke();
-    ctx.strokeStyle = '#a8723a';
-    ctx.lineWidth = 3;
+
+    // 竿尖（更细、上翘）
+    ctx.strokeStyle = rod.tip || '#a8723a';
+    ctx.lineWidth = tipLw;
     ctx.beginPath();
-    ctx.moveTo(baseX + Math.cos(ang) * len, baseY + Math.sin(ang) * len);
-    ctx.lineTo(baseX + Math.cos(ang - 0.15) * (len + 24), baseY + Math.sin(ang - 0.15) * (len + 24));
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex + Math.cos(ang - 0.15) * tipLen, ey + Math.sin(ang - 0.15) * tipLen);
     ctx.stroke();
+
+    // 握把（底部的深色短段）
+    const gx = baseX + Math.cos(ang) * (len * 0.18);
+    const gy = baseY + Math.sin(ang) * (len * 0.18);
+    ctx.strokeStyle = rod.hand || '#6b4e2e';
+    ctx.lineWidth = lw + 2;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(gx, gy);
+    ctx.stroke();
+
+    // 卷线轮（在握把上方的一个圆/椭圆）
+    const rx = baseX + Math.cos(ang) * (len * 0.34);
+    const ry = baseY + Math.sin(ang) * (len * 0.34);
+    ctx.save();
+    ctx.translate(rx, ry);
+    ctx.rotate(ang);
+    ctx.fillStyle = rod.reel || '#7a6a55';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, lw + 4, lw + 1, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
   }
 
   // ===== 粒子系统 =====
