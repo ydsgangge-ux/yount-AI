@@ -182,6 +182,8 @@ const LifeSkillsUI = {
     const foods = d.foods || [];
     const fish = d.fish_caught || [];
     const eq = d.equipment || [];
+    const smats = d.shared_materials || [];
+    const sitems = d.shared_items || [];
     const typeOrder = { ingredient: 0, ore: 1, misc: 2, bait: 3 };
     const sorted = [...inv].sort((a, b) => (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9));
 
@@ -195,6 +197,17 @@ const LifeSkillsUI = {
 
     main.innerHTML = `
       <h4 style="margin:0 0 10px;color:#c9d1d9;font-size:14px;">🎒 背包与产出</h4>
+      ${card('📦 共享背包', '#f0883e', sitems, it => `
+        <div style="padding:8px;background:${it.is_material?'#2d2d0d':'#1d1525'};border:1px solid ${this._rarityColor(it.rarity)};border-radius:7px;">
+          <div style="font-size:12px;color:${this._rarityColor(it.rarity)};">${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
+          <div style="font-size:9px;color:#8b949e;margin:2px 0;">${it.is_material?'生活材料':'可拆解'}</div>
+          ${it.is_material
+            ? `<button onclick="LifeSkillsUI._transferMaterial('${it.name}')" style="width:100%;padding:3px;background:#3d2a1a;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">⬇ 存入材料包</button>`
+            : `<div style="display:flex;gap:4px;">
+                <button onclick="LifeSkillsUI._dismantle('${it.name}')" style="flex:1;padding:3px;background:#2d1a3a;border:1px solid #a371f7;border-radius:4px;color:#a371f7;cursor:pointer;font-size:10px;">🔧 拆解</button>
+                <button onclick="LifeSkillsUI._openEnchant('${it.name}')" style="flex:1;padding:3px;background:#2d2d0d;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">✨附魔</button>
+              </div>`}
+        </div>`)}
       ${card('🧱 原材料', '#58a6ff', sorted, it => `
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
           <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
@@ -236,6 +249,35 @@ const LifeSkillsUI = {
           ${it.source}：${it.target==='user'?'玩家':'AI'} ${it.type==='attack'?'攻击':'防御'}+${it.value}（剩${it.turns}回合）
         </div>`) : ''}
     `;
+  },
+
+  async _dismantle(name) {
+    if (!confirm(`要拆解「${name}」吗？拆解后该物品从共享背包消失，变为生活材料，可再用于锻造/附魔。`)) return;
+    try {
+      const resp = await fetch('/api/death-mode/life-skills/dismantle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const r = await resp.json();
+      if (r.error) { alert(r.message || '拆解失败'); return; }
+      alert(r.message);
+      await this._reload('bag');
+      this._switchTab('bag');
+    } catch (e) { alert('拆解失败：' + e.message); }
+  },
+
+  async _transferMaterial(name) {
+    try {
+      const resp = await fetch('/api/death-mode/life-skills/transfer-material', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const r = await resp.json();
+      if (r.error) { alert(r.message || '存入失败'); return; }
+      alert(r.message);
+      await this._reload('bag');
+      this._switchTab('bag');
+    } catch (e) { alert('存入失败：' + e.message); }
   },
 
   _buffDesc(b) {
@@ -385,11 +427,13 @@ const LifeSkillsUI = {
     if (!el) return;
     const name = this._enchantItem;
     if (!name) { el.innerHTML = ''; return; }
-    const item = (this._data.equipment || []).find(e => e.name === name);
+    const item = (this._data.equipment || []).find(e => e.name === name)
+      || (this._data.shared_items || []).find(s => s.name === name);
     if (!item) { el.innerHTML = ''; return; }
+    const isShared = (this._data.equipment || []).every(e => e.name !== name);
     el.innerHTML = `
       <div style="padding:12px;background:#2d2d0d;border:1px solid #f0883e;border-radius:10px;">
-        <div style="font-size:13px;color:#f0883e;font-weight:600;margin-bottom:8px;">✨ 附魔 <b>${item.icon} ${item.name}</b> ${item.enchant?`<span style="font-size:11px;color:#3fb950;">（已附魔：${item.enchant.name}）</span>`:''}</div>
+        <div style="font-size:13px;color:#f0883e;font-weight:600;margin-bottom:8px;">✨ 附魔 <b>${item.icon||'⬜'} ${item.name}</b> ${isShared?`<span style="font-size:10px;color:#58a6ff;">（共享背包携带）</span>`:''}</div>
         <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">选择附魔材料（附魔石/符文/水晶等），由大模型为装备附加属性。材料越稀有，附魔越强。</div>
         <div id="enchant-free-mats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
         <button onclick="LifeSkillsUI._submitEnchant()" ${item.enchant?'disabled':''} style="padding:6px 16px;background:linear-gradient(135deg,#f0883e,#d29922);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:12px;font-weight:bold;">✨ 开始附魔</button>
@@ -457,7 +501,9 @@ const LifeSkillsUI = {
 
   _matName(id) {
     const m = (this._data.shop || []).find(s => s.id === id);
-    return m ? m.name : id;
+    if (m) return m.name;
+    const it = (this._data.inventory || []).find(i => i.id === id);
+    return it ? it.name : id;
   },
 
   // 食材品质等级徽标（1普通~5珍稀）

@@ -1530,6 +1530,35 @@ def api_death_mode_life_skills():
         return {"error": "no_game"}
     ls = state["life_state"]
     char = state.get("character", {})
+    # 共享背包物品（去重合并）：可拆解 + 判别是否材料可存入
+    shared_items = []
+    from collections import OrderedDict as _OD
+    _sacc = _OD()
+    for it in state.get("shared_inventory", []):
+        itname = it.get("name", "")
+        if not itname:
+            continue
+        key = itname
+        if key not in _sacc:
+            rar = it.get("rarity") or it.get("quality") or "common"
+            _sacc[key] = {"name": itname, "rarity": rar,
+                          "is_material": isinstance(LS.match_material_by_name(itname), dict),
+                          "qty": 0}
+        qty = it.get("qty", 1)
+        try:
+            qty = int(qty) or 1
+        except Exception:
+            qty = 1
+        _sacc[key]["qty"] += max(1, qty)
+    shared_items = list(_sacc.values())
+    # 共享背包里可存入生活材料包的材料（按名称匹配并合并数量）
+    shared_materials = []
+    for si in shared_items:
+        mat = LS.match_material_by_name(si["name"])
+        if not mat:
+            continue
+        shared_materials.append({"id": mat["id"], "name": mat["name"], "icon": mat["icon"],
+                                 "type": mat["type"], "qty": si["qty"]})
     overall = max((s.get("level", 1) for s in ls["skills"].values()), default=1)
     fg = ls.get("fish_gear") or {}
     # 当前异世界区域 → 决定可钓到的水域（不同区域不同鱼）
@@ -1557,6 +1586,8 @@ def api_death_mode_life_skills():
         "recipes": LS.COOK_RECIPES,
         "blueprints": LS.FORGE_BLUEPRINTS,
         "enchant_materials": LS.enchant_materials(),
+        "shared_materials": shared_materials,
+        "shared_items": shared_items,
         "fish_table": LS.FISH_TABLE,
         "fish_zones": LS.FISH_ZONES,
         "fish_gear_rod": LS.FISH_RODS,
@@ -1960,12 +1991,19 @@ def api_death_mode_life_enchant(data: dict):
         return {"error": "no_materials", "message": "请选择附魔材料"}
     if not LS.has_materials(ls["inventory"], materials):
         return {"error": "no_materials", "message": "附魔材料不足"}
-    # 查找装备（锻造装备或钓鱼装备）
+    # 查找装备（锻造装备 / 钓鱼装备 / 打怪爆的共享背包装备）
     item = next((e for e in ls["equipment"] if e["name"] == name and e.get("qty", 0) > 0), None)
     target = "equipment"
     if not item:
         item = next((f for f in ls["fish_caught"] if f["name"] == name), None)
         target = "fish_caught"
+    shared_enchant_idx = None
+    if not item:
+        shared = state.get("shared_inventory") or []
+        shared_enchant_idx = next((i for i, it in enumerate(shared) if it.get("name") == name), None)
+        if shared_enchant_idx is not None:
+            item = shared[shared_enchant_idx]
+            target = "shared_inventory"
     if not item:
         return {"error": "not_found", "message": "没有这件可附魔的物品"}
     if item.get("enchant"):
@@ -2022,7 +2060,7 @@ def api_death_mode_life_enchant(data: dict):
         msg += "；特效：" + "、".join(eff.get("name", "") for eff in effects)
     return {"success": True, "message": msg,
             "equipment": ls["equipment"], "fish_caught": ls["fish_caught"],
-            "inventory": ls["inventory"]}
+            "inventory": ls["inventory"], "shared_inventory": state.get("shared_inventory") or []}
 
 
 @app.post("/api/death-mode/life-skills/fish")
@@ -2328,6 +2366,114 @@ def api_death_mode_life_equip_item(data: dict):
     })
     engine._save()
     return {"success": True, "message": f"已将{item['name']}放入共享背包", "equipment": ls["equipment"]}
+
+
+@app.post("/api/death-mode/life-skills/dismantle")
+def api_death_mode_life_dismantle(data: dict):
+    """拆解共享背包里的物品为生活材料（万物皆可锻造）。
+
+    body: {"name": 物品名}。
+    普通品质 → 算法按类型/稀有度折算基础材料（确定性）；
+    高稀(epic/legendary/紫/橙) → 调 LLM 生成可含预设之外的特殊材料。
+    产物进生活材料包，原物品从共享背包移除。
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    name = (data.get("name") or "").strip()
+    ls = state["life_state"]
+    shared = state.get("shared_inventory") or []
+    idx = next((i for i, it in enumerate(shared) if it.get("name") == name), None)
+    if idx is None:
+        return {"error": "not_found", "message": "共享背包里没有该物品"}
+    item = shared[idx]
+    rar = str(item.get("rarity") or "") or str(item.get("quality") or "")
+    is_rare = rar.lower() in ("epic", "legendary") or rar in ("史诗", "传说", "紫", "橙")
+
+    if is_rare:
+        # 高稀有：LLM 生成特色材料（可含预设之外），并限制 1-3 种防失控
+        llm = _life_llm_json(
+            f"你是炼金拆解师。把高稀有物品「{item.get('name')}」拆解成锻造/附魔材料。\n"
+            f"只输出JSON：{{\"materials\":[{{\"id\":\"唯一id\",\"name\":\"材料名(2-6字)\","
+            f"\"icon\":\"一个emoji\",\"qty\":整数1-8}}]}},材料1-3种，id用英文字母，"
+            f"可创造预设之外的新奇稀有材料。", max_tokens=300)
+        mats = []
+        for m in (llm or {}).get("materials", [])[:3]:
+            mid = str(m.get("id") or "")[:24]
+            if not mid:
+                continue
+            try:
+                q = max(1, min(8, int(m.get("qty") or 1)))
+            except Exception:
+                q = 1
+            mats.append({"id": mid, "name": str(m.get("name") or mid)[:10],
+                         "icon": str(m.get("icon") or "⚗️")[:4], "qty": q,
+                         "type": "rare"})
+        if not mats:
+            mats = LS.dismantle_basic(item)
+    else:
+        mats = LS.dismantle_basic(item)
+
+    # 移出共享背包（同名单次拆一件）
+    shared.pop(idx)
+    # 产物进生活材料包
+    for m in mats:
+        LS.add_materials(ls["inventory"], m["id"], m["qty"], m.get("name", m["id"]), m.get("icon", "❔"))
+    prod_desc = "、".join(f"{m.get('name', m['id'])}×{m['qty']}" for m in mats)
+    ls["last_activity"] = f"拆解{item.get('name')}获得{prod_desc}"
+    engine._log_action("life_skill", {
+        "skill": "拆解", "action": f"拆解{item.get('name')}",
+        "detail": {"物品": item.get("name"), "获得": prod_desc,
+                   "方式": "炼金拆解" if is_rare else "工坊拆解"},
+    })
+    engine._save()
+    return {"success": True, "message": f"拆解成功！获得{prod_desc}",
+            "yields": mats, "inventory": ls["inventory"],
+            "shared_inventory": shared}
+
+
+@app.post("/api/death-mode/life-skills/transfer-material")
+def api_death_mode_life_transfer_material(data: dict):
+    """把共享背包里的生活材料存入生活材料包（当作便捷仓库中转）。
+
+    body: {"name": "材料名"}。按名称匹配 RAW_MATERIALS，匹配成功的所有同名
+    共享物品全部转出并累加到 life_state.inventory。
+    """
+    from simlife.backend import life_skills as LS
+    engine, state = _life_engine()
+    if not state:
+        return {"error": "no_game"}
+    name = (data.get("name") or "").strip()
+    ls = state["life_state"]
+    shared = state.get("shared_inventory") or []
+    mat = LS.match_material_by_name(name)
+    if not mat:
+        return {"error": "not_material", "message": "这不是生活材料，无法存入"}
+    # 收集所有同名共享物品并转出
+    total = 0
+    kept = []
+    for it in shared:
+        if it.get("name") == name:
+            qty = it.get("qty", 1)
+            try:
+                qty = int(qty) or 1
+            except Exception:
+                qty = 1
+            total += max(1, qty)
+        else:
+            kept.append(it)
+    if total <= 0:
+        return {"error": "not_found", "message": "共享背包里没有该材料"}
+    state["shared_inventory"] = kept
+    LS.add_materials(ls["inventory"], mat["id"], total, mat["name"], mat["icon"])
+    engine._log_action("life_skill", {
+        "skill": "仓库", "action": f"将共享背包中的{mat['name']}×{total}存入生活材料包",
+        "detail": {"材料": mat["name"], "数量": total},
+    })
+    engine._save()
+    return {"success": True, "message": f"已存入{mat['name']}×{total}",
+            "inventory": ls["inventory"]}
 
 
 @app.post("/api/death-mode/life-skills/sell-fish")

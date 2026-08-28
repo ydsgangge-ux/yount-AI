@@ -635,6 +635,105 @@ class DeathModeEngine:
             "choices": scene["choices"],
         }
 
+    def _give_item_to_npc(self, state: Dict, action: str, sender: str = "user") -> Optional[Dict]:
+        """把物品/钱送给NPC：校验两个背包(shared_inventory + 生活材料包)与金币，
+        从真实库存扣除后再给，禁止凭空送（无法凭空造出"斩杀一切的神器"）。
+        匹配成功返回叙事结果；无法确定对象/未识别回报 返回 None 走常规流程。
+        """
+        import re as _re
+        a = action.strip()
+        if state.get("in_combat"):
+            return None
+        # 定位目标NPC（同区域，优先按名字，其次"他/她"且当前区域唯一）
+        region = self.world_map.current_region_id if self.world_map else None
+        cands = [n for n in (self.npc_system.npcs.values() if self.npc_system else [])
+                 if getattr(n, "alive", True) and (not region or n.location == region)]
+        if not cands:
+            return None
+        npc = None
+        for n in cands:
+            if n.name and n.name in a:
+                npc = n
+                break
+        if not npc and len(cands) == 1 and any(h in a for h in ("他", "她", "它", "这位", "那位", "对方", "这人")):
+            npc = cands[0]
+        if not npc:
+            return None
+        npc_name = npc.name
+
+        actor = state.get("user_character", {}) if sender == "user" else state.get("character", {})
+
+        # ── 给钱：只识别明确的货币量词，避免把物品数量当钱 ──
+        amount = 0
+        _money_unit = ("金币", "银两", "两", "块", "文钱", "文", "铜币")
+        if any(u in a for u in _money_unit):
+            mm = _re.search(r'(\d+)\s*(金币|银两|两|块|文钱|文|铜币)?', a)
+            if mm:
+                amount = int(mm.group(1))
+        if amount > 0:
+            gold = actor.get("gold", 0)
+            if gold < amount:
+                return {"narrative": f"你的钱袋里只有 {gold} 金币，不够给{npc_name} {amount} 金币，给不出来。",
+                        "scene_change": False}
+            actor["gold"] -= amount
+            npc.relationship = (npc.relationship or 0) + 1 + min(5, amount // 50)
+            self._log_action("npc_interact", {"npc_name": npc_name, "interaction": "give_money",
+                                              "amount": amount, "金币": f"-{amount}"})
+            self._save()
+            res = {"narrative": f"你从钱袋里数出{amount}金币，递到{npc_name}手中。对方接过收下，神色缓和了些。",
+                   "scene_change": False}
+            self._record_history_and_save(state, action, res["narrative"], "social_response", None, res)
+            return res
+
+        # ── 给物品：从两个背包找（共享背包 + 生活材料包） ──
+        # 数量（中文/数字 + 量词，如"两条""3个"）
+        qty = 1
+        mq = _re.search(r'(\d+|[一二两三四五六七八九十])\s*(个|条|块|只|份|棵|堆|枚|把|瓶|袋)', a)
+        if mq:
+            _cn = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+            qty = int(mq.group(1)) if mq.group(1).isdigit() else _cn.get(mq.group(1), 1)
+        shared = state.get("shared_inventory", [])
+        ls = state.get("life_state") or {}
+        life = ls.get("inventory", [])
+        found, source = None, None
+        for it in shared:
+            if it.get("name") and it["name"] in a and it["name"] != npc_name:
+                found, source = it, "shared"
+                break
+        if not found:
+            for it in life:
+                if it.get("name") and it["name"] in a and it["name"] != npc_name:
+                    found, source = it, "life"
+                    break
+        if not found:
+            return {"narrative": f"你的两个背包里都没有对方想要的那样东西，没办法凭空送出去。", "scene_change": False}
+
+        item_name = found["name"]
+        have = found.get("qty", 1)
+        if have < qty:
+            return {"narrative": f"你只有 {have} 份 {item_name}，不够送 {qty} {mq.group(2) if mq else ''}，给不出来。", "scene_change": False}
+        # 扣减
+        if source == "shared":
+            if "qty" in found:
+                found["qty"] -= qty
+                if found["qty"] <= 0:
+                    state["shared_inventory"] = [i for i in shared if i is not found]
+            else:
+                state["shared_inventory"] = [i for i in shared if i is not found]
+        else:
+            found["qty"] -= qty
+            if found["qty"] <= 0:
+                ls["inventory"] = [i for i in life if i is not found]
+
+        npc.relationship = (npc.relationship or 0) + 2
+        self._log_action("npc_interact", {"npc_name": npc_name, "interaction": "give_item",
+                                          "item": item_name, "qty": qty})
+        self._save()
+        res = {"narrative": f"你从背包里取出{qty}份{item_name}，递到{npc_name}手中。对方接过收下，看着这意外的馈赠，态度松动了一些。",
+               "scene_change": False}
+        self._record_history_and_save(state, action, res["narrative"], "social_response", None, res)
+        return res
+
     def _eat_food_from_action(self, state: Dict, action: str, sender: str = "user") -> Optional[Dict]:
         """对话触发"吃菜"：输入中提及料理/鱼名（如"吃清汤鱼片蘑菇"）时直接食用。
         匹配成功则扣除一份并应用增益/回复，返回叙事结果；未匹配返回 None 走正常流程。
@@ -898,6 +997,19 @@ class DeathModeEngine:
                 _eat_result = self._eat_food_from_action(state, action, sender)
                 if _eat_result:
                     return _eat_result
+
+        # ── 给NPC物品/钱：校验双背包+金币真实扣除，禁止凭空送 ──
+        # 只要动作含"给予"类动词且指向明确接收对象(他/她/对方/NPC名)，就进入强校验，
+        # 由 _give_item_to_npc 定位NPC并从两个背包+金币核实真实库存，缺货即拒绝。
+        # 否则(如"递给灰布斗篷男子")会被LLM凭空接走 → "斩杀一切的神器"漏洞。
+        # _give_item_to_npc 内部定位不到NPC会返回 None → 不拦截，走常规流程，不误伤正常动作。
+        _GIVE_VERBS = ("给", "递", "送", "赠", "塞", "奉", "犒赏", "贿赂")
+        _GIVE_TARGET = ("他", "她", "对方", "那位", "这位", "这人", "此人")
+        if not in_combat and action and \
+                any(v in action for v in _GIVE_VERBS) and any(t in action for t in _GIVE_TARGET):
+            _give_result = self._give_item_to_npc(state, action, sender)
+            if _give_result:
+                return _give_result
 
         # 恢复/使用物品意图 → 不触发扫荡
         restore_keywords = ("药水", "恢复", "治疗", "疗伤", "使用", "喝", "服用", "补给",

@@ -404,6 +404,103 @@ def _find_mat(id_: str) -> Optional[Dict]:
     return None
 
 
+def match_material_by_name(name) -> Optional[Dict]:
+    """按名称匹配生活材料（用于从共享背包存入生活材料包）。
+
+    优先精确匹配标准名称；再尝试去掉「矿石/矿/块」等后缀后匹配，
+    覆盖 LLM 叙事里出现的常见变体（如「铁矿石」「铁矿」→ 铁矿石）。
+    """
+    if not name:
+        return None
+    n = str(name).strip()
+    if not n:
+        return None
+    for m in RAW_MATERIALS:
+        if m["name"] == n:
+            return m
+    for suf in ("矿石", "碎石", "矿", "块", "锭"):
+        if n.endswith(suf) and len(n) > len(suf):
+            base = n[: -len(suf)]
+            for m in RAW_MATERIALS:
+                if m["name"] == base or m["name"] == base + suf:
+                    return m
+    return None
+
+
+# 拆解词库：把共享背包里的任意物品（打怪掉落装备 / 剧情杂物）拆成可锻造材料
+# 使「万物皆可锻造」成立：装备/杂物 → 分解 → 生活材料 → 锻造/附魔
+_DISMAT_MINERAL_HINT = ("剑", "锤", "斧", "匕首", "刃", "矛", "枪", "弓", "盾", "刀", "钉", "铠", "甲", "盔",
+                        "铁", "铜", "银", "金", "秘银", "精金", "瑟银")
+_DISMAT_WOOD_HINT = ("木", "杖", "棍", "棒", "弓")
+_DISMAT_LEATHER_HINT = ("皮", "革", "靴", "鞋", "护", "袍", "衣", "甲", "帽", "头", "腰", "带")
+_DISMAT_CLOTH_HINT = ("袍", "衣", "斗篷", "披肩", "布", "丝", "法", "书")
+_DISMAT_ENCHANT_HINT = ("石", "晶", "尘", "精华", "符文", "荧光", "魔法", "星辰")
+
+
+def dismantle_basic(item) -> List[Dict]:
+    """把一件普通（非高稀有）物品算法拆解成基础生活材料。
+
+    依据物品名称的关键词判定材质倾向，产出对应预设材料（可锻造），
+    数量由稀有度/品质等级折算。返回 [{id,name,icon,qty,type}, ...]。
+    """
+    name = str(item.get("name") or item.get("id") or "杂物")
+    # 稀有度/能量/等级折算数量
+    try:
+        lv = int(item.get("lv") or item.get("level") or 1)
+    except Exception:
+        lv = 1
+    try:
+        bonus = int(item.get("bonus") or item.get("power") or 0)
+    except Exception:
+        bonus = 0
+    rar = str(item.get("rarity") or "") or str(item.get("quality") or "")
+    _rq = {"common": 1, "uncommon": 2, "rare": 3, "epic": 4, "legendary": 5,
+           "普通": 1, "优秀": 2, "稀有": 3, "史诗": 4, "传说": 5, "紫": 4, "橙": 5}
+    grade = _rq.get(rar.lower() if not rar.isascii() else rar, 1)
+    scale = max(1, grade + min(3, max(0, lv - 1) // 2) + min(2, round(bonus / 12)))
+
+    outs = []
+    def _add(mid, q):
+        m = _find_mat(mid)
+        if not m or q <= 0:
+            return
+        for o in outs:
+            if o["id"] == mid:
+                o["qty"] += q
+                return
+        outs.append({"id": mid, "name": m["name"], "icon": m["icon"], "qty": q, "type": m.get("type", "misc")})
+
+    # 矿石类主料（默认铁）并按稀有度抬级
+    miner = "iron_ore"
+    if grade >= 5:
+        miner = "elementium"
+    elif grade == 4:
+        miner = "mithril"
+    elif grade == 3:
+        miner = "silver_ore"
+    hit_any = False
+    if any(h in name for h in _DISMAT_MINERAL_HINT):
+        _add(miner, 2 + scale)
+        _add("coal", 1 + scale)
+        hit_any = True
+    if any(h in name for h in _DISMAT_WOOD_HINT):
+        _add("wood", 1 + scale // 2)
+        hit_any = True
+    if any(h in name for h in _DISMAT_LEATHER_HINT):
+        _add("leather", 1 + scale // 2)
+        hit_any = True
+    if any(h in name for h in _DISMAT_CLOTH_HINT):
+        _add("string", 1)
+        hit_any = True
+    if any(h in name for h in _DISMAT_ENCHANT_HINT) and grade >= 4:
+        _add("magic_stone", 1)
+        hit_any = True
+    # 兜底：什么都未命中，至少给一份通用材料
+    if not outs:
+        _add("wood", 1)
+    return outs
+
+
 def material_grade(id_: str) -> int:
     """食材品质等级（1普通~5珍稀）：决定自由烹饪的加成与品质提升。
 
