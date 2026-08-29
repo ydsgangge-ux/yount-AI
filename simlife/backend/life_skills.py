@@ -427,6 +427,40 @@ def match_material_by_name(name) -> Optional[Dict]:
     return None
 
 
+# 生态册/LLM 自由命名的掉落材料 → 材料库兜底映射（按中英文关键词分类）。
+# 让"万物皆可锻造"在任意语言、任意命名下都成立：专属掉落总能落到可锻造基础材料。
+# 注意顺序：越靠前的规则越特殊（龙鳞/魔核），须先于通用规则匹配。
+_DROP_MATERIAL_FALLBACK = [
+    ("dragon_scale", ("龙鳞", "鳞"), ("scale", "dragon")),
+    ("demon_core", ("魔核", "恶魔"), ("demon",)),
+    ("element_essence", ("元素",), ("elemental",)),
+    ("leather", ("皮", "毛", "牙", "骨", "翼", "爪"), ("pelt", "hide", "fur", "fang", "claw", "bone", "wing", "beast", "tusk", "leather")),
+    ("wood", ("木", "枝", "藤", "根"), ("wood", "timber", "branch", "root", "vine", "stalk", "bark")),
+    ("string", ("丝", "线", "布"), ("silk", "thread", "fabric", "cloth", "string", "webbing")),
+    ("iron_ore", ("矿", "铁", "石", "碎片", "齿轮", "金属"), ("iron", "stone", "metal", "gear", "ingot", "golem", "chunk", "granite", "ore ")),
+    ("magic_stone", ("晶", "尘", "精华", "符文", "核"), ("essence", "dust", "rune", "core", "mana", "ember", "crystal", "gem", "fragment")),
+]
+
+
+def map_drop_material(name) -> Optional[Dict]:
+    """把 LLM/生态册生成的任意掉落名映射到材料库中可锻造的基础材料。
+
+    优先精确匹配；失败后按中英文关键词分类落到语义最近的材料
+    （如 "Shadow Pelt" → 皮革、"Ember Core" → 魔法石、"魔核" → 恶魔之核）。
+    """
+    m = match_material_by_name(name)
+    if m:
+        return m
+    if not name:
+        return None
+    n = str(name).lower()
+    by_id = {mm["id"]: mm for mm in RAW_MATERIALS}
+    for mat_id, cn_kws, en_kws in _DROP_MATERIAL_FALLBACK:
+        if any(k in name for k in cn_kws) or any(k in n for k in en_kws):
+            return by_id.get(mat_id)
+    return None
+
+
 # 拆解词库：把共享背包里的任意物品（打怪掉落装备 / 剧情杂物）拆成可锻造材料
 # 使「万物皆可锻造」成立：装备/杂物 → 分解 → 生活材料 → 锻造/附魔
 _DISMAT_MINERAL_HINT = ("剑", "锤", "斧", "匕首", "刃", "矛", "枪", "弓", "盾", "刀", "钉", "铠", "甲", "盔",

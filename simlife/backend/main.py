@@ -1351,6 +1351,30 @@ def api_generate_world(data: dict):
         raise HTTPException(500, f"生成失败: {e}")
 
 
+@app.post("/api/worlds/delete")
+def api_delete_world(data: dict):
+    """删除一个自定义世界观（连同全部区域数据）。删除当前世界后自动切回现代世界。"""
+    from simlife.worlds.world_manager import (
+        delete_world, set_current_world, list_available_worlds,
+    )
+    world_id = (data.get("world_id") or "").strip()
+    if not world_id:
+        raise HTTPException(400, "缺少 world_id 字段")
+    if world_id == "modern":
+        raise HTTPException(400, "现代世界是默认世界，不能删除")
+    if not delete_world(world_id):
+        raise HTTPException(400, f"世界观不存在或删除失败: {world_id}")
+    global current_world_id
+    current_world_id = "modern"
+    set_current_world("modern")
+    return {
+        "status": "ok",
+        "world_id": world_id,
+        "worlds": list_available_worlds(),
+        "current": current_world_id,
+    }
+
+
 @app.get("/api/worlds/template")
 def api_get_world_template():
     """获取世界观设定模板（用户用 LLM 生成后导入）"""

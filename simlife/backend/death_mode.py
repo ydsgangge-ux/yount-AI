@@ -111,20 +111,23 @@ class DeathModeEngine:
             level = enemy.get("level", 1) or 1
             etype = enemy.get("type", "normal") or "normal"
             ename = enemy.get("name", "") or ""
+            # 生态册联动：把生态位/物种也纳入关键词匹配（如物种"灰谷狼"→野兽→兽牙）
+            # 转小写使英文关键词（succubus/dragon…）也能命中 LLM 生成的英文名
+            kw_src = (ename + (enemy.get("taxonomy", "") or "") + (enemy.get("species", "") or "")).lower()
 
             # ── BOSS/精英专属稀有材料：按敌人系别掉落 ──
             rare_rules = (
-                (("恶魔", "地狱", "邪魔", "深渊魔", "魔鬼", "魔王"), "demon_core"),
-                (("火元素", "水元素", "风元素", "土元素", "雷元素", "元素", "岩浆", "烈焰领主"), "element_essence"),
-                (("亡灵", "骷髅", "幽灵", "怨灵", "巫妖", "死灵", "虚空", "暗影", "尸鬼"), "void_shard"),
-                (("泰坦", "机械", "机甲", "构装", "傀儡", "铁人", "石像鬼"), "titan_alloy"),
-                (("龙", "幼龙", "巨龙", "飞龙", "龙裔"), "dragon_heart"),
-                (("兽王", "魔狼", "巨熊", "虎王", "恐兽", "凶兽", "野猪王", "魔兽"), "beast_fang"),
-                (("藤蔓", "古树", "树精", "花妖", "魔菇", "孢子", "植物"), "ancient_wood"),
+                (("恶魔", "地狱", "邪魔", "深渊魔", "魔鬼", "魔王", "demon", "succubus", "imp", "devil", "fiend"), "demon_core"),
+                (("火元素", "水元素", "风元素", "土元素", "雷元素", "元素", "岩浆", "烈焰领主", "elemental", "sprite", "fire", "frost"), "element_essence"),
+                (("亡灵", "骷髅", "幽灵", "怨灵", "巫妖", "死灵", "虚空", "暗影", "尸鬼", "undead", "skeleton", "ghost", "wraith", "lich", "zombie", "spirit"), "void_shard"),
+                (("泰坦", "机械", "机甲", "构装", "傀儡", "铁人", "石像鬼", "construct", "golem", "sentinel", "automaton"), "titan_alloy"),
+                (("龙", "幼龙", "巨龙", "飞龙", "龙裔", "dragon", "wyrm", "draconic"), "dragon_heart"),
+                (("野兽", "凶兽", "狼", "熊", "虎", "豹", "狮", "獠牙", "野猪", "beast", "wolf", "bear", "boar", "beetle"), "beast_fang"),
+                (("藤蔓", "古树", "树精", "花妖", "魔菇", "孢子", "植物", "treant", "vine"), "ancient_wood"),
             )
             matched = None
             for kws, mat_id in rare_rules:
-                if any(k in ename for k in kws):
+                if any(k in kw_src for k in kws):
                     matched = mat_id
                     break
             rare_chance = {"boss": 1.0, "elite": 0.45, "normal": 0.04}.get(etype, 0.04)
@@ -141,6 +144,25 @@ class DeathModeEngine:
                         "detail": {"material": rare["name"], "qty": qty, "enemy": ename, "rare": True},
                     })
                     return
+
+            # ── 生态册专属掉落：物种 drop_materials（映射到已注册材料，联动锻造）──
+            drop_names = enemy.get("drop_materials") or []
+            if isinstance(drop_names, list) and drop_names:
+                sp_chance = {"boss": 0.9, "elite": 0.55, "normal": 0.22}.get(etype, 0.22)
+                if random.random() < sp_chance:
+                    for dn in drop_names[:2]:
+                        dm = LS.map_drop_material(dn)
+                        if not dm:
+                            continue
+                        qty = random.randint(1, 2)
+                        LS.add_materials(ls["inventory"], dm["id"], qty, dm["name"], dm["icon"])
+                        if combat_log is not None:
+                            combat_log.append(f"🦴 战利品：{dm['icon']} {dm['name']}×{qty}（{ename}的专属材料）")
+                        self._log_action("life_skill", {
+                            "skill": "采集", "action": f"从{ename}身上获得专属材料{dm['name']}×{qty}",
+                            "detail": {"material": dm["name"], "qty": qty, "enemy": ename, "species": True},
+                        })
+                        break
 
             # ── 常规材料掉落 ──
             base_chance = {"normal": 0.30, "elite": 0.55, "boss": 1.0}.get(etype, 0.30)
@@ -437,9 +459,29 @@ class DeathModeEngine:
                             region_data["dangers"] = [m.get("name", "") for m in region.monsters if m.get("name")]
                         if region.boss:
                             region_data["boss"] = region.boss
+                        # 完整性兜底：保证重启后每块区域仍是完整"迷你世界设定"
+                        from simlife.backend import world_schema
+                        region_data = world_schema.ensure_region_completeness(region_data, world_setting)
                         wm.save_region(world_id, region_data)
         except Exception as e:
             print(f"[DeathMode] 保存区域文件失败: {e}")
+
+        # ── 清理旧局动态生成的区域文件（保留世界观lore区域 + 本局新地图区域）──
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = world_setting.get("world_id", "")
+            if world_id:
+                keep_ids = set()
+                geo = world_setting.get("geography", {})
+                keep_ids.update(geo.get("region_ids", []) or [])
+                for rdef in geo.get("grid", {}).get("main_regions", []) or []:
+                    keep_ids.add(rdef.get("region_id", ""))
+                keep_ids.update(self.world_map.regions.keys())
+                n = wm.cleanup_dynamic_regions(world_id, keep_ids)
+                if n:
+                    print(f"[DeathMode] 清理旧局动态区域文件 {n} 个（保留lore区域）")
+        except Exception as e:
+            print(f"[DeathMode] 清理旧区域文件失败: {e}")
 
         # ── 初始化区域管理 Agent ──
         try:

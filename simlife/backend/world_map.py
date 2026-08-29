@@ -14,6 +14,24 @@ from datetime import datetime
 from simlife.backend.world_schema import WORLD_BOSS_LEVELS
 
 
+def _to_int(value, default: int = 0) -> int:
+    """把可能为字符串/文本的值转为 int（LLM 生成的设定里数字可能是字符串）"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if s.isdigit():
+            return int(s)
+        return default
+    return default
+
+
 class WorldRegion:
     """单个区域（方格坐标版）"""
 
@@ -301,6 +319,26 @@ class WorldMap:
 class MapGenerator:
     """根据世界观自动生成地图（方格坐标版）"""
 
+    @staticmethod
+    def _coerce_danger(value, default: int = 1) -> int:
+        """LLM 生成的危险等级可能是数字、数字字符串或中文（低/中/高），统一转成 1-5 的整数"""
+        if isinstance(value, int) and not isinstance(value, bool):
+            return max(1, min(5, value))
+        if isinstance(value, float):
+            return max(1, min(5, int(value)))
+        if isinstance(value, str):
+            s = value.strip()
+            if s.isdigit():
+                return max(1, min(5, int(s)))
+            # 中文/英文危险等级 → 数字（长词优先，避免"中高"先命中"中"）
+            zh_pairs = [("极低", 1), ("较低", 2), ("中低", 2), ("中高", 4), ("较高", 4),
+                        ("极高", 5), ("低", 1), ("中", 3), ("高", 5), ("普通", 3)]
+            for k, v in zh_pairs:
+                if k in s:
+                    return v
+            return default
+        return default
+
     # 世界类型 → 区域模板（带坐标）
     GRID_LAYOUTS = {
         "fantasy": [
@@ -522,10 +560,10 @@ class MapGenerator:
                 region_id=r_def["region_id"],
                 name=r_def["name"],
                 description=r_def.get("description", ""),
-                danger_level=r_def.get("danger_level", 1),
+                danger_level=MapGenerator._coerce_danger(r_def.get("danger_level", 1)),
                 region_type=r_def.get("region_type", "wild"),
-                x=r_def.get("x", 0),
-                y=r_def.get("y", 0),
+                x=_to_int(r_def.get("x", 0)),
+                y=_to_int(r_def.get("y", 0)),
             )
             # 分配怪物
             if region.danger_level > 0 and region.region_type != "town":
@@ -562,6 +600,9 @@ class MapGenerator:
                 wm.start_region_id = first.region_id
                 wm.current_region_id = first.region_id
                 first.explored = True
+
+        # 根据坐标自动建立相邻区域的连接（供连接查询/兼容旧逻辑）
+        MapGenerator._build_grid_connections(wm)
 
         return wm
 
@@ -892,23 +933,44 @@ class MapGenerator:
         等级固定使用 WORld_BOSS_LEVELS，保证通用且高于玩家上限（60）。
         """
         dangers = world_setting.get("dangers", {}) if world_setting else {}
+        world_type = world_setting.get("world_type", "fantasy")
         bosses = dangers.get("world_bosses", [])
+
+        # 旧世界设定可能没有 world_bosses（空列表/缺失）→ 用主题化默认BOSS兜底，
+        # 保证每个世界都有 3-8 个世界BOSS及其领地，否则地图上一个世界BOSS都没有。
+        if not bosses:
+            try:
+                from simlife.backend.generator import _default_world_boss
+                bosses = [_default_world_boss(world_type, i) for i in range(1, 4)]
+                dangers["world_bosses"] = bosses
+            except Exception as e:
+                print(f"[WorldMap] 世界BOSS默认填充失败: {e}")
+                return
         if not bosses:
             return
 
         monster_types = dangers.get("monster_types", [])
-        world_type = world_setting.get("world_type", "fantasy")
 
         # 已占用的格子坐标（避免与主要区域重叠）
         occupied = {(r.x, r.y) for r in wm.regions.values()}
 
+        # 出生点坐标：世界BOSS领地优先放到远离出生点的格子，体现"越远越危险"
+        origin = (0, 0)
+        if wm.start_region_id and wm.start_region_id in wm.regions:
+            _sr = wm.regions[wm.start_region_id]
+            if _sr.x is not None and _sr.y is not None:
+                origin = (_sr.x, _sr.y)
+
         def next_free_cell():
-            for y in range(wm.grid_size):
-                for x in range(wm.grid_size):
-                    if (x, y) not in occupied:
-                        occupied.add((x, y))
-                        return x, y
-            return None
+            """取离出生点最远的空闲格子（Chebyshev距离），保证BOSS领地分布在地图边缘"""
+            free = [(x, y) for y in range(wm.grid_size) for x in range(wm.grid_size)
+                    if (x, y) not in occupied]
+            if not free:
+                return None
+            cell = max(free, key=lambda c: (max(abs(c[0] - origin[0]), abs(c[1] - origin[1])),
+                                            random.random()))
+            occupied.add(cell)
+            return cell
 
         for boss in bosses:
             if not isinstance(boss, dict):

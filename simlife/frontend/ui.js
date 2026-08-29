@@ -393,6 +393,7 @@ function onWorldChange() {
   const aiPanel = document.getElementById('ai-gen-world-panel');
   const importPanel = document.getElementById('import-world-panel');
   const infoBar = document.getElementById('world-info-bar');
+  const delRow = document.getElementById('world-delete-row');
 
   // 默认全部隐藏
   modernFields.style.display = 'none';
@@ -400,6 +401,7 @@ function onWorldChange() {
   aiPanel.style.display = 'none';
   importPanel.style.display = 'none';
   infoBar.style.display = 'none';
+  if (delRow) delRow.style.display = 'none';
 
   if (val === 'modern') {
     modernFields.style.display = '';
@@ -412,10 +414,11 @@ function onWorldChange() {
   } else {
     // 已有的自定义世界观
     cwFields.style.display = '';
-    // 显示世界观摘要
+    // 显示世界观摘要 + 删除按钮
     const world = UI._worlds.find(w => w.world_id === val);
     if (world) {
       infoBar.style.display = '';
+      if (delRow) delRow.style.display = '';
       const typeNames = { fantasy: '奇幻魔法', modern_power: '现世超武', scifi: '科幻未来', xianxia: '仙侠修真', wuxia: '武侠江湖', post_apocalyptic: '末世废土', custom: '自定义' };
       infoBar.textContent = '🌍 ' + world.world_name + '  |  类型：' + (typeNames[world.world_type] || world.world_type);
     }
@@ -456,6 +459,32 @@ async function doSwitchWorld(worldId) {
     }
     UI._selectedWorldId = worldId;
     UI.setSetupStatus('✅ 已切换到 ' + worldId);
+  } catch (e) {
+    UI.setSetupStatus('❌ ' + e.message);
+  }
+}
+
+async function doDeleteWorld() {
+  const sel = document.getElementById('inp-world');
+  const worldId = sel.value;
+  const world = UI._worlds.find(w => w.world_id === worldId);
+  if (!world) return;
+  if (!confirm('确定要删除世界「' + world.world_name + '」吗？\n\n将删除该世界的全部设定与区域数据，不可恢复！')) return;
+  try {
+    const resp = await fetch('/api/worlds/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ world_id: worldId }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || '删除失败');
+    }
+    const data = await resp.json();
+    UI._worlds = data.worlds || [];
+    UI._selectedWorldId = data.current || 'modern';
+    UI._refreshWorldSelector();
+    UI.setSetupStatus('🗑️ 已删除世界「' + world.world_name + '」，已切回默认现代世界');
   } catch (e) {
     UI.setSetupStatus('❌ ' + e.message);
   }

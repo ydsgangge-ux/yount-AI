@@ -581,6 +581,10 @@ body {
     </div>
     <div id="world-info-bar" style="display:none;margin-bottom:14px;padding:10px 12px;background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-dim);line-height:1.5;">
     </div>
+    <!-- 删除自定义世界（仅选中已有自定义世界观时显示，二次确认） -->
+    <div id="world-delete-row" style="display:none;margin-bottom:14px;">
+      <button onclick="doDeleteWorld()" style="width:100%;padding:8px;background:rgba(220,38,38,0.12);color:#f87171;border:1px solid rgba(220,38,38,0.4);border-radius:8px;font-size:12px;cursor:pointer;">🗑️ 删除这个世界（含全部区域数据，不可恢复）</button>
+    </div>
     <div id="modern-fields">
       <div class="field">
         <label>角色名字（从 AGI-DPA 读取，可留空）</label>

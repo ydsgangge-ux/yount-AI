@@ -370,6 +370,38 @@ def save_region(world_id: str, region: Dict) -> str:
     return region_id
 
 
+def cleanup_dynamic_regions(world_id: str, keep_ids: set) -> int:
+    """删除不在 keep_ids 中的区域文件，返回删除数量。
+
+    用于死亡模式重新开局时清理上一局动态生成的空白区域文件，
+    保留世界观设定里的 lore 区域（geography.region_ids / grid.main_regions）。
+    """
+    region_dir = get_region_dir(world_id)
+    if not region_dir.exists():
+        return 0
+    keep_ids = set(keep_ids or set())
+    deleted = 0
+    for f in region_dir.glob("*.json"):
+        if f.stem in keep_ids:
+            continue
+        # 按文件内容里的 id/name 再确认一次（避免 slug 化后不一致）
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                r = json.load(fh)
+            rid = r.get("id") or _slugify(r.get("name", ""))
+            rname = r.get("name", "")
+            if rid in keep_ids or rname in keep_ids:
+                continue
+        except Exception:
+            pass
+        try:
+            f.unlink()
+            deleted += 1
+        except Exception:
+            pass
+    return deleted
+
+
 def list_regions(world_id: str) -> list:
     """列出某世界的所有区域（含每个区域的基础信息）"""
     region_dir = get_worlds_dir() / world_id / "regions"
@@ -394,6 +426,24 @@ def list_regions(world_id: str) -> list:
 def get_relations_path(world_id: str) -> Path:
     """跨区域关系文件路径"""
     return get_worlds_dir() / world_id / "relations.json"
+
+
+def delete_world(world_id: str) -> bool:
+    """删除一个用户自定义世界观（及其全部区域数据）"""
+    if not world_id or world_id == MODERN_WORLD:
+        return False
+    world_dir = get_worlds_dir() / world_id
+    if not world_dir.exists():
+        return False
+    try:
+        import shutil
+        shutil.rmtree(world_dir)
+        # 若删的是当前世界，切回默认现代世界
+        if get_current_world_id() == world_id:
+            set_current_world(MODERN_WORLD)
+        return True
+    except Exception:
+        return False
 
 
 def load_relations(world_id: str) -> Dict:
