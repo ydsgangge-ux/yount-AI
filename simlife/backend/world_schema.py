@@ -34,6 +34,8 @@ REGION_SCHEMA = {
     "resources": [],     # 本区资源（RESOURCE_SCHEMA 数组：可采集/锻造/交易的材料）
     "quests": [],        # 本地剧情/任务（LOCAL_QUEST_SCHEMA 数组：本区域可触发的小剧情）
     "relationships": [], # 元素关系（RELATIONSHIP_SCHEMA：人/怪物/资源/势力/剧情 之间的关联）
+    "fauna": {},         # 区域生态链（食草动物 + 捕食野兽），野外每区都有；见 _default_region_fauna
+    "controller": None,  # 区域主要控制势力（如"黑风山贼团"控山林、"地下组织"控暗巷）；dict 或缺省
     "level_range": [],   # 建议等级范围 [min, max]
     "biome": "",         # 生态/地貌类型（town/wild/dungeon/boss_lair/secret）
 }
@@ -309,6 +311,26 @@ def sanitize_region(region: Dict) -> Dict:
     region["resources"] = _normalize_list(region.get("resources"), RESOURCE_SCHEMA)
     region["quests"] = _normalize_list(region.get("quests"), LOCAL_QUEST_SCHEMA)
     region["relationships"] = _normalize_list(region.get("relationships"), RELATIONSHIP_SCHEMA)
+    # 生态链（食草动物 + 捕食野兽）——缺失/为空时按地貌兜底一套完整食物链
+    faunal = {}
+    faunal["herbivores"] = _normalize_list(region.get("fauna", {}).get("herbivores") if isinstance(region.get("fauna"), dict) else [])
+    faunal["predators"] = _normalize_list(region.get("fauna", {}).get("predators") if isinstance(region.get("fauna"), dict) else [])
+    faunal["notes"] = str(region.get("fauna", {}).get("notes", "")) if isinstance(region.get("fauna"), dict) else ""
+    if not faunal["herbivores"] and not faunal["predators"]:
+        _df = _default_region_fauna(region)
+        faunal["herbivores"] = _normalize_list(_df.get("herbivores"))
+        faunal["predators"] = _normalize_list(_df.get("predators"))
+        if not faunal["notes"]:
+            faunal["notes"] = str(_df.get("notes", ""))
+    region["fauna"] = faunal
+    # 区域控制势力（下界值统一为 dict；map 到 preset 势力 id 时用 controller.faction_id）
+    controller = region.get("controller")
+    if not isinstance(controller, dict):
+        controller = _string_controller(controller)
+    if not controller:
+        # 兜底一个实际主事者（此处无 world_setting，走地貌兜底；预设势力匹配由 ensure_region_completeness 补充）
+        controller = _default_region_controller(region)
+    region["controller"] = controller
     # boss 可以是 None 或 dict
     if region.get("boss") is not None and not isinstance(region.get("boss"), dict):
         region["boss"] = None
@@ -489,6 +511,10 @@ def enrich_region_monsters(world_setting: Dict, region: Dict) -> List[Dict]:
     return existing
 
 
+# 城镇类区域类型（含骨架新增的混合大城市/种族主城）均按城镇处理：补村民/集市/日常剧情
+_TOWN_TYPES = ("town", "mixed_city", "race_capital")
+
+
 def ensure_region_completeness(region: Dict, world_setting: Dict = None) -> Dict:
     """确保区域是完整的"迷你世界设定"：人/怪物/资源/势力/剧情齐全且互有关联。
 
@@ -501,7 +527,7 @@ def ensure_region_completeness(region: Dict, world_setting: Dict = None) -> Dict
 
     # ── 人：城镇/村落必须有人 ──
     npcs = region.get("npcs", [])
-    if biome == "town" and not npcs:
+    if biome in _TOWN_TYPES and not npcs:
         npcs = [{
             "name": "当地村民", "role": "村民",
             "description": "世代居住于此的村民，熟悉本地的一切。",
@@ -527,6 +553,18 @@ def ensure_region_completeness(region: Dict, world_setting: Dict = None) -> Dict
     # ── 关系：从已有元素自动推导（资源→守护怪物 / NPC→势力 / 剧情→发布者）──
     region["relationships"] = _derive_region_relationships(region)
 
+    # ── 控制势力：确保每个区域都有实际主事者（优先用驻留的预设势力名）──
+    if world_setting:
+        fid_list = region.get("factions") or []
+        has_preset = any(
+            isinstance(f, dict) and f.get("id") in fid_list
+            for f in world_setting.get("factions", []) or []
+        )
+        if has_preset:
+            region["controller"] = _default_region_controller(region, world_setting)
+        elif not region.get("controller"):
+            region["controller"] = _default_region_controller(region, world_setting)
+
     return region
 
 
@@ -534,7 +572,7 @@ def _default_region_resources(region: Dict) -> list:
     """按区域类型与名字关键词兜底 1-2 种资源"""
     biome = region.get("biome") or region.get("region_type") or ""
     rname = (region.get("name") or "").lower()
-    if biome == "town":
+    if biome in _TOWN_TYPES:
         return [{
             "name": "本地特产", "type": "食物", "rarity": "common", "amount": "充足",
             "description": "城镇集市上的日常物资，可用于交易与烹饪。", "guard": "",
@@ -576,7 +614,7 @@ def _default_region_quest(region: Dict, npcs: list) -> dict:
     biome = region.get("biome") or region.get("region_type") or ""
     rname = region.get("name", "此区域")
     giver = npcs[0].get("name") if npcs else "当地居民"
-    if biome == "town":
+    if biome in _TOWN_TYPES:
         return {
             "title": "本地的小麻烦", "giver": giver,
             "description": f"{giver}遇到了点麻烦，需要一位路过的冒险者搭把手，报酬谈好就开工。",
@@ -587,6 +625,129 @@ def _default_region_quest(region: Dict, npcs: list) -> dict:
         "description": f"附近流传着关于{rname}的传闻，似乎藏着不为人知的秘密或财宝。",
         "objectives": [], "rewards": {"exp": 25, "gold": 15}, "auto_complete": True,
     }
+
+
+# ── 区域生态链兜底：每种地貌都有"食草动物 + 捕食野兽" ──
+_FAUNA_BY_KEYWORD = [
+    (["镇", "村", "town", "城", "市", "mixed_city", "race_capital"],
+     {"herbivores": ["耕牛", "圈羊", "家猪", "群鹅"], "predators": [],
+      "notes": "城镇聚落以家畜为主，野兽鲜见，多为周边山林流窜的野物。"}),
+    (["林", "森", "forest", "grove", "木"],
+     {"herbivores": ["林间鹿", "野猪", "灰兔", "松鼠"], "predators": ["灰狼", "山豹", "熊"],
+      "notes": "林间食草兽成群，狼豹在灌木带巡猎，构成完整食物链。"}),
+    (["山", "峰", "岭", "坡", "mountain", "peak", "ridge", "cliff"],
+     {"herbivores": ["岩羊", "山兔", "山羊"], "predators": ["雪豹", "巨鹰", "秃鹫"],
+      "notes": "陡峭山崖上岩羊如履平地，雪豹与巨鹰在更高处眈眈相向。"}),
+    (["沼", "泽", "湿", "泥", "swamp", "marsh", "bog", "fen"],
+     {"herbivores": ["野鸭", "林蛙", "水豚", "鹭"], "predators": ["鳄", "巨蟒", "毒蛙"],
+      "notes": "瘴气沼泽里水禽踱步，鳄与巨蟒伏于水下伺机而动。"}),
+    (["沙", "漠", "旱", "荒", "desert", "sand", "dune", "waste"],
+     {"herbivores": ["沙狐", "野骆驼", "跳鼠", "羚羊"], "predators": ["响尾蛇", "秃鹫", "巨蝎"],
+      "notes": "稀少的绿洲养活一群耐旱食草兽，掠食者潜伏在沙丘阴影下。"}),
+    (["湖", "河", "水", "海", "岸", "港", "口", "lake", "river", "water", "coast", "harbor", "port"],
+     {"herbivores": ["鱼群", "水禽", "水獭"], "predators": ["大鱼怪", "巨蟒", "鹭鹰"],
+      "notes": "水岸生物链以鱼群为基，水禽水獭为邻，深水处潜伏更大的掠食者。"}),
+    (["冻", "雪", "冰", "寒", "ice", "snow", "frost", "glac", "tundra"],
+     {"herbivores": ["雪鹿", "雪兔", "旅鼠"], "predators": ["白狼", "冰熊", "雪枭"],
+      "notes": "极寒之地草被稀疏，雪鹿雪兔是食物链的底层，白狼冰熊沿足迹巡猎。"}),
+    (["洞", "窟", "穴", "地宫", "墓", "dungeon", "cave", "ruin", "tomb", "catacomb"],
+     {"herbivores": ["洞蝙蝠", "洞穴鼠", "盲鱼"], "predators": ["洞穴蜘蛛", "石甲虫", "吸血蝠"],
+      "notes": "幽暗洞穴中蝙蝠鼠类以苔藓菌丝为食，更深的黑暗里盘踞着节肢掠食者。"}),
+    (["火", "熔", "灰", "烬", "炎", "岩浆", "火山", "ash", "fire", "volcano", "lava", "ember"],
+     {"herbivores": ["熔岩蜥蜴", "灰石蚱蜢"], "predators": ["火蜥蜴", "烬翼蝎", "岩罴"],
+      "notes": "灼热地带只有耐高温的低等生物活动，掠食者都带着一身岩火。"}),
+    (["圣", "秘", "禁", "遗迹", "stronghold", "secret", "holy", "forbid", "relic"],
+     {"herbivores": ["灵鹿", "仙鹤", "白兔"], "predators": ["守山灵兽", "巨螭"],
+      "notes": "灵气充盈之地草木异常繁茂，温顺生灵聚集，强大守护兽坐镇其中。"}),
+]
+
+_FAUNA_FALLBACK = {
+    "herbivores": ["野兔", "鹿", "羚羊"], "predators": ["灰狼", "豺", "隼"],
+    "notes": "广袤荒野上食草兽集群迁徙，狼群与猛禽在其外围巡猎。",
+}
+
+
+def _default_region_fauna(region: Dict) -> dict:
+    """按区域名字/类型关键词兜底一套生态链（食草动物 + 捕食野兽）"""
+    biome = region.get("biome") or region.get("region_type") or ""
+    rname = (region.get("name") or "") + " " + str(biome)
+    key = rname.lower()
+    for kws, fauna in _FAUNA_BY_KEYWORD:
+        if any(kw in key for kw in kws):
+            return fauna
+    return dict(_FAUNA_FALLBACK)
+
+
+# ── 区域控制势力兜底：每个区域都有实际"主事者" ──
+_CONTROLLER_BY_KEYWORD = [
+    (["镇", "村", "town", "city", "mixed_city", "race_capital"],
+     ("本地议会", "城镇自治会", "把持市政与治安", "完全控制")),
+    (["林", "森", "forest", "grove", "山"],
+     ("绿林山贼团", "山贼", "在山口要道设卡收过路财，垄断木材与猎物", "盘踞控制")),
+    (["峰", "岭", "坡", "峰寨", "mountain", "peak", "ridge"],
+     ("山寨寨主势力", "山匪", "占山为王，控制矿脉与关隘，掳掠过往商队", "盘踞控制")),
+    (["沼", "泽", "湿", "swamp", "marsh", "bog"],
+     ("沼泽药贩帮", "地下组织", "靠珍稀药草与毒物发家，在瘴气中设有秘密据点", "渗透把持")),
+    (["沙", "漠", "旱", "desert", "sand", "waste"],
+     ("沙匪把总", "山贼", "控扼商道驿站，截取绿洲水源作为要挟筹码", "盘踞控制")),
+    (["湖", "河", "水", "岸", "港", "口", "lake", "river", "coast", "harbor", "port"],
+     ("失舵海贼团", "地下组织", "在水道设卡抽成，走私其巢穴不为人知", "渗透把持")),
+    (["洞", "窟", "穴", "墓", "地宫", "dungeon", "cave", "tomb", "catacomb"],
+     ("隐秘组织·地泉", "地下组织", "藏身地宫，经营情报与黑市，连当地官府都忌惮三分", "渗透把持")),
+    (["废", "烬", "火", "熔", "灰", "forge", "ash", "ember", "lava"],
+     ("锻火公会·黑炉", "地下组织", "把持熔炉与铁料供应，控制锻造命脉", "完全控制")),
+    (["圣", "秘", "禁", "遗迹", "stronghold", "secret", "holy"],
+     ("守秘教团", "教团", "将此地奉为圣地，驻军把守，外人莫入", "完全控制")),
+    (["boss_lair", "魔", "巢", "深渊", "dark", "lair", "hell", "abyss", "demon"],
+     ("魔王麾下军团", "阵营", "此地是黑暗力量的前哨据点，由精锐镇守", "完全控制")),
+]
+
+_CONTROLLER_FALLBACK = ("绿林游侠团", "绿林势力", "以本地为据点的半自治武装，既对抗官府也护卫乡里", "渗透把持")
+
+
+def _default_region_controller(region: Dict, world_setting: Dict = None) -> dict:
+    """确定区域主要控制势力。优先用预设势力（factions），否则用地貌主题兜底本地势力。"""
+    # 1) 已有预设势力驻留 → 用第一个作为控制者
+    fid_list = region.get("factions") or []
+    preset = {}
+    if fid_list and world_setting:
+        for f in world_setting.get("factions", []) or []:
+            if isinstance(f, dict) and f.get("id") in fid_list:
+                preset = f
+                break
+    if preset:
+        return {
+            "name": preset.get("name", ""),
+            "type": preset.get("type", "势力"),
+            "faction_id": preset.get("id", ""),
+            "description": f"由势力『{preset.get('name','')}』驻守控制，{preset.get('description','')}",
+            "influence": "据点控制",
+        }
+
+    biome = region.get("biome") or region.get("region_type") or ""
+    rname = (region.get("name") or "") + " " + str(biome)
+    key = rname.lower()
+    # boss_lair 特判优先（不依赖名字关键词）
+    for kws, ctrl in _CONTROLLER_BY_KEYWORD:
+        if kws == ("boss_lair", "魔", "巢", "深渊", "dark", "lair", "hell", "abyss", "demon"):
+            continue
+        if any(kw in key for kw in kws):
+            name, ctype, desc, infl = ctrl
+            return {"name": name, "type": ctype, "faction_id": "",
+                    "description": desc, "influence": infl}
+    if "boss_lair" in str(region.get("region_type", "")):
+        name, ctype, desc, infl = _CONTROLLER_BY_KEYWORD[-1][1]
+        return {"name": name, "type": ctype, "faction_id": "", "description": desc, "influence": infl}
+    name, ctype, desc, infl = _CONTROLLER_FALLBACK
+    return {"name": name, "type": ctype, "faction_id": "", "description": desc, "influence": infl}
+
+
+def _string_controller(value) -> dict:
+    """字符串形态的控制势力 → dict（例如直接用势力名作为控制者名字）"""
+    if value and isinstance(value, str):
+        return {"name": value, "type": "本地势力", "faction_id": "",
+                "description": f"这里由{value}把持。", "influence": "渗透把持"}
+    return None
 
 
 def _derive_region_relationships(region: Dict) -> list:

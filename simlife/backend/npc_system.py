@@ -459,19 +459,28 @@ class NPCGenerator:
 
 只返回JSON，不要其他文字。"""
 
-        response = llm_client.generate(prompt, max_tokens=1000, temperature=0.8, thinking=False)
-        response = response.strip()
-        if response.startswith("```"):
-            lines = response.split("\n")
-            response = "\n".join(lines[1:])
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-        import json
-        result = json.loads(response)
+        # 加固：生成+解析带重试与多层修复，防止LLM空响应/格式不稳导致崩溃
+        from simlife.backend.generator import _safe_json_loads
+        result = None
+        for _try_no in range(3):
+            resp = None
+            try:
+                resp = llm_client.generate(prompt, max_tokens=1000, temperature=0.8, thinking=False)
+            except Exception:
+                resp = None
+            if not resp or not str(resp).strip():
+                continue
+            try:
+                result = _safe_json_loads(str(resp))
+            except Exception:
+                result = None
+            if isinstance(result, dict):
+                break
         if isinstance(result, list):
             result = result[0] if result and isinstance(result[0], dict) else {}
+        if not isinstance(result, dict):
+            print("[NPCSystem] LLM生成NPC多次尝试失败，使用空NPC集兜底")
+            result = {"npcs": []}
 
         system = NPCSystem()
 

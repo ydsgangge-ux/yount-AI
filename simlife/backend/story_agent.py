@@ -784,6 +784,8 @@ class StoryAgent:
     - story_state: 探索进度文本（如"已探索矿洞入口"、"击败了森林守卫"）
     - story_progress: 剧情推进关键描述（如"发现了通往深处的隐藏通道"）
     - completed: true（仅当该区域所有核心内容都已探索完毕，不再需要新内容时设为 true）
+    - new_npcs: [{{"name": "姓名", "role": "身份/职业", "faction": "所属势力（可选）", "personality": "性格关键词（可选）"}}]（本次行动**首次遇见/明确出现**的可交互人物；不填重复出现的NPC；谨慎使用：每次最多 2 个；无新NPC时填[]或null）
+    - new_locations: ["地点名称1", "地点名称2"]（本次行动**首次发现**的可探索地点；不填原有地点；谨慎使用：每次最多 2 个；无新地点时填[]或null）
     如果当前行动没有推进区域剧情，region_story_updates 填 null。
 21. 【子场景切换·可选】当行动是"进入当前区域内某个剧情明确的具体地点"（如跳入井里、钻进地窖、进入钟楼、下到地牢，且该地点在【最近行动记录】或【剧情线】中已有铺垫）时，应在 enter_sub_scene 中返回：{{"name": "子场景名（如 雾谷前哨站·井底）", "scene_description": "该子场景的简短描述（环境、光线、氛围，2-3句）"}}。系统会同步更新当前地点，后续行动与战斗都会发生在这个子场景内。当行动是"离开该子场景"（如爬出井、回到地面、离开地窖）时，返回 exit_sub_scene: true，系统会退回上一地点。其余普通行动 enter_sub_scene 填 null、exit_sub_scene 填 null。
 
@@ -813,7 +815,9 @@ class StoryAgent:
   "region_story_updates": {{
     "story_state": "探索进度（如'已探索入口处'）" 或 null,
     "story_progress": "剧情推进描述" 或 null,
-    "completed": true 或 null
+    "completed": true 或 null,
+    "new_npcs": [{{"name": "姓名", "role": "身份", "faction": "势力（可选）", "personality": "性格（可选）"}}] 或 null,
+    "new_locations": ["新地点名"] 或 null
   }} 或 null,
   "items_gained": ["物品名1", "物品名2"] 或 null,
   "gold_spent": 0 或 null,

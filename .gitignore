@@ -54,6 +54,13 @@ vrm_module/static/*.vrm
 *.tar.gz
 *.zip
 
+# Installer build logs / artifacts (not for repo)
+_bi_err.txt
+_bi_log.txt
+_build_err.txt
+_build_log.txt
+AGI-Desktop.spec
+
 # Screenshots / temp assets
 screenshot_*.png
 

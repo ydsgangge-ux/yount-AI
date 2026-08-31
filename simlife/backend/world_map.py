@@ -791,44 +791,40 @@ class MapGenerator:
 
 只返回JSON，不要其他文字。"""
 
-        response = llm_client.generate(prompt, max_tokens=1500, temperature=0.8, thinking=False)
-        response = response.strip()
-
-        # 清理markdown代码块包裹
-        if response.startswith("```"):
-            lines = response.split("\n")
-            # 去掉第一行(如```json)和最后的```
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            response = "\n".join(lines).strip()
-
-        # 去掉LLM可能在JSON前后添加的文字
-        first_brace = response.find("{")
-        last_brace = response.rfind("}")
-        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            response = response[first_brace:last_brace + 1]
-
-        import json
-        import re
-
-        # 去掉JSON中的单行注释 (// ...)
-        response = re.sub(r'//[^\n]*', '', response)
-        # 去掉多行注释 (/* ... */)
-        response = re.sub(r'/\*.*?\*/', '', response, flags=re.DOTALL)
-        # 去掉尾逗号（,紧跟}或]）
-        response = re.sub(r',\s*([}\]])', r'\1', response)
-
-        result = json.loads(response)
+        # 加固：生成+解析带重试与多层修复，防止LLM空响应/格式不稳导致崩溃
+        from simlife.backend.generator import _safe_json_loads
+        result = None
+        for _try_no in range(3):
+            resp = None
+            try:
+                resp = llm_client.generate(prompt, max_tokens=1500, temperature=0.8, thinking=False)
+            except Exception:
+                resp = None
+            if not resp or not str(resp).strip():
+                continue
+            try:
+                result = _safe_json_loads(str(resp))
+            except Exception:
+                result = None
+            if isinstance(result, dict):
+                break
         if isinstance(result, list):
             result = result[0] if result and isinstance(result[0], dict) else {}
+        if not isinstance(result, dict) or not result:
+            print("[WorldMap] LLM生成地图多次尝试失败，使用空地图兜底")
+            result = {"regions": [], "start_region": ""}
+
+        regions_list = result.get("regions", [])
+        if not isinstance(regions_list, list):
+            regions_list = []
 
         wm = WorldMap()
-        for rdata in result.get("regions", []):
+        for rdata in regions_list:
+            if not isinstance(rdata, dict):
+                continue
             region = WorldRegion(
-                region_id=rdata["id"],
-                name=rdata["name"],
+                region_id=rdata.get("id", f"region_{len(wm.regions)}"),
+                name=rdata.get("name", "未知区域"),
                 description=rdata.get("description", ""),
                 danger_level=rdata.get("danger_level", 1),
                 region_type=rdata.get("region_type", "wild"),

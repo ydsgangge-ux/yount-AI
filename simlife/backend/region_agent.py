@@ -189,27 +189,15 @@ class RegionAgent:
 只返回JSON，不要其他文字。"""
 
         try:
-            response = llm_client.generate(prompt, max_tokens=700, temperature=0.8, thinking=False)
-            response = response.strip()
-
-            # 清理markdown
-            if response.startswith("```"):
-                lines = response.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                response = "\n".join(lines).strip()
-
-            first_brace = response.find("{")
-            last_brace = response.rfind("}")
-            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                response = response[first_brace:last_brace + 1]
-
-            response = re.sub(r',\s*([}\]])', r'\1', response)
-            data = json.loads(response)
+            from simlife.backend.generator import _llm_json
+            data = _llm_json(llm_client, prompt, max_tokens=700, temperature=0.8,
+                             attempts=2, label=f"空白区域生成({x},{y})")
         except Exception as e:
             print(f"[RegionAgent] LLM生成空白区域失败: {e}")
+            return None
+
+        if not isinstance(data, dict):
+            print(f"[RegionAgent] LLM生成空白区域失败: 无法获取有效JSON结构")
             return None
 
         region = WorldRegion(
@@ -434,35 +422,102 @@ class RegionAgent:
 
     # ── 区域状态写入 ──────────────────────────────────
 
-    def update_region_state(self, region_id: str, updates: Dict):
+    def update_region_state(self, region_id: str, updates: Dict) -> list:
         """
-        更新区域状态（剧情进度、完成状态等），写入区域文件。
+        更新区域状态（剧情进度、完成状态、追加新NPC/新地点），写入区域文件。
         由 StoryAgent 调用，用于保存叙事产生的区域变化。
         updates 支持字段：
           - story_state: 探索进度文本描述
           - story_progress: 剧情推进文本描述
           - completed: bool（标记区域完成）
-          - discoveries: list（新发现）
+          - discoveries: list（新发现）— 覆盖语义
+          - new_npcs: list[dict]（行动中新遇到并要落盘的可交互人物）— 追加语义，按名去重
+          - new_locations: list[str]（行动中发现的新地点名）— 追加语义，按名去重
+        返回实际追加成功的新 NPC 列表（供调用方注册进运行时 npc_system）。
         """
         from simlife.worlds import world_manager as wm
         region = wm.load_region(self.world_id, region_id)
         if not region:
-            return
+            return []
         changed = False
-        allowed_keys = {"story_state", "story_progress", "completed", "discoveries"}
+        appended_npcs: list = []
+        overwrite_keys = {"story_state", "story_progress", "completed", "discoveries"}
         for key, value in updates.items():
-            if key in allowed_keys and value is not None:
+            if value is None:
+                continue
+            if key in ("new_npcs", "new_locations"):
+                appended_npcs += self._append_region_content(region, key, value)
+                changed = True
+            elif key in overwrite_keys:
                 region[key] = value
                 changed = True
         if changed:
             wm.save_region(self.world_id, region)
             self._region_cache.pop(region_id, None)
+        return appended_npcs
 
-    def update_current_region_state(self, updates: Dict):
-        """更新当前区域的剧情状态"""
+    def _append_region_content(self, region: Dict, kind: str, value) -> list:
+        """
+        把新 NPC / 新地点追加进区域 JSON（追加语义，按名称去重，设上限防无界膨胀）。
+        kind == "new_npcs"     → 并入 region["npcs"]（list[dict]），返回新增 dict 列表
+        kind == "new_locations"→ 并入 region["key_locations"]（list[str]），返回空列表
+        """
+        appended_npcs: list = []
+        if kind == "new_locations":
+            items = [str(x) for x in (value or []) if isinstance(x, (str, dict))]
+            if not items:
+                return []
+            existing_names = set()
+            for loc in region.get("key_locations", []) or []:
+                if isinstance(loc, dict):
+                    existing_names.add(str(loc.get("name", "")).strip())
+                else:
+                    existing_names.add(str(loc).strip())
+            slots = 12 - len(region.get("key_locations", []) or [])
+            added = 0
+            for name in items:
+                name = (name if isinstance(name, str) else (name.get("name") if isinstance(name, dict) else "")).strip()
+                if not name or name in existing_names or added >= slots:
+                    continue
+                region.setdefault("key_locations", []).append(name)
+                existing_names.add(name)
+                added += 1
+            return appended_npcs
+
+        # new_npcs
+        raw_npcs = value if isinstance(value, list) else []
+        existing = region.get("npcs", []) or []
+        existing_names = set()
+        for n in existing:
+            nm = str((n.get("name") if isinstance(n, dict) else n) or "").strip()
+            if nm:
+                existing_names.add(nm)
+        slots = 15 - len(existing)  # 单区常驻人口上限，防无限增长
+        for raw in raw_npcs:
+            if not isinstance(raw, dict):
+                name = str(raw or "").strip()
+                entry = {"name": name, "role": "旅人", "personality": "随和"} if name else None
+            else:
+                name = str(raw.get("name", "") or "").strip()
+                entry = dict(raw)
+            if not name or name in existing_names or len(appended_npcs) >= slots:
+                continue
+            entry.setdefault("role", "旅人")
+            entry.setdefault("personality", "随和")
+            entry.setdefault("faction", "")
+            existing.append(entry)
+            existing_names.add(name)
+            appended_npcs.append(entry)
+        if appended_npcs:
+            region["npcs"] = existing
+        return appended_npcs
+
+    def update_current_region_state(self, updates: Dict) -> list:
+        """更新当前区域的剧情状态，返回追加的新NPC列表（供注册进运行时npc_system）"""
         current = self.world_map.get_current_region()
         if current:
-            self.update_region_state(current.region_id, updates)
+            return self.update_region_state(current.region_id, updates)
+        return []
 
     # ── 内部 ──────────────────────────────────────────
 

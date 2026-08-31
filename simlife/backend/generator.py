@@ -152,6 +152,48 @@ def _safe_json_loads(text: str):
     raise json.JSONDecodeError("无法修复的JSON", text, 0)
 
 
+def _llm_json(llm, prompt: str, *, max_tokens: int, temperature: float = 0.8,
+              attempts: int = 3, label: str = "") -> Any:
+    """调用 LLM 生成结构并安全解析出 JSON（dict/list）。
+
+    统一处理三类 LLM 通病：
+    - 默认思考模式导致 content 为空 → 强制 thinking=False
+    - 偶发空响应 / 超时 → 自动重试（最多 attempts 次）
+    - JSON 背毛刺 / 被 markdown 包裹 → 正则提取 + _safe_json_loads 多层修复
+
+    返回解析成功的 dict/list；全部尝试失败返回 None（调用方用兜底逻辑兜住）。
+    """
+    import re as _re_llj
+
+    if attempts < 1:
+        attempts = 1
+    last_err = ""
+    for _i in range(attempts):
+        try:
+            resp = llm.generate(prompt, max_tokens=max_tokens,
+                                temperature=temperature, thinking=False)
+        except Exception as e:
+            last_err = f"调用异常: {e}"
+            continue
+        if not resp or not str(resp).strip():
+            last_err = "空响应"
+            continue
+        m = _re_llj.search(r'[\{\[][\s\S]*[\}\]]', str(resp))
+        if not m:
+            last_err = "未提取到JSON"
+            continue
+        try:
+            data = _safe_json_loads(m.group(0))
+        except Exception as e:
+            last_err = f"解析失败: {e}"
+            continue
+        if data:
+            return data
+        last_err = "解析结果为空"
+    print(f"[SimLife] {label or 'LLM-JSON'} {attempts}次尝试后失败: {last_err}")
+    return None
+
+
 def _get_world_context() -> str:
     """获取当前世界观的 context 文本，现代世界返回空字符串"""
     try:
@@ -425,6 +467,178 @@ def _build_grid_main_regions(setting: dict) -> bool:
     return True
 
 
+def _alloc_grid_coords(occupied: set, need: int, size: int = 10) -> list:
+    """以网格中心为原点、按曼哈顿距离由近及远返回 `need` 个空闲坐标 (x, y)。
+    自动跳过已占用坐标（已有区域/BOSS 领地），避免地图重叠。
+    """
+    cx = cy = size // 2
+    res = []
+    for dist in range(0, size * 2):
+        for x in range(size):
+            for y in range(size):
+                if abs(x - cx) + abs(y - cy) == dist and (x, y) not in occupied:
+                    res.append((x, y))
+                    occupied.add((x, y))
+                    if len(res) >= need:
+                        return res
+    return res
+
+
+def _ensure_town_skeleton(setting: dict) -> bool:
+    """城镇分类骨架：把「4 混合大城市 + N 种族主城 + 10 小镇」写进 grid.main_regions。
+
+    - 骨架是稳定规则（数量/坐标/类型），是"骨架硬编码"层；
+    - 名字/描述/归属内容为空，由后续 _name_town_skeleton / 区域细化填充；
+    - 只在坐标空闲处追加，不覆盖现有区域或 BOSS 领地；
+    - 出生点：若全图无 is_start，则把最靠近 (0,0) 的城镇标记为起点。
+    """
+    from simlife.backend.world_map import _to_int
+
+    geo = setting.setdefault("geography", {})
+    grid = geo.setdefault("grid", {})
+    main = grid.setdefault("main_regions", [])
+    if not isinstance(main, list):
+        main = []
+        grid["main_regions"] = main
+    grid["size"] = 10
+
+    # 已占用坐标
+    occupied = set()
+    for r in main:
+        if isinstance(r, dict) and r.get("x") is not None and r.get("y") is not None:
+            occupied.add((_to_int(r.get("x"), 0), _to_int(r.get("y"), 0)))
+
+    # 种族数 → 种族主城数量（有几族就几座；至少 1，最多 6）
+    races = [r for r in setting.get("races", []) or [] if isinstance(r, dict)]
+    n_races = max(1, min(6, len(races)))
+
+    n_mixed = 4                      # 混合大城市：各族混居的大城
+    now_towns = sum(1 for r in main if isinstance(r, dict) and r.get("region_type") == "town")
+    n_towns = max(0, 10 - now_towns)  # 补足 10 座小镇
+
+    coords = _alloc_grid_coords(occupied, n_mixed + n_races + n_towns)
+
+    def _mk(cid, name, rtype, x, y, race=None):
+        return {
+            "region_id": cid,
+            "name": name,
+            "x": x,
+            "y": y,
+            "region_type": rtype,
+            "danger_level": 0,          # 城镇均为安全补给点（不生成野外怪）
+            "description": "",
+            "is_start": False,
+            "is_main_quest": False,
+            "capital_race": race,
+        }
+
+    idx = 0
+    new_items = []
+    for i in range(1, n_mixed + 1):
+        x, y = coords[idx]; idx += 1
+        new_items.append(_mk(f"mixed_city_{i}", f"大都城{i}", "mixed_city", x, y))
+    for i, race in enumerate(races[:n_races], 1):
+        x, y = coords[idx]; idx += 1
+        rname = race.get("name", f"种族{i}")
+        new_items.append(_mk(
+            f"capital_{str(race.get('id') or i).lower()}", f"{rname}之都",
+            "race_capital", x, y, race=rname,
+        ))
+    for i in range(1, n_towns + 1):
+        x, y = coords[idx]; idx += 1
+        new_items.append(_mk(f"small_town_{i}", f"村镇{i}", "town", x, y))
+
+    existing_ids = {r.get("region_id") for r in main if isinstance(r, dict) and r.get("region_id")}
+    added = 0
+    for it in new_items:
+        if it["region_id"] not in existing_ids:
+            main.append(it)
+            existing_ids.add(it["region_id"])
+            added += 1
+
+    # 出生点：全图无 is_start 时，取最靠近 (0,0) 的城镇作为起点
+    if not any(isinstance(r, dict) and r.get("is_start") for r in main):
+        cands = [r for r in main if isinstance(r, dict)
+                 and r.get("region_type") in ("mixed_city", "race_capital", "town")]
+        if cands:
+            chosen = min(cands, key=lambda r: (int(r.get("x", 0)) ** 2 + int(r.get("y", 0)) ** 2))
+            chosen["is_start"] = True
+
+    if added:
+        print(f"[SimLife] 城镇骨架已铺设：+{n_mixed}大城 +{n_races}主城 +{n_towns}小镇（共新增{added}格）")
+    return True
+
+
+def _name_town_skeleton(setting: dict) -> None:
+    """LLM 为骨架城镇批量生成贴合主题的名字/描述/势力归属。
+    一次调用生成多个城镇，失败则保留占位名（不阻塞世界创建）。
+    """
+    import re
+
+    geo = setting.get("geography", {}) or {}
+    grid = geo.get("grid", {}) or {}
+    main = grid.get("main_regions", []) or []
+    targets = [
+        r for r in main
+        if isinstance(r, dict)
+        and r.get("region_type") in ("mixed_city", "race_capital", "town")
+        and str(r.get("region_id", "")).startswith(("mixed_city_", "capital_", "small_town_"))
+    ]
+    if not targets:
+        return
+
+    races = setting.get("races", []) or []
+    factions = setting.get("factions", []) or []
+    race_names = "、".join(str(r.get("name", "")) for r in races if isinstance(r, dict))
+    faction_src = "；".join(
+        f"{f.get('id','')}={f.get('name','')}" for f in factions if isinstance(f, dict)
+    )
+
+    type_label = {"mixed_city": "混合大城市(各族混居)", "race_capital": "种族主城(某族专属)",
+                  "town": "小镇"}
+    lines = []
+    for r in targets:
+        capital_note = f"（族：{r.get('capital_race')}）" if r.get("capital_race") else ""
+        lines.append(f"- {r.get('region_id')}：{type_label.get(r.get('region_type'), '城镇')}{capital_note}")
+
+    prompt = f"""【世界主题】{str(setting.get('world_name',''))}（{str(setting.get('world_type',''))}）
+地理概览：{str(setting.get('geography',{}).get('overview',''))[:200]}
+种族：{race_names or '（无）'}
+势力（可选）：{faction_src or '（无）'}
+
+这些是世界地图上的城镇骨架（位置类型已由系统固定，名字/描述还未定）。请为每个城镇生成：
+- name：贴合本世界主题与种族的正式城名（不要用"村镇1/大都城1"这类占位）
+- description：一句话（风貌/定位，呼应世界观）
+- faction_id：归属势力英文id（从上方势力中选；若该城不明确属于某个已有势力则为空字符串）
+
+【城镇列表】
+{chr(10).join(lines)}
+
+只输出JSON，不要任何其他文字：
+{{"towns":[{{"id":"字母id(对应上面)","name":"城名","description":"描述","faction_id":"势力id或空"}},...]}}
+"""
+    llm = get_llm_client()
+    data = _llm_json(llm, prompt, max_tokens=2000, temperature=0.7,
+                   attempts=2, label="城镇批量命名")
+    if not data:
+        print("[SimLife] 城镇命名：多次尝试失败，保留占位名")
+        return
+    towns = {t["id"]: t for t in data.get("towns") or [] if isinstance(t, dict) and t.get("id")}
+    filled = 0
+    for r in main:
+        if not isinstance(r, dict) or r.get("region_id") not in towns:
+            continue
+        t = towns[r["region_id"]]
+        if t.get("name"):
+            r["name"] = t["name"]
+        if t.get("description"):
+            r["description"] = t["description"]
+        if t.get("faction_id"):
+            r["faction_id"] = t["faction_id"]
+        filled += 1
+    print(f"[SimLife] 城镇命名完成：{filled}/{len(targets)} 个城镇已获得贴合主题的名字")
+
+
 def generate_world_setting(
     world_type: str = "fantasy",
     core_theme: str = "",
@@ -532,7 +746,7 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
     # 首次尝试 + 失败重试（解析失败时用更低 temperature 再试一次）
     for attempt, temp in ((1, 0.8), (2, 0.4)):
         try:
-            response = llm.generate(prompt, max_tokens=8000, temperature=temp)
+            response = llm.generate(prompt, max_tokens=8000, temperature=temp, thinking=False)
             response = response.strip()
             # 提取 JSON（可能被 markdown 代码块包裹）
             json_match = re.search(r'\{[\s\S]*\}', response)
@@ -576,6 +790,10 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
     # 确保 geography.grid.main_regions 存在（LLM 漏生成时用世界类型模板兜底）
     try:
         _build_grid_main_regions(setting)
+        # 城镇分类骨架：4 混合大城市 + N 种族主城 + 10 小镇（骨架硬编码，内容后续填充）
+        _ensure_town_skeleton(setting)
+        # LLM 为骨架城镇命名/描述/势力归属（贴合主题，失败保留占位名）
+        _name_town_skeleton(setting)
     except Exception as e:
         print(f"[SimLife] 预设坐标构建失败: {e}")
 
@@ -585,15 +803,40 @@ world_id（英文小写id）、world_name、world_type、era、communication（d
         from simlife.worlds import world_manager as wm
 
         world_id = setting.get("world_id", "world")
+        # ── 类型防御：LLM 偶发把容器字段生成为字符串，先强制为正确类型，避免下游 .get 崩溃 ──
+        for _k in ("factions", "races"):
+            if not isinstance(setting.get(_k), list):
+                setting[_k] = []
+        _geo = setting.get("geography")
+        if not isinstance(_geo, dict):
+            _geo = {}
+            setting["geography"] = _geo
+        _grid = _geo.get("grid")
+        if not isinstance(_grid, dict):
+            _grid = {}
+            _geo["grid"] = _grid
+        for _k in ("regions", "main_regions"):
+            if not isinstance(_grid.get(_k), list):
+                _grid[_k] = []
+        _dangers = setting.get("dangers")
+        if not isinstance(_dangers, dict):
+            _dangers = {}
+            setting["dangers"] = _dangers
+
         # 清洗势力为标准结构
-        factions = setting.get("factions", [])
-        if factions and isinstance(factions, list):
+        factions = setting["factions"]
+        if factions:
             setting["factions"] = [world_schema.sanitize_faction(f) for f in factions if isinstance(f, dict)]
 
         # 清洗世界 BOSS 为标准结构（数量 3-8，等级固定曲线）
         # 关键：无论 LLM 是否生成了 world_bosses，只要字段是列表就执行数量兜底，
         # 否则 LLM 漏生成（空列表/缺失）时世界 BOSS 数量为 0，地图上不会出现任何 BOSS 领地。
-        dangers = setting.setdefault("dangers", {})
+        dangers = setting["dangers"]
+        # 类型防御：monster_types 应为主区域的怪物类型列表。LLM 偶发把其生成为生态位标签字符串
+        #（如"野兽、人形…"），强制转为列表，避免下游 _assign_monsters 遍历字符串产生垃圾怪物。
+        raw_mtypes = dangers.get("monster_types", [])
+        if not isinstance(raw_mtypes, list):
+            dangers["monster_types"] = []
         # 清洗怪物生态册（生态位 → 物种 两级），作为全世界共用的"怪物素材库"
         raw_tax = dangers.get("monster_taxonomy", [])
         if isinstance(raw_tax, list):
@@ -742,17 +985,47 @@ def _refine_region_details(world_setting: dict, world_id: str):
     geo = world_setting.get("geography", {}) or {}
     world_overview = f"{world_setting.get('world_name','')}（{world_setting.get('world_type','')}）\n{str(geo.get('overview',''))[:200]}"
 
-    # 逐个区域细化
-    for rinfo in regions:
+    # 区域ID → 骨架元信息（含 region_type 城市场次：mixed_city大城/race_capital主城/town小镇）
+    main_region_meta = {}
+    for _r in (world_setting.get("geography", {}).get("grid", {}) or {}).get("main_regions", []) or []:
+        if isinstance(_r, dict) and _r.get("region_id"):
+            main_region_meta[_r["region_id"]] = _r
+
+    # 城市场次 → NPC 数量目标（大城市人多，旷野人迹罕至）。
+    # 元组：(NPC下限, NPC上限, 怪物下限, 怪物上限, 属性描述)
+    _TIER_PLAN = {
+        "mixed_city":   (6, 8, 1, 3, "大型都会，人烟稠密，街巷商铺林立，各族混居"),
+        "race_capital": (5, 7, 1, 3, "一族主城，王帐宗庙所在，贵族武士与工匠云集"),
+        "town":         (3, 4, 1, 3, "小镇市集，农户商贩往来，几分热闹几分宁静"),
+    }
+
+    def _tier_plan(rtype: str):
+        return _TIER_PLAN.get(rtype, (1, 3, 1, 3, "旷野/秘境，人迹罕至，以怪物野兽为主"))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # 并行细化：每个区域独立调用 LLM（engine/llm_client.py 的 generate 每次用独立
+    # urllib 连接，无共享可变状态，可安全并发）。用有限并发既提速又避免打到接口限流(429)。
+    # relations.json 是全局共享文件，不在此级并发写，等所有区域细化完成后统一串行合并。
+
+    def _refine_one(rinfo) -> tuple:
         rid = rinfo["id"]
         rname = rinfo["name"]
         rdesc = str(rinfo.get("description", ""))[:150]
         rclimate = str(rinfo.get("climate", ""))[:80]
         key_locs = rinfo.get("key_locations") or []
 
+        # 城市场次决定 NPC 数量：大城市人多，旷野人迹罕至
+        _rm = main_region_meta.get(rid, {})
+        rtype = _rm.get("region_type", "") or ""
+        n_lo, n_hi = _tier_plan(rtype)[:2]
+        npc_range = f"{n_lo}-{n_hi}" if n_hi > n_lo else str(n_lo)
+        tier_note = _tier_plan(rtype)[4]
+
         prompt = f"""{world_overview}
 
 【当前区域】{rname}
+区域属性：{tier_note}（{rtype or '野外'}）
 环境：{rdesc}
 气候：{rclimate}
 关键地点：{'、'.join(key_locs[:4])}
@@ -783,7 +1056,7 @@ def _refine_region_details(world_setting: dict, world_id: str):
 }}
 
 要求：
-- 生成 2-3 个 NPC，1-3 个怪物，1-3 种资源，1-2 个本地剧情
+- 生成 {npc_range} 个 NPC，1-3 个怪物，1-3 种资源，1-2 个本地剧情
 - 资源与怪物、NPC与势力、剧情与NPC之间要有关系：如怪物守护资源、NPC归属势力、NPC发布剧情
 - NPC 和怪物必须符合区域环境（如森林区配森林生物，矿区配矿石生物和矿脉资源）
 - 等级参考该区域强度（新手村低，深处高）
@@ -791,35 +1064,33 @@ def _refine_region_details(world_setting: dict, world_id: str):
 - 不要输出任何其他文字，只输出JSON"""
 
         try:
-            resp = llm.generate(prompt, max_tokens=1800, temperature=0.8)
-            json_match = re.search(r'\{[\s\S]*\}', resp)
-            if not json_match:
+            # 偶发空响应/截断/格式畸形：最多重试 3 次。
+            # 用 _llm_json 统一封装，任何一次调用/解析异常都会重试而非直接崩。
+            data = _llm_json(llm, prompt, max_tokens=1800, temperature=0.8,
+                             attempts=3, label=f"区域细化({rname})")
+            if not isinstance(data, dict):
                 print(f"[SimLife] 区域 {rname} 细化生成：未提取到JSON，跳过")
-                continue
-            data = _safe_json_loads(json_match.group(0))
-            if not data:
-                continue
+                return (rid, rname, None)
 
             # 读取已有区域文件并补充 NPC/威胁/资源/剧情/关系/势力
             region = wm.load_region(world_id, rid) or {"name": rname, "id": rid}
+            # 记录城市场次，供完整性兜底规则与后续系统识别
+            if rtype:
+                region.setdefault("region_type", rtype)
+                region.setdefault("biome", rtype)
 
             # NPC
             npcs = data.get("npcs", [])
             if npcs and isinstance(npcs, list):
                 region["npcs"] = world_schema.sanitize_region({"npcs": npcs}).get("npcs", [])
 
-            # 威胁怪物 → 存入区域 monsters（含战斗数据）+ world_setting.dangers
+            # 威胁怪物 → 存入区域 monsters（含战斗数据）。
+            # 注意：不再追加到 world_setting.dangers.monster_types。
+            # 顶层 monster_types 是 LLM 生成的世界怪物类型/生态位字符串描述，与具体怪物 dict
+            # 语义不同，混入会造成类型冲突。具体怪物只保存在区域文件里，供战斗系统按区读取。
             monsters = data.get("monsters", [])
             if monsters and isinstance(monsters, list):
                 region["monsters"] = monsters
-                # 同时更新 dangers.monster_types（供战斗系统引用）
-                dangers = world_setting.setdefault("dangers", {})
-                mt = dangers.setdefault("monster_types", [])
-                existing_names = {m.get("name") for m in mt if isinstance(m, dict)}
-                for m in monsters:
-                    if isinstance(m, dict) and m.get("name") and m["name"] not in existing_names:
-                        mt.append(m)
-                        existing_names.add(m["name"])
 
             # 资源（迷你世界设定）
             resources = data.get("resources", [])
@@ -844,23 +1115,41 @@ def _refine_region_details(world_setting: dict, world_id: str):
             # 完整性兜底：人/怪物/资源/剧情/关系齐全（LLM 遗漏时用规则模板补齐）
             region = world_schema.ensure_region_completeness(region, world_setting)
 
-            # 保存区域
+            # 保存区域（各区域文件独立，可安全并发写）
             wm.save_region(world_id, region)
 
-            # 更新 relations.json 势力据点
-            if region_factions and isinstance(region_factions, list):
-                relations = wm.load_relations(world_id)
-                presence = relations.setdefault("faction_presence", {})
-                for fid in region_factions[:2]:
-                    if isinstance(fid, str) and fid:
-                        rid_list = presence.setdefault(fid, [])
-                        if rid not in rid_list:
-                            rid_list.append(rid)
-                wm.save_relations(world_id, relations)
-
             print(f"[SimLife] 区域 {rname} 细化完成：{len(npcs)} NPC, {len(monsters)} 怪物")
+            return (rid, rname, region_factions)
         except Exception as e:
             print(f"[SimLife] 区域 {rname} 细化失败: {e}")
+            return (rid, rname, None)
+
+    # 并行执行所有区域细化
+    presence_results = []
+    _max_workers = 4
+    with ThreadPoolExecutor(max_workers=_max_workers) as _ex:
+        _futures = {_ex.submit(_refine_one, rinfo): rinfo for rinfo in regions}
+        for _fut in as_completed(_futures):
+            try:
+                presence_results.append(_fut.result())
+            except Exception as e:
+                print(f"[SimLife] 区域细化线程异常: {e}")
+
+    # relations.json 是全局共享文件，必须在并行结束后于主线程串行合并，避免并发写损坏
+    try:
+        relations = wm.load_relations(world_id)
+        presence = relations.setdefault("faction_presence", {})
+        for _rid, _rname, region_factions in presence_results:
+            if not (isinstance(region_factions, list) and region_factions):
+                continue
+            for fid in region_factions[:2]:
+                if isinstance(fid, str) and fid:
+                    rid_list = presence.setdefault(fid, [])
+                    if _rid not in rid_list:
+                        rid_list.append(_rid)
+        wm.save_relations(world_id, relations)
+    except Exception as e:
+        print(f"[SimLife] 势力据点合并失败: {e}")
 
 
 def get_llm_client(config: dict = None):
@@ -940,7 +1229,7 @@ def generate_character_card(anchor: dict, agidpa_personality: dict = None) -> di
         prompt = world_ctx + _get_world_guide("character") + "\n\n" + prompt
 
     try:
-        response = llm.generate(prompt, max_tokens=2500, temperature=0.8)
+        response = llm.generate(prompt, max_tokens=2500, temperature=0.8, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -1665,7 +1954,7 @@ def generate_npc_cards(character_card: dict) -> list:
 只返回JSON数组，不要其他内容。人名使用{city}常见名字风格。age 可以适当微调（±2岁）。"""
 
     try:
-        response = llm.generate(prompt, max_tokens=1500, temperature=0.8)
+        response = llm.generate(prompt, max_tokens=1500, temperature=0.8, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -1727,7 +2016,7 @@ def generate_activity_description(
         prompt = world_guide + "\n\n" + prompt
 
     try:
-        response = llm.generate(prompt, max_tokens=100, temperature=0.9)
+        response = llm.generate(prompt, max_tokens=100, temperature=0.9, thinking=False)
         return response.strip().strip('"').strip('"').strip("'").strip()
     except Exception:
         defaults = {
@@ -1980,7 +2269,7 @@ def generate_life_arc(character_card: dict, previous_arc: dict = None) -> dict:
         prompt = prompt + "\n\n" + story_influence
 
     try:
-        response = llm.generate(prompt, max_tokens=2000, temperature=0.85)
+        response = llm.generate(prompt, max_tokens=2000, temperature=0.85, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -2197,7 +2486,7 @@ def generate_day_plan(
 
     try:
         response = llm.generate(prompt, max_tokens=800, temperature=0.85,
-                                 response_format={"type": "json_object"})
+                                 response_format={"type": "json_object"}, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -2423,7 +2712,7 @@ def generate_story_cast(character_card: dict, arc: dict = None, existing_cast: l
         prompt = prompt + "\n\n" + story_influence
 
     try:
-        response = llm.generate(prompt, max_tokens=1500, temperature=0.85)
+        response = llm.generate(prompt, max_tokens=1500, temperature=0.85, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -2539,7 +2828,7 @@ def expand_node(character_card: dict, node: dict, cast: list = None,
         prompt = prompt + "\n\n" + story_influence
 
     try:
-        response = llm.generate(prompt, max_tokens=600, temperature=0.9)
+        response = llm.generate(prompt, max_tokens=600, temperature=0.9, thinking=False)
         return response.strip()
     except Exception as e:
         print(f"[SimLife] 节点展开失败: {e}")
@@ -2586,7 +2875,7 @@ def generate_future_events(
 
     try:
         from datetime import datetime, timedelta
-        response = llm.generate(prompt, max_tokens=1000, temperature=0.8)
+        response = llm.generate(prompt, max_tokens=1000, temperature=0.8, thinking=False)
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")

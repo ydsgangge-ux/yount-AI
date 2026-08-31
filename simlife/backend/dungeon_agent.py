@@ -413,28 +413,12 @@ class DungeonAgent:
 
 只返回JSON，不要其他文字。"""
 
-        response = self.llm.generate(prompt, max_tokens=1200, temperature=0.8, thinking=False)
-        response = response.strip()
-
-        # 清理markdown代码块包裹
-        if response.startswith("```"):
-            lines = response.split("\n")
-            # 去掉第一行(如```json)和最后的```
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            response = "\n".join(lines).strip()
-
-        # 去掉LLM可能在JSON前后添加的文字
-        first_brace = response.find("{")
-        last_brace = response.rfind("}")
-        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            response = response[first_brace:last_brace + 1]
-
-        # 容错解析：尾随逗号/缺逗号/单引号/注释等
-        from simlife.backend.generator import _safe_json_loads
-        result = _safe_json_loads(response)
+        from simlife.backend.generator import _llm_json
+        result = _llm_json(self.llm, prompt, max_tokens=1200, temperature=0.8,
+                           attempts=2, label=f"副本生成({dungeon_id or region_id})")
+        if not isinstance(result, dict) or not result:
+            from simlife.backend.generator import _safe_json_loads
+            result = _safe_json_loads("{}")
 
         dg = Dungeon(
             dungeon_id=dungeon_id,

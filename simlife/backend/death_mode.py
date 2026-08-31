@@ -1687,12 +1687,44 @@ class DeathModeEngine:
             except Exception:
                 pass
 
-        # 5. 区域状态更新（仅非移动时）
+        # 5. 区域状态更新（仅非移动时）——支持谨慎追加新NPC/新地点并注册进运行时npc_system
         if not _region_moved:
             try:
                 _region_updates = agent_result.get("region_story_updates")
                 if _region_updates and isinstance(_region_updates, dict) and self.region_agent:
-                    self.region_agent.update_current_region_state(_region_updates)
+                    _added = self.region_agent.update_current_region_state(_region_updates)
+                    if _added and self.npc_system:
+                        try:
+                            from simlife.backend.npc_system import NPC
+                            _cur = self.world_map.get_current_region()
+                            _rid = _cur.region_id if _cur else ""
+                            _reg = 0
+                            for _e in _added:
+                                if not isinstance(_e, dict):
+                                    continue
+                                _nm = str(_e.get("name", "")).strip()
+                                if not _nm or any(_n.name == _nm for _n in self.npc_system.npcs.values()):
+                                    continue
+                                _npc = NPC(
+                                    npc_id=_e.get("npc_id") or f"dyn_{_rid}_{_nm}",
+                                    name=_nm,
+                                    role=str(_e.get("role", "旅人")),
+                                    personality=str(_e.get("personality", "") or "随和"),
+                                    location=_rid,
+                                    faction=str(_e.get("faction", "")),
+                                )
+                                _npc.level = 1
+                                _npc.hp = 50
+                                _npc.max_hp = 50
+                                _npc.can_trade = any(
+                                    _k in _npc.role for _k in ("商人", "铁匠", "店", "药师", "猎人"))
+                                self.npc_system.add_npc(_npc)
+                                _reg += 1
+                            if _reg:
+                                self.state["npc_system"] = self.npc_system.to_dict()
+                                print(f"[DeathMode] 行动追加注册 {_reg} 个新NPC")
+                        except Exception as _e:
+                            print(f"[DeathMode] 注册新NPC异常: {_e}")
             except Exception as e:
                 print(f"[DeathMode] 区域状态更新异常: {e}")
 
