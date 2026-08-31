@@ -678,8 +678,11 @@ def get_fish(fish_id: str) -> Optional[Dict]:
     return None
 
 
-def mark_fish_dex(ls: Dict, fish_id: str, weight: float) -> None:
-    """收集图鉴：记录首次钓到的鱼种（点亮图鉴）。"""
+def mark_fish_dex(ls: Dict, fish_id: str, weight: float) -> bool:
+    """收集图鉴：记录首次钓到的鱼种（点亮图鉴）。
+
+    返回是否刷新了最大重量纪录（首次钓到也算破纪录，用于前端提示"新纪录"）。
+    """
     dex = ls.setdefault("fish_dex", {})
     prev = dex.get(fish_id)
     if prev is None:
@@ -694,9 +697,12 @@ def mark_fish_dex(ls: Dict, fish_id: str, weight: float) -> None:
             "times": 1,
             "best": weight,
         }
-    else:
-        prev["times"] = prev.get("times", 1) + 1
-        prev["best"] = max(prev.get("best", 0), weight)
+        return True
+    prev["times"] = prev.get("times", 1) + 1
+    if weight > prev.get("best", 0):
+        prev["best"] = weight
+        return True
+    return False
 
 
 def get_fish_dex(ls: Dict) -> Dict:

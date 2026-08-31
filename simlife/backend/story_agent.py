@@ -1305,7 +1305,13 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
         # 用正则提取已完成的 "key": "value" 或 "key": [...] 或 "key": null
         # 字符串值
         for m in re.finditer(r'"(narrative|outcome_type|next_tension)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
-            result[m.group(1)] = m.group(2).encode().decode('unicode_escape')
+            # 用 json.loads 还原 JSON 字符串转义（\n / \uXXXX 等），避免 unicode_escape 破坏中文
+            _raw = m.group(2)
+            try:
+                _val = json.loads('"' + _raw + '"')
+            except Exception:
+                _val = _raw
+            result[m.group(1)] = _val
         # null 值
         for m in re.finditer(r'"(region_story_updates|new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers)"\s*:\s*(null)', text):
             result[m.group(1)] = None

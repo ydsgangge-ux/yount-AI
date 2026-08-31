@@ -2139,7 +2139,7 @@ def api_death_mode_life_fish(data: dict):
         "name": fish["name"], "icon": fish["icon"], "family": fish["family"],
         "rarity": fish["rarity"], "weight": weight, "value": value, "energy": energy,
     }, 1)
-    LS.mark_fish_dex(ls, fish_id, weight)  # 收集图鉴点亮
+    new_record = LS.mark_fish_dex(ls, fish_id, weight)  # 收集图鉴点亮并返回是否刷新最大重量纪录
     fg = ls.setdefault("fish_gear", {})
     fg["earnings"] = fg.get("earnings", 0) + value
     # 钓到的鱼直接作为独立食材进背包（按鱼种区分，可自由烹饪出对应料理）
@@ -2163,6 +2163,7 @@ def api_death_mode_life_fish(data: dict):
             "message": f"钓到了{fish['name']}（{weight}kg·{quality_name}）！价值{value}金币",
             "fish": {"name": fish["name"], "icon": fish["icon"], "rarity": fish["rarity"],
                      "family": fish["family"], "weight": weight, "value": value, "energy": energy},
+            "new_record": bool(new_record), "best": ls["fish_dex"].get(fish_id, {}).get("best"),
             "xp_gained": xp, "level_up": lv["level_up"], "fish_caught": ls["fish_caught"]}
 
 

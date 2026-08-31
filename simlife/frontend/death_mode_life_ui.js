@@ -314,6 +314,7 @@ const LifeSkillsUI = {
                   ${this._fishSVG(f, 56)}
                   <div style="font-size:10px;color:#c9d1d9;margin-top:3px;">${f.name}</div>
                   <div style="font-size:9px;color:${this._rarityColor(f.rarity)};">${this._rarityName(f.rarity)}</div>
+                  <div style="font-size:9px;color:#7ee787;margin-top:2px;font-weight:600;">🏆 ${rec.best}kg</div>
                 </div>`;
               return `
                 <div title="尚未钓到" style="padding:8px 6px;background:#0d1117;border:1px dashed #30363d;border-radius:8px;text-align:center;opacity:.55;">
@@ -1311,8 +1312,9 @@ const LifeSkillsUI = {
       const r = await resp.json();
       if (r.error) { this._setHint(r.message || r.error); this._reload('fish'); return; }
       this._spawnSplash(f.bobber.x, f.cv.height * 0.58, 24);
-      this._setHint((r.level_up ? '🎉 升级！' : '') + r.message);
-      alert(r.message + (r.level_up ? '\n🎉 钓鱼升级！' : ''));
+      const recTag = r.new_record ? `\n🏆 刷新图鉴纪录：${r.best}kg！` : '';
+      this._setHint((r.level_up ? '🎉 升级！' : '') + r.message + recTag);
+      alert(r.message + (r.level_up ? '\n🎉 钓鱼升级！' : '') + recTag);
       this._reload('fish');
     } else {
       this._setHint(failMsg || '鱼跑了');
