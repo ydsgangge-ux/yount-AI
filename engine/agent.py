@@ -2118,8 +2118,6 @@ class ConsciousnessAgent:
         )
         raw = self.b.generate(prompt, max_tokens=1500, temperature=0.5,
                              thinking=False)
-        # [临时诊断] 定位"解析失败"：打印 LLM 返回的原始内容，找到后再移除
-        print(f"[诊断·_reason raw] len={len(raw) if raw else 0} | {raw!r}")
         return self._parse_json(raw, {
             "inner_reasoning":  "需要认真考虑",
             "response_intent":  "给出真实的回应",
@@ -2174,13 +2172,33 @@ class ConsciousnessAgent:
         return self.b.generate(prompt, max_tokens=1200, temperature=0.75, thinking=False)
 
     def _parse_json(self, raw: str, fallback: Dict) -> Dict:
-        try:
-            match = re.search(r'\{[\s\S]*\}', raw)
-            if match:
-                return json.loads(match.group())
-            return json.loads(raw)
-        except Exception:
-            return fallback
+        """安全解析 LLM 输出的 JSON。
+
+        优先整体解析；失败时依次尝试多层修复（去围栏/清控制字符/去尾随逗号/
+        单引号转双引号/补缺逗号），仍失败则做部分字段抢救——把输出里结构完整的
+        关键字段（如 storage_decision 的 should_store / what_to_remember）单独
+        提取出来，避免因个别畸形字段导致整段解析失败、有效内容被丢弃。
+        """
+        text = raw or ""
+        # 1) 提取 JSON 块（丢弃前后杂文本）
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            text = match.group(0)
+        # 2) 依次尝试各修复变体做完整解析
+        for cand in _json_repair_variants(text):
+            try:
+                d = json.loads(cand)
+            except Exception:
+                continue
+            if isinstance(d, dict):
+                return d
+        # 3) 部分字段抢救：与 fallback 合并返回
+        salvaged = _salvage_json_fields(text)
+        if salvaged:
+            merged = dict(fallback)
+            merged.update(salvaged)
+            return merged
+        return fallback
 
     def proactive_message(self) -> Optional[str]:
         """主动发起话题，返回消息或 None"""
@@ -2352,3 +2370,98 @@ class ConsciousnessAgent:
             f"{e.primary.value} | 强度:{e.intensity:.2f} | "
             f"{'正向' if e.valence > 0 else '负向' if e.valence < 0 else '中性'}"
         )
+
+
+# ── LLM-JSON 解析辅助（供 _parse_json 使用）──────────────────────────
+def _json_repair_variants(text: str):
+    """生成一组尽力修复 LLM 输出的候选字符串（不保证全部合法，逐个尝试解析）。"""
+    import re as _re
+    seen, out = set(), []
+
+    def _add(s):
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+
+    _add(text)
+    # 去掉代码块围栏 ```json ... ```
+    _add(_re.sub(r'```(?:json)?', '', text))
+    # 清理字符串内的控制字符（\t\n\r → 空格/转义，避免破坏解析）
+    def _fix_str(m):
+        inner = m.group(1).replace('\t', ' ').replace('\r', '')
+        inner = inner.replace('\n', '\\n')
+        return '"' + inner + '"'
+    _add(_re.sub(r'"((?:[^"\\]|\\.)*)"', _fix_str, text))
+    # 在已收集候选基础上，逐层叠加常见修复：去尾随逗号、单引号转双引号、补缺逗号
+    for base in list(out):
+        _add(_re.sub(r',(\s*[}\]])', r'\1', base))
+        _add(_re.sub(r"(?<!\\)'([^'\\]*)'(?=\s*[,:}\]])", r'"\1"', base))
+        _add(_re.sub(r'([}\]0-9truefalsenul])(\s*)("(?![:\s]))', r'\1,\2\3', base))
+        # 补全缺失的右括号（截断输出常见）
+        _add(_close_json_braces(base))
+    return out
+
+
+def _close_json_braces(s: str) -> str:
+    """尽力补全被截断 JSON 的右引号与右括号（仅作为候选之一，不保证正确）。"""
+    in_str, escaped = False, False
+    for ch in s:
+        if escaped:
+            escaped = False
+            continue
+        if ch == '\\':
+            escaped = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+    if in_str:
+        s += '"'
+    open_c = s.count('{') - s.count('}')
+    open_s = s.count('[') - s.count(']')
+    return s + ']' * max(0, open_s) + '}' * max(0, open_c)
+
+
+# storage_decision / schedule_info 的子字段名（抢救时按组归类）
+_STORAGE_DECISION_KEYS = {"should_store", "importance", "modality",
+                          "what_to_remember", "reason"}
+_SCHEDULE_INFO_KEYS = {"content", "date", "time", "remind", "action",
+                       "repeat", "category", "source"}
+
+
+def _salvage_json_fields(text: str) -> dict:
+    """从无法整体解析的 LLM JSON 中，用正则抢救结构完整的键值对。
+
+    只提取「"key": 标量/字符串」形式；忽略畸形字段（如只有 key 没有 value 的
+    输出），并按 storage_decision / schedule_info 归类，供 _parse_json 兜底。
+    """
+    import re as _re
+    result, sd, si = {}, {}, {}
+    _KV = _re.compile(
+        r'"((?:[^"\\]|\\.)*)"\s*:\s*'
+        r'(?:"((?:[^"\\]|\\.)*)"|(-?\d+(?:\.\d+)?)|(true|false)|(null))'
+    )
+    for m in _KV.finditer(text):
+        key = m.group(1)
+        if m.group(2) is not None:
+            # 字符串值：用 json.loads 还原 JSON 转义（\\n / \\uXXXX），避免破坏中文
+            try:
+                val = json.loads('"' + m.group(2) + '"')
+            except Exception:
+                val = m.group(2)
+        elif m.group(3) is not None:
+            val = float(m.group(3)) if '.' in m.group(3) else int(m.group(3))
+        elif m.group(4) is not None:
+            val = (m.group(4) == "true")
+        else:
+            val = None
+        if key in _STORAGE_DECISION_KEYS:
+            sd[key] = val
+        elif key in _SCHEDULE_INFO_KEYS:
+            si[key] = val
+        else:
+            result[key] = val
+    if sd:
+        result["storage_decision"] = sd
+    if si:
+        result["schedule_info"] = si
+    return result
