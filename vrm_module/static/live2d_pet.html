@@ -30,11 +30,18 @@ canvas{display:block;position:absolute;top:0;left:0}
   transition:background 0.2s;
 }
 #switch-btn:hover{background:#21262d}
+#degraded{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  font-size:76px;opacity:0;transition:opacity 0.4s;
+  pointer-events:none;z-index:998;filter:grayscale(0.25);
+}
+#degraded.show{opacity:1}
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <div id="bubble"></div>
+<div id="degraded">😴</div>
 <button id="switch-btn">↻</button>
 
 <!--
@@ -209,9 +216,27 @@ canvas{display:block;position:absolute;top:0;left:0}
   // ── 加载模型 ──
   var isLoading = false;          // 防止并发加载
   var idleLineTimer = null;       // 闲置台词定时器（切换时清理）
+  var loadFailCount = 0;          // 连续失败计数（坏网络下快速降级）
+  var degraded = false;           // 是否已降级（不再自动联网加载）
+  var LOAD_MAX_FAILS = 3;         // 连续失败 3 次后停止联网
+  var LOAD_TIMEOUT_MS = 12000;    // 单次加载超时 12 秒（CDN 卡死不无限等）
+
+  // 降级：停止一切联网加载，显示静态占位
+  function degrade() {
+    degraded = true;
+    isLoading = false;
+    showBubble("网络不佳，萌宠休息中（右键菜单可重试）", 0);
+    var d = document.getElementById("degraded");
+    if (d) d.classList.add("show");
+    console.warn("[Live2D] 连续失败 " + loadFailCount + " 次，已降级为静态模式");
+  }
 
   function loadModel() {
     if (isLoading) return;        // 正在加载中，忽略重复请求
+    if (degraded) {               // 已降级：不自动联网，等用户手动重试
+      if (model) { app.stage.removeChild(model); model.destroy(); model = null; }
+      return;
+    }
     isLoading = true;
 
     var cfg = MODELS[modelIndex];
@@ -219,8 +244,38 @@ canvas{display:block;position:absolute;top:0;left:0}
     console.log("[Live2D] 加载模型:", cfg.name, cfg.url);
 
     var Live2DModel = PIXI.live2d.Live2DModel;
+    var settled = false;          // 防止超时与失败重复计数
+    var timer = null;
+
+    function fail(reason) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      loadFailCount++;
+      console.error("[Live2D] 加载失败:", cfg.name, reason, "(第 " + loadFailCount + " 次)");
+      if (loadFailCount >= LOAD_MAX_FAILS) {
+        degrade();
+      } else {
+        showBubble(cfg.name + " 加载失败，可右键重试（"
+                   + (LOAD_MAX_FAILS - loadFailCount) + " 次后停止联网）", 5000);
+      }
+      isLoading = false;
+    }
+
+    // 超时保护：CDN 不可达时 fetch 会挂起不返回，加上限避免无限等待
+    timer = setTimeout(function () {
+      fail("网络超时(" + (LOAD_TIMEOUT_MS / 1000) + "s)");
+    }, LOAD_TIMEOUT_MS);
 
     Live2DModel.from(cfg.url, { autoInteract: false }).then(function (m) {
+      if (settled) {             // 已判定超时，丢弃迟到的结果
+        try { m.destroy(); } catch (e) {}
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      loadFailCount = 0;         // 成功则清零失败计数
+
       if (model) {
         app.stage.removeChild(model);
         model.destroy();
@@ -299,9 +354,7 @@ canvas{display:block;position:absolute;top:0;left:0}
       isLoading = false;   // 加载完成，释放锁
 
     }).catch(function (e) {
-      console.error("[Live2D] 加载失败:", cfg.name, e);
-      showBubble(cfg.name + " 加载失败，双击切换", 5000);
-      isLoading = false;   // 加载失败也释放锁
+      fail(e);
     });
   }
 
@@ -682,6 +735,13 @@ canvas{display:block;position:absolute;top:0;left:0}
 
   // ── 切换模型 ──
   window.switchModel = function () {
+    if (degraded) {
+      // 手动重试：清掉降级状态，重新尝试联网
+      degraded = false;
+      loadFailCount = 0;
+      var d = document.getElementById("degraded");
+      if (d) d.classList.remove("show");
+    }
     modelIndex = (modelIndex + 1) % MODELS.length;
     localStorage.setItem("live2d_model_index", modelIndex);
     loadModel();

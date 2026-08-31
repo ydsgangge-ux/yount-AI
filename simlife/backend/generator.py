@@ -7,6 +7,7 @@ import json
 import random
 import sys
 from pathlib import Path
+from typing import Optional
 
 # 复用主项目的 LLM 客户端
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
