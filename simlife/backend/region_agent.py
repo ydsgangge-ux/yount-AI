@@ -191,14 +191,17 @@ class RegionAgent:
         try:
             from simlife.backend.generator import _llm_json
             data = _llm_json(llm_client, prompt, max_tokens=700, temperature=0.8,
-                             attempts=2, label=f"空白区域生成({x},{y})")
+                             attempts=3, label=f"空白区域生成({x},{y})")
         except Exception as e:
             print(f"[RegionAgent] LLM生成空白区域失败: {e}")
-            return None
+            data = None
 
         if not isinstance(data, dict):
-            print(f"[RegionAgent] LLM生成空白区域失败: 无法获取有效JSON结构")
-            return None
+            # 预设终点：LLM失败不卡死玩家，用确定性模板兜底（世界继续运转）
+            print(f"[RegionAgent] LLM生成空白区域失败: 无法获取有效JSON结构 → 模板兜底")
+            return self._template_blank_region(
+                x, y, direction, adjacent_region,
+                suggested_danger, suggested_type, world_name, world_type, ws)
 
         region = WorldRegion(
             region_id=data.get("region_id", f"region_{x}_{y}"),
@@ -308,6 +311,165 @@ class RegionAgent:
             return wm.load_world_setting(self.world_id) or {}
         except Exception:
             return {}
+
+    def _template_blank_region(self, x: int, y: int, direction: str,
+                               adjacent_region: WorldRegion,
+                               suggested_danger: int, suggested_type: str,
+                               world_name: str, world_type: str,
+                               ws: Dict) -> Optional[WorldRegion]:
+        """LLM生成空白区域失败时的确定性模板兜底（预设终点）。
+        保证玩家永远能移动、世界继续运转；产出完整"迷你世界设定"
+        （人/怪物/资源/势力/剧情/关系），经 ensure_region_completeness 补齐。
+        """
+        try:
+            from simlife.backend import world_schema
+            from simlife.worlds import world_manager as wm
+        except Exception:
+            return None
+
+        rid = f"region_{x}_{y}"
+        _type_names = {
+            "town": ("边陲小镇", "驿站村落", "山脚小村"),
+            "wild": ("荒野林地", "旷野草原", "废弃小径"),
+            "dungeon": ("阴暗地穴", "地下废墟", "废弃矿洞"),
+            "secret": ("隐秘祭坛", "禁忌之地", "迷幻森林"),
+        }
+        _pool = _type_names.get(suggested_type, _type_names["wild"])
+        name = f"{adjacent_region.name}外{_pool[x % len(_pool)]}"
+        description = (f"从{adjacent_region.name}向{direction}方向前行，抵达了这片{name}。"
+                       f"这里危险等级约{suggested_danger}，环境荒凉而神秘，有待探索。")
+
+        # 怪物：优先取世界观怪物类型，按危险等级缩放
+        monster_pool = []
+        try:
+            mts = ws.get("dangers", {}).get("monster_types", []) or []
+            for m in mts[:6]:
+                if isinstance(m, dict) and m.get("name"):
+                    monster_pool.append({"name": m["name"], "type": m.get("type", "normal")})
+                elif isinstance(m, str) and m:
+                    monster_pool.append({"name": m, "type": "normal"})
+        except Exception:
+            pass
+        if not monster_pool:
+            monster_pool = [{"name": "荒原野狼", "type": "normal"},
+                            {"name": "暗影蝙蝠", "type": "normal"}]
+        if suggested_type == "town":
+            monster_pool = []
+        elif suggested_type == "dungeon":
+            monster_pool = [{"name": monster_pool[0]["name"], "type": "elite"}] + monster_pool[1:2]
+        lv = max(1, suggested_danger * 3)
+        monsters = []
+        for i, m in enumerate(monster_pool[:3]):
+            _type = m.get("type", "normal")
+            _lv = lv + (1 if _type == "elite" else 0)
+            monsters.append({
+                "name": m["name"], "level": _lv, "hp": 80 + _lv * 25, "max_hp": 80 + _lv * 25,
+                "attack_power": 8 + _lv * 3, "defense_power": 4 + _lv * 2,
+                "exp_reward": 15 + _lv * 8, "gold_reward": 5 + _lv * 3,
+                "type": _type, "behavior": "守卫这片区域的领地，对入侵者发起攻击。",
+                "skills": ["撕咬"],
+                "stats": {"strength": 3, "agility": 3, "intelligence": 1, "vitality": 3, "luck": 2},
+                "equipment": [], "drop_materials": [], "taxonomy": "", "species": "",
+                "habitat": "", "weakness": "",
+            })
+
+        # NPC
+        npc_objs = []
+        if suggested_type == "town":
+            npc_objs = [
+                {"id": f"npc_{rid}_0", "name": "村长", "role": "村长",
+                 "description": "本地的长者，熟悉四周的地形与传闻。", "faction_id": "", "is_key": True},
+                {"id": f"npc_{rid}_1", "name": "守夜人", "role": "守卫",
+                 "description": "负责村落巡逻的守卫，警惕而可靠。", "faction_id": "", "is_key": False},
+            ]
+        elif suggested_type in ("wild", "secret"):
+            npc_objs = [
+                {"id": f"npc_{rid}_0", "name": "流浪猎人", "role": "猎人",
+                 "description": "一名独行的猎人，在附近狩猎为生。", "faction_id": "", "is_key": False},
+            ]
+
+        # 资源：按区域类型默认关联（矿区→矿石、森林→木材、水域→鱼群等）
+        _res_by_type = {
+            "town": [{"name": "农田谷物", "type": "食物", "rarity": "common", "amount": "成片农田",
+                      "description": "可用于烹饪与交易。", "guard": ""}],
+            "wild": [{"name": "野木材", "type": "木材", "rarity": "common", "amount": "成片树林",
+                      "description": "可锻造为木制装备或工具。",
+                      "guard": monsters[0]["name"] if monsters else ""},
+                     {"name": "草药丛", "type": "草药", "rarity": "common", "amount": "零星分布",
+                      "description": "可炼药或制药剂。", "guard": ""}],
+            "dungeon": [{"name": "隐蔽矿脉", "type": "矿石", "rarity": "uncommon", "amount": "隐蔽矿脉",
+                         "description": "可锻造或附魔。", "guard": monsters[0]["name"] if monsters else ""}],
+            "secret": [{"name": "古老遗物", "type": "遗迹", "rarity": "rare", "amount": "深藏地底",
+                        "description": "蕴含魔力，可附魔。", "guard": monsters[0]["name"] if monsters else ""}],
+        }
+        resources = _res_by_type.get(suggested_type, _res_by_type["wild"])
+
+        # 本地剧情：由本区域NPC发布
+        quests = []
+        if npc_objs:
+            quests = [{
+                "title": "清剿威胁",
+                "description": f"清除{name}一带的怪物，恢复这里的安全。",
+                "giver": npc_objs[0]["name"],
+                "objectives": [{"type": "kill", "target_keyword": monsters[0]["name"] if monsters else "怪物",
+                                "count": 2}],
+                "rewards": {"exp": 30 + suggested_danger * 20, "gold": 20 + suggested_danger * 10},
+            }]
+
+        # 势力：可归属1个世界观势力
+        factions = []
+        try:
+            _ws_f = ws.get("factions", []) or []
+            _names = [f.get("name", "") for f in _ws_f[:2] if isinstance(f, dict) and f.get("name")]
+            if _names:
+                factions = [_names[0]]
+        except Exception:
+            pass
+
+        # 元素关系：怪物守护资源、NPC发布剧情
+        relationships = []
+        if monsters:
+            relationships.append({
+                "from": monsters[0]["name"], "from_type": "monster",
+                "to": resources[0]["name"], "to_type": "resource",
+                "relation": "守护",
+                "description": f"{monsters[0]['name']}盘踞在{resources[0]['name']}附近，守护着这份资源。",
+            })
+        if npc_objs:
+            relationships.append({
+                "from": npc_objs[0]["name"], "from_type": "npc",
+                "to": quests[0]["title"] if quests else name, "to_type": "quest",
+                "relation": "发布",
+                "description": f"{npc_objs[0]['name']}在此发布本地剧情，指引冒险者。",
+            })
+
+        region = WorldRegion(
+            region_id=rid, name=name, description=description,
+            danger_level=suggested_danger, region_type=suggested_type, x=x, y=y,
+        )
+        region.is_blank = True
+        region.monsters = monsters
+        region.npcs = [n["name"] for n in npc_objs]
+        self.world_map.add_region(region)
+
+        try:
+            region_data = {
+                "id": rid, "name": name, "description": description,
+                "danger_level": suggested_danger, "biome": suggested_type,
+                "level_range": [max(1, suggested_danger * 3 - 2), suggested_danger * 3 + 2],
+                "x": x, "y": y,
+                "monsters": monsters, "npcs": npc_objs, "factions": factions,
+                "resources": resources, "quests": quests, "relationships": relationships,
+            }
+            if suggested_danger > 0:
+                region_data["dangers"] = [m["name"] for m in monsters if m.get("name")]
+            region_data = world_schema.ensure_region_completeness(region_data, ws)
+            wm.save_region(self.world_id, region_data)
+        except Exception as e:
+            print(f"[RegionAgent] 模板兜底保存失败: {e}")
+
+        print(f"[RegionAgent] LLM生成空白区域失败 → 模板兜底：({x},{y}) → {name}（{suggested_type}，危险{suggested_danger}，NPC {len(npc_objs)} 个）")
+        return region
 
     def move_to_region_id(self, region_id: str) -> Dict:
         """直接移动到指定区域ID"""
