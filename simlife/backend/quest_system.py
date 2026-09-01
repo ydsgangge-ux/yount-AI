@@ -8,6 +8,79 @@
 from typing import Dict, List, Optional, Tuple
 import copy
 
+# ─────────────────────────────────────────────
+# 英↔中术语别名（解决"任务关键词是用英文内部ID、而运行时数据是中文"的匹配断层）
+# 各组内的词都是"同一概念"的等价表述，匹配时若关键词命中任一组，则用整组词去命中数据。
+# 例：任务关键词 "slime"，要把中文敌人"史莱姆"也算命中 → 组 ["slime","史莱姆",...]。
+# 注意：只放语义明确的等价物，避免过宽误判（用户要求"准确"）。
+# ─────────────────────────────────────────────
+_TERM_ALIASES = [
+    ["slime", "史莱姆"],
+    ["zombie", "丧尸", "僵尸", "行尸"],
+    ["wolf", "狼", "野狼", "灰狼", "暗影狼"],
+    ["beast", "野兽", "凶兽", "野猪", "棕熊", "灰熊"],
+    ["herb", "草药", "药草", "药材"],
+    ["canned", "罐头", "罐头食物", "午餐肉", "肉罐头"],
+    ["manacrystal", "法力水晶", "魔力水晶", "魔晶"],
+    ["crystal", "水晶"],
+    ["shade", "影魔", "影刃", "暗影刺客", "影刺客"],
+    ["skeleton", "骷髅", "骷髅兵", "亡灵", "不死生物"],
+    ["goblin", "哥布林"],
+    ["spider", "蜘蛛"],
+    ["bat", "蝙蝠"],
+    ["snake", "蛇", "毒蛇"],
+    ["mushroom", "蘑菇"],
+    ["element", "元素"],
+    ["vine", "藤蔓"],
+    ["guardian", "守卫", "守门人", "守护者", "圣所守卫"],
+    ["boss", "boss", "首领", "魔王", "领主", "主宰", "头目"],
+    ["trial", "试炼", "试炼之地"],
+    ["guild", "公會", "公会", "帮派"],
+    ["army", "军团", "军队", "军队", "反抗军"],
+    ["scout", "斥候", "侦察兵"],
+    ["merchant", "商人", "掌柜", "店主", "老板"],
+    ["guard", "卫兵", "守卫"],
+    ["sanctum", "圣所", "圣殿", "圣地", "光辉圣所"],
+    ["capital", "王都", "皇都", "都城", "首都"],
+    ["kingdom", "王国", "皇国", "帝国"],
+    ["town", "镇", "小镇", "村庄", "村落"],
+    ["forest", "森林", "林", "密林"],
+    ["mine", "矿洞", "矿区", "矿脉", "矿井"],
+    ["harbor", "port", "港口", "码头", "海港"],
+    ["dungeon", "地下城", "地牢", "密室"],
+]
+
+
+def _smart_match(kw: str, texts) -> bool:
+    """智能匹配：keyword 是否命中任意一条 text。
+    支持：
+    - 大小写不敏感
+    - 关键词拆分（_ / - / 空格）
+    - 英↔中术语别名扩展到 _TERM_ALIASES
+    texts: 可迭代的待匹配文本（str）。
+    """
+    kw = str(kw).strip().lower()
+    if not kw:
+        return False
+    terms = {kw}
+    for sep in ("_", "-", " "):
+        if sep in kw:
+            terms.update(p for p in kw.split(sep) if p)
+    # 命中任一组别名 → 扩展整组词
+    for group in _TERM_ALIASES:
+        if any(t and t in kw for t in group):
+            terms.update(group)
+    lowered = [str(t).lower() for t in texts if t]
+    if not lowered:
+        return False
+    for term in terms:
+        if not term:
+            continue
+        for t in lowered:
+            if term in t:
+                return True
+    return False
+
 
 # ─────────────────────────────────────────────
 # 任务状态常量
@@ -565,20 +638,8 @@ class QuestSystem:
             return []
 
         # 提取 fallback 文本（叙事文本和用户行动文本）
-        _narrative = str(kwargs.get("narrative", "") or "").lower()
-        _action = str(kwargs.get("action_text", "") or "").lower()
-
-        # 构建 fallback 关键词变体
-        # 对于 "warehouse_basement" 这样的内部ID，拆成 ["warehouse_basement", "warehouse", "basement"]
-        # 对于 "黑雾核心情报" 这样的中文关键词，保持原样匹配
-        def _build_fallback_keywords(kw: str) -> List[str]:
-            variants = [kw]
-            # 按 _ - 空格拆分
-            for sep in ("_", "-", " "):
-                if sep in kw:
-                    parts = [p for p in kw.split(sep) if p]
-                    variants.extend(parts)
-            return variants
+        _narrative = str(kwargs.get("narrative", "") or "")
+        _action = str(kwargs.get("action_text", "") or "")
 
         progressed = []
         for quest in active:
@@ -589,68 +650,30 @@ class QuestSystem:
                     continue  # 已完成的目标
                 if obj["type"] != event_type:
                     continue
-                # 关键词匹配（不区分大小写）
                 kw = obj["target_keyword"].lower()
                 if not kw:
                     continue
                 matched = False
                 if event_type == "kill":
                     names = kwargs.get("enemy_names", [])
-                    matched = any(kw in str(n).lower() for n in names)
-                    # fallback：从叙事文本中匹配
-                    if not matched and _narrative:
-                        for _v in _build_fallback_keywords(kw):
-                            if _v in _narrative:
-                                matched = True
-                                break
+                    matched = _smart_match(kw, names)
+                    if not matched:
+                        matched = _smart_match(kw, [_narrative])
                 elif event_type == "collect":
                     items = kwargs.get("items", [])
-                    matched = any(kw in str(it.get("name", "")).lower() for it in items)
-                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    matched = _smart_match(kw, [it.get("name", "") for it in items])
                     if not matched:
-                        _fbs = _build_fallback_keywords(kw)
-                        if _narrative:
-                            for _v in _fbs:
-                                if _v in _narrative:
-                                    matched = True
-                                    break
-                        if not matched and _action:
-                            for _v in _fbs:
-                                if _v in _action:
-                                    matched = True
-                                    break
+                        matched = _smart_match(kw, [_narrative, _action])
                 elif event_type == "visit_location":
-                    loc = str(kwargs.get("location", "")).lower()
-                    matched = kw in loc
-                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    loc = str(kwargs.get("location", "") or "")
+                    matched = _smart_match(kw, [loc])
                     if not matched:
-                        _fbs = _build_fallback_keywords(kw)
-                        if _narrative:
-                            for _v in _fbs:
-                                if _v in _narrative:
-                                    matched = True
-                                    break
-                        if not matched and _action:
-                            for _v in _fbs:
-                                if _v in _action:
-                                    matched = True
-                                    break
+                        matched = _smart_match(kw, [_narrative, _action])
                 elif event_type == "talk_npc":
-                    npc = str(kwargs.get("npc_name", "")).lower()
-                    matched = kw in npc
-                    # fallback：从叙事文本和用户行动中匹配（含关键词变体）
+                    npc = str(kwargs.get("npc_name", "") or "")
+                    matched = _smart_match(kw, [npc])
                     if not matched:
-                        _fbs = _build_fallback_keywords(kw)
-                        if _narrative:
-                            for _v in _fbs:
-                                if _v in _narrative:
-                                    matched = True
-                                    break
-                        if not matched and _action:
-                            for _v in _fbs:
-                                if _v in _action:
-                                    matched = True
-                                    break
+                        matched = _smart_match(kw, [_narrative, _action])
 
                 if matched:
                     obj["progress"] = min(obj["count"], obj["progress"] + 1)
@@ -668,6 +691,147 @@ class QuestSystem:
                     quest["status"] = QUEST_COMPLETED
                 # 如果 auto_complete=True 且没有 NPC 交付需求，也可以自动交付
                 # 这里保持简单：auto_complete 表示"目标达成即完成"，但仍需 turn_in 领奖
+        return progressed
+
+    # ── 任务校验器：专项解决"到达地点"判定问题 ──
+    @classmethod
+    def validate_visit_locations(cls, state: Dict, **kwargs) -> List[Dict]:
+        """
+        任务校验器：基于【玩家当前实际所在区域】的多源数据，校验进行中的
+        "到达地点"(visit_location) 目标是否真实达成。
+
+        解决的问题：
+        1. 目标关键词是英文内部ID(如 port_area/sanctum)，而触发只用中文区域名，
+           导致 kw in loc 永远不匹配 → 到了却不打勾。
+        2. 目标指向某区域的子地点(如"王都的港口区")，玩家到达父区域时无法精确判断。
+        3. 触发只依赖 LLM 叙事文本的措辞，地点描写有差距就判不中。
+
+        数据来源（多源取并集，提高准确性）：
+        - state["world_map"]：当前区域 region_id / name / description
+        - state["story"]：current_location / scene_description / 子场景栈（LLM叙事设置的子地点）
+        - 任务自带 location_hint（可能含英文ID或中文名）
+        - kwargs 允许补充：location(子地点名)、region_id、narrative、action_text
+
+        返回：本次被推进/完成的目标列表（与 record_progress 一致的结构）。
+        """
+        cls._ensure_state(state)
+        active = state["quests"]["active"]
+        if not active:
+            return []
+
+        # ── 搜集当前实际所在区域数据 ──
+        # 1) 显式传入的 region_id（最高优先）
+        cur_id = str(kwargs.get("region_id", "") or "").strip()
+        # 2) 从 state.world_map 读取（触发处未传时兜底）
+        _wm = state.get("world_map") or {}
+        if not cur_id:
+            cur_id = str(_wm.get("current_region_id", "") or "").strip()
+        cur_name = ""
+        cur_desc = ""
+        _regions = _wm.get("regions") or {}
+        if isinstance(_regions, dict):
+            _reg = _regions.get(cur_id)
+            if isinstance(_reg, dict):
+                cur_name = str(_reg.get("name", "") or "")
+                cur_desc = str(_reg.get("description", "") or "")
+        # 3) story 上下文：LLM叙事设置的当前地点/场景描述/子场景栈（子地点常在此）
+        _story = state.get("story") or {}
+        _story_ctx = " ".join([
+            str(_story.get("current_location", "") or ""),
+            str(_story.get("scene_description", "") or ""),
+        ])
+        try:
+            _stack = _story.get("sub_scene_stack") or []
+            if isinstance(_stack, list):
+                _story_ctx += " " + " ".join(
+                    str(s.get("location", "") or "") for s in _stack if isinstance(s, dict))
+        except Exception:
+            pass
+        # 4) 显式补充的 location（子地点名）与叙事/行动文本
+        extra_location = str(kwargs.get("location", "") or "")
+        extra_text = " ".join([
+            str(kwargs.get("narrative", "") or ""),
+            str(kwargs.get("action_text", "") or ""),
+        ])
+
+        def _variants(kw: str) -> List[str]:
+            vs = {kw}
+            for sep in ("_", "-", " "):
+                if sep in kw:
+                    vs.update(p for p in kw.split(sep) if p)
+            # 英文内部地点ID → 扩展到中译文名（如 sanctum → 圣所）
+            for group in _TERM_ALIASES:
+                if any(t and t in kw for t in group):
+                    vs.update(group)
+            return list(vs)
+
+        progressed = []
+        for quest in active:
+            if quest.get("status") != QUEST_ACTIVE:
+                continue
+            # 任务自带 location_hint 作为额外匹配源
+            q_hint = str(quest.get("location_hint", "") or "").lower()
+            for obj in quest["objectives"]:
+                if obj.get("type") != "visit_location":
+                    continue
+                if obj.get("progress", 0) >= obj.get("count", 1):
+                    continue
+                kw_raw = str(obj.get("target_keyword", "") or "").strip()
+                if not kw_raw:
+                    continue
+                kw = kw_raw.lower()
+                # ── 多维判定 ──
+                matched = False
+                # ① 当前区域英文ID（解决英文ID vs 中文名）
+                if cur_id and kw in str(cur_id).lower():
+                    matched = True
+                # ② 当前区域中文名
+                if not matched and cur_name and kw in str(cur_name).lower():
+                    matched = True
+                # ③ 当前区域描述（解决子地点藏在描述里、措辞有差距）
+                if not matched and cur_desc:
+                    for _v in _variants(kw):
+                        if _v and _v in str(cur_desc).lower():
+                            matched = True
+                            break
+                # ③' story上下文：LLM叙事设置的当前地点/场景描述/子场景栈（子地点常在此）
+                if not matched and _story_ctx:
+                    for _v in _variants(kw):
+                        if _v and _v in _story_ctx.lower():
+                            matched = True
+                            break
+                # ④ 触发时补充的子地点名/叙事/行动文本
+                if not matched and extra_location:
+                    for _v in _variants(kw):
+                        if _v and _v in str(extra_location).lower():
+                            matched = True
+                            break
+                if not matched and extra_text:
+                    for _v in _variants(kw):
+                        if _v and _v in extra_text.lower():
+                            matched = True
+                            break
+                # ⑤ 任务自带的 location_hint（含英文ID或中文名）
+                if not matched and q_hint:
+                    for _v in _variants(kw):
+                        if _v and _v in q_hint:
+                            matched = True
+                            break
+                if not matched:
+                    continue
+
+                obj["progress"] = min(obj.get("count", 1), obj.get("progress", 0) + 1)
+                progressed.append({
+                    "quest_id": quest["id"],
+                    "quest_title": quest["title"],
+                    "objective": obj,
+                })
+
+            # 目标全部达成 → 更新任务状态（与 record_progress 保持一致）
+            if quest["status"] == QUEST_ACTIVE:
+                all_done = all(o.get("progress", 0) >= o.get("count", 1) for o in quest["objectives"])
+                if all_done and quest.get("auto_complete", False):
+                    quest["status"] = QUEST_COMPLETED
         return progressed
 
     # ── 交付任务（领奖）──

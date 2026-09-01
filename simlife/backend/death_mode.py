@@ -776,9 +776,60 @@ class DeathModeEngine:
         self._record_history_and_save(state, action, res["narrative"], "social_response", None, res)
         return res
 
+    def _sell_fish_from_action(self, state: Dict, action: str) -> Optional[Dict]:
+        """自由行动"卖鱼给NPC/卖鱼换钱"：从钓获背包(fish_caught)真实扣减对应鱼并加金币，
+        计价与 /api/death-mode/life-skills/sell-fish 保持一致（price 字段）。
+        解决：卖鱼由 LLM 叙事结算只加金币、却不扣背包库存的漏洞。
+        必须满足"卖"意图 + 背包里确实有该鱼才拦截；否则返回 None 走常规流程。
+        """
+        import re as _re
+        a = action.strip()
+        if not a or state.get("in_combat"):
+            return None
+        _sell_kw = ("卖", "出售", "售卖", "卖给", "兜售", "售", "甩卖")
+        if not any(k in a for k in _sell_kw):
+            return None
+        # 排除"买"类意图，避免把玩家描述他人收购/买入误判成自己卖
+        if any(k in a for k in ("买", "收购", "采购", "进货", "购入")):
+            return None
+        from simlife.backend import life_skills as LS
+        ls = state.get("life_state") or LS.ensure_life_state(state)
+        state["life_state"] = ls
+        fishes = [f for f in ls.get("fish_caught", [])
+                  if f.get("qty", 0) > 0 and f.get("name")]
+        if not fishes:
+            return None
+        target = next((f for f in fishes if f["name"] in a), None)
+        if not target:
+            return None
+        name = target["name"]
+        # 数量（"两条河鲈"/"3条"），缺省 1
+        qty = 1
+        mq = _re.search(r'(\d+|[一二两三四五六七八九十])\s*条', a)
+        if mq:
+            _cn = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+                   "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+            qty = int(mq.group(1)) if mq.group(1).isdigit() else _cn.get(mq.group(1), 1)
+        qty = min(qty, target["qty"])
+        # 扣减钓获背包
+        target["qty"] -= qty
+        if target["qty"] <= 0:
+            ls["fish_caught"] = [f for f in ls["fish_caught"] if f is not target]
+        price = int(target.get("price", 5)) * qty
+        state["character"]["gold"] = state["character"].get("gold", 0) + price
+        self._log_action("life_skill", {
+            "skill": "交易", "action": f"出售{name}×{qty}获得{price}金币",
+            "detail": {"鱼": name, "数量": qty, "金币": f"+{price}"},
+        })
+        self._save()
+        # 返回简短确定性叙事；扣库存+加金币由本方法负责，LLM不再重复加金币
+        res = {"narrative": f"你售出{qty}份{name}，收下{price}金币。",
+               "scene_change": False, "sold_item": name, "sold_qty": qty}
+        self._record_history_and_save(state, action, res["narrative"], "trade", None, res)
+        return res
+
     def _eat_food_from_action(self, state: Dict, action: str, sender: str = "user") -> Optional[Dict]:
         """对话触发"吃菜"：输入中提及料理/鱼名（如"吃清汤鱼片蘑菇"）时直接食用。
-        匹配成功则扣除一份并应用增益/回复，返回叙事结果；未匹配返回 None 走正常流程。
         效果逻辑与 /api/death-mode/life-skills/eat 保持一致。
         """
         from simlife.backend import life_skills as LS
@@ -1052,6 +1103,12 @@ class DeathModeEngine:
             _give_result = self._give_item_to_npc(state, action, sender)
             if _give_result:
                 return _give_result
+
+        # ── 自由行动卖鱼：从钓获背包真实扣减并加金币（LLM叙事不扣库存）──
+        if not in_combat and action:
+            _sell_result = self._sell_fish_from_action(state, action)
+            if _sell_result:
+                return _sell_result
 
         # 恢复/使用物品意图 → 不触发扫荡
         restore_keywords = ("药水", "恢复", "治疗", "疗伤", "使用", "喝", "服用", "补给",
@@ -1679,13 +1736,30 @@ class DeathModeEngine:
             _arrival_note = f"\n\n两人离开{_original}，向{_arrival_dir}方前行。前方出现了新的景象——{_target.description}"
             narrative += _arrival_note
             agent_result["narrative"] = narrative
-            # 任务进度：到达新区域触发
+            # 任务进度：到达新区域触发（任务校验器：多源精确判定，含英文ID）
             try:
-                QuestSystem.record_progress(state, "visit_location",
-                                             location=_target.name,
-                                             narrative=narrative, action_text=action)
+                QuestSystem.validate_visit_locations(state,
+                                                     region_id=_target.region_id,
+                                                     location=_target.name,
+                                                     narrative=narrative, action_text=action)
             except Exception:
                 pass
+
+        # 4.1 通用"到达"判定（无论是否区域移动都执行）：
+        #     玩家用"到达: port_area"这类自由行动到达子地点（如王都的港口区）时，
+        #     不走区域移动路径、current_region_id 不变，必须靠叙事/场景上下文判定。
+        _visit_progressed = []
+        try:
+            _cur_rid = ""
+            try:
+                _cur_rid = str(state.get("world_map", {}).get("current_region_id", "") or "")
+            except Exception:
+                pass
+            _visit_progressed = QuestSystem.validate_visit_locations(
+                state, region_id=_cur_rid,
+                narrative=narrative, action_text=action)
+        except Exception:
+            _visit_progressed = []
 
         # 5. 区域状态更新（仅非移动时）——支持谨慎追加新NPC/新地点并注册进运行时npc_system
         if not _region_moved:
@@ -1886,6 +1960,10 @@ class DeathModeEngine:
             "exp_gained": 0,
             "gold_gained": 0,
         }
+
+        # 通用"到达"判定结果 → 附加到响应，前端可即时反馈
+        if _visit_progressed:
+            result["quest_progress"] = _visit_progressed
 
         # 2. 根据行动类型进行数值判定
         char = state["character"]
@@ -5690,11 +5768,12 @@ class DeathModeEngine:
                     "is_dungeon": True,
                     "dungeon": dungeon_result.get("dungeon_display"),
                 }
-                # 任务进度：到达地下城触发
+                # 任务进度：到达地下城触发（任务校验器：多源精确判定）
                 try:
-                    QuestSystem.record_progress(state, "visit_location",
-                                                 location=target.name,
-                                                 narrative=target.description)
+                    QuestSystem.validate_visit_locations(state,
+                                                         region_id=target.region_id,
+                                                         location=target.name,
+                                                         narrative=target.description)
                 except Exception:
                     pass
                 adjacent = self.world_map.get_adjacent_regions()
@@ -5709,11 +5788,12 @@ class DeathModeEngine:
         state["story"]["current_location"] = target.name
         state["story"]["scene_description"] = target.description
 
-        # 任务进度：到达新区域触发
+        # 任务进度：到达新区域触发（任务校验器：多源精确判定）
         try:
-            QuestSystem.record_progress(state, "visit_location",
-                                         location=target.name,
-                                         narrative=target.description)
+            QuestSystem.validate_visit_locations(state,
+                                                 region_id=target.region_id,
+                                                 location=target.name,
+                                                 narrative=target.description)
         except Exception:
             pass
 
@@ -5837,10 +5917,11 @@ class DeathModeEngine:
             _room_name = result.get("room_name", "")
             if _room_name:
                 state["story"]["current_location"] = _room_name
-                # 任务进度：到达新房间触发
+                # 任务进度：到达新房间触发（任务校验器：多源精确判定，房间为子地点）
                 try:
-                    QuestSystem.record_progress(state, "visit_location",
-                                                 location=_room_name)
+                    QuestSystem.validate_visit_locations(state,
+                                                         region_id=getattr(self.world_map, "current_region_id", "") or "",
+                                                         location=_room_name)
                 except Exception:
                     pass
 
@@ -6070,11 +6151,12 @@ class DeathModeEngine:
         # 清理旧区域任务委托
         QuestSystem.cleanup_offers_by_region(state)
 
-        # 任务进度
+        # 任务进度（任务校验器：多源精确判定）
         try:
-            QuestSystem.record_progress(state, "visit_location",
-                                         location=target.name,
-                                         narrative=target.description)
+            QuestSystem.validate_visit_locations(state,
+                                                 region_id=target.region_id,
+                                                 location=target.name,
+                                                 narrative=target.description)
         except Exception:
             pass
 
