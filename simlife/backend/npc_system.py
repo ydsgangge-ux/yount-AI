@@ -16,6 +16,53 @@ from datetime import datetime
 class NPC:
     """单个NPC"""
 
+    # 按身份(role)给战力定位关键词分档（强度尊重设定）。
+    # 等级采用"世界恒定绝对等级"：基于世界战力天花板(world_cap)派位置，
+    # 而非跟玩家等级浮动——这样王国的顶级战力永远名副其实，不因玩家等级而失真。
+    ROLE_TOP_KW = (
+        "首领", "分会长", "会长", "团长", "掌门", "宗主", "长老", "护法", "坛主",
+        "元帅", "将军", "指挥官", "舰长", "大祭司", "教皇", "圣使", "主教", "亲王",
+        "领主", "堡主", "霸主", "魔王", "国王", "女王", "导师", "剑圣", "剑豪",
+        "武尊", "宗师", "高手", "大将", "高阶", "精锐", "铁卫", "教宗", "圣女",
+    )
+    ROLE_HIGH_KW = (
+        "队长", "副队", "精英", "亲卫", "骑士长", "牧师", "执事", "祭司", "学士",
+        "教官", "教授", "博士", "贤者", "魔导师", "大法师", "学院长",
+    )
+    ROLE_MID_KW = (
+        "侍卫", "守卫", "卫兵", "护卫", "士官", "骑士", "剑士", "枪兵", "枪手",
+        "铁匠", "猎手", "猎人", "佣兵", "镖师", "士兵", "战士", "武士", "浪人",
+        "执法者", "佣人", "游侠", "赏金猎",
+    )
+    ROLE_LOW_KW = (
+        "商人", "药师", "炼丹", "掌柜", "老板", "店主", "仆从", "学徒", "侍者",
+        "接引", "教士", "修女", "僧侣", "村民", "农夫", "渔夫", "酒馆", "文书",
+        "学者", "书生", "学生", "旅人", "吟游诗人",
+    )
+
+    @staticmethod
+    def role_power(role, world_cap: int = None):
+        """按身份(role)给出"世界恒定绝对等级"与战力倍率的建议（强度尊重设定）。
+        返回 (level, hp_multiplier)。世界战力天花板默认用角色满级 MAX_LEVEL(=60)。
+        定位：顶级≈cap-3~5、高阶≈cap×0.8、武职≈cap×0.6、平民≈cap×0.28。
+        HP 建议用 combat 敌人数值公式再乘该倍率。
+        """
+        if world_cap is None:
+            try:
+                from simlife.backend.skill_system import MAX_LEVEL
+                world_cap = MAX_LEVEL
+            except Exception:
+                world_cap = 60
+        cap = max(10, int(world_cap))
+        _from = str(role or "")
+        if any(k in _from for k in NPC.ROLE_TOP_KW):
+            return max(10, cap - random.randint(3, 5)), 2.2
+        if any(k in _from for k in NPC.ROLE_HIGH_KW):
+            return max(8, int(cap * 0.8)), 1.6
+        if any(k in _from for k in NPC.ROLE_MID_KW):
+            return max(5, int(cap * 0.6)), 1.3
+        return max(3, int(cap * 0.28)), 1.0
+
     def __init__(self, npc_id: str, name: str, role: str = "村民",
                  personality: str = "友善", location: str = "",
                  faction: str = ""):

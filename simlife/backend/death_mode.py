@@ -984,6 +984,12 @@ class DeathModeEngine:
         if not action:
             return {"error": "no_action"}
 
+        # 进区托管：每次行动前把当前区域预设NPC补齐进可交互池（覆盖LLM叙事移动/战斗场景）
+        try:
+            self._adopt_region_npcs(state)
+        except Exception:
+            pass
+
         # ── 坏人路线·NPC怜悯暂停处理 ──
         # 战斗中NPC敌人残血时暂停，用户明确说"杀死/处决/了结"才执行最后一击
         _mercy_pause = state.get("npc_mercy_pause")
@@ -2821,27 +2827,31 @@ class DeathModeEngine:
                 continue
             # 去除编号后缀（如"旅店老板1"→"旅店老板"）用于匹配
             base_name = re.sub(r'\d+$', '', enemy_name).strip()
-            _matched = False
-            for npc in self.npc_system.npcs.values():
-                if not npc.alive:
-                    continue
-                _npc_lower = npc.name.lower()
-                _en_lower = enemy_name.lower()
-                _bn_lower = base_name.lower()
-                # 精确匹配、基础名匹配 或 包含匹配
-                if (_npc_lower == _en_lower or _npc_lower == _bn_lower
-                        or (_npc_lower and _npc_lower in _en_lower)
-                        or (_npc_lower and _npc_lower in _bn_lower)
-                        or (_en_lower and _en_lower in _npc_lower)):
-                    self.npc_system.kill_npc(npc.npc_id, f"被{killer}击杀", killer=killer)
-                    killed_npc_names.append(npc.name)
-                    try:
-                        from simlife.backend.quest_system import QuestSystem
-                        QuestSystem.on_npc_killed(state, npc.name)
-                    except Exception:
-                        pass
-                    _matched = True
+            _all = [n for n in self.npc_system.npcs.values() if n.alive]
+            _target = None
+            _en_lower = enemy_name.lower()
+            _bn_lower = base_name.lower()
+            # 撞名根治：全名优先 → 敌人名含NPC名(选最长) → NPC名含敌人名(选最短)
+            for npc in _all:
+                if npc.name.lower() == _en_lower or npc.name.lower() == _bn_lower:
+                    _target = npc
                     break
+            if not _target:
+                _sub = [n for n in _all if n.name.lower() and n.name.lower() in _bn_lower]
+                if _sub:
+                    _target = max(_sub, key=lambda x: len(x.name))
+            if not _target and len(_bn_lower) >= 2:
+                _sup = [n for n in _all if _bn_lower in n.name.lower()]
+                if _sup:
+                    _target = min(_sup, key=lambda x: len(x.name))
+            if _target:
+                self.npc_system.kill_npc(_target.npc_id, f"被{killer}击杀", killer=killer)
+                killed_npc_names.append(_target.name)
+                try:
+                    from simlife.backend.quest_system import QuestSystem
+                    QuestSystem.on_npc_killed(state, _target.name)
+                except Exception:
+                    pass
             # 未匹配上已注册NPC的敌人一律视为普通怪物，不动态注册、不记录死亡。
             # （敌人生成时已通过名称匹配给 is_npc 打标记，只有 is_npc=True 才会进入本方法）
 
@@ -2850,6 +2860,86 @@ class DeathModeEngine:
             state["npc_death_records"] = self.npc_system.death_records
             print(f"[DeathMode] NPC死亡记录: {', '.join(killed_npc_names)}（凶手：{killer}）")
         return killed_npc_names
+
+    def _adopt_region_npcs(self, state: Dict, region_id: str = None) -> list:
+        """进区托管：把当前区域文件里预设/LLM定义的NPC补齐进可交互池(npc_system)。
+        未注册的按身份(role)赋予合理等级与战力（强度尊重设定），解决
+        "设定NPC有名字无数值"——例如分会长阿尔贝特·冯·斯特恩应是最强战力，
+        而不是被当成一级野怪。撞名根治：同名(全名)已注册则跳过，避免重复托管。
+        """
+        if not self.npc_system:
+            return []
+        adopted = []
+        try:
+            world_id = state.get("world_setting", {}).get("world_id", "")
+            if not world_id:
+                return []
+            if not region_id:
+                try:
+                    region_id = str(state.get("world_map", {}).get("current_region_id", "") or "")
+                except Exception:
+                    region_id = ""
+            cur_name = state.get("story", {}).get("current_location", "")
+            from simlife.worlds import world_manager as wm
+            file_region = None
+            if region_id:
+                try:
+                    file_region = wm.load_region(world_id, region_id) or None
+                except Exception:
+                    file_region = None
+            if not file_region and cur_name:
+                try:
+                    file_region = wm.load_region(world_id, cur_name) or None
+                except Exception:
+                    file_region = None
+            preset_npcs = (file_region or {}).get("npcs", []) if file_region else []
+            if not isinstance(preset_npcs, list):
+                preset_npcs = []
+            if not preset_npcs:
+                return []
+            pool = self.npc_system.npcs
+            _loc = region_id or cur_name
+            for n in preset_npcs:
+                if not isinstance(n, dict):
+                    continue
+                name = str(n.get("name", "")).strip()
+                if not name:
+                    continue
+                # 撞名根治：同名(全名)已注册 → 由运行时接管，不再重复托管
+                if any(p.name == name for p in pool.values()):
+                    continue
+                from simlife.backend.npc_system import NPC
+                role = str(n.get("role", "") or "")
+                level, hp_mul = NPC.role_power(role)
+                # HP用combat系统公式计算（和怪物统一规格），再乘身份倍率
+                level_scale = 1 + (level - 1) * 0.3
+                base_hp = int(50 * level_scale * hp_mul)
+                npc = NPC(
+                    npc_id=f"preset_{region_id}_{name}",
+                    name=name,
+                    role=role or "村民",
+                    personality=str(n.get("description", "") or "普通"),
+                    location=_loc,
+                    faction=str(n.get("faction_id", "") or ""),
+                )
+                npc.level = level
+                npc.max_hp = base_hp
+                npc.hp = base_hp
+                _rk = role
+                npc.can_trade = any(k in _rk for k in ("商人", "药师", "炼丹", "掌柜",
+                                                        "老板", "铁匠", "店主", "商"))
+                npc.can_quest = bool(n.get("is_key")) or any(
+                    k in _rk for k in ("会长", "长老", "导师", "守卫", "猎人", "牧师",
+                                       "主教", "接引", "队长", "指挥", "教授", "执事"))
+                npc.dialogue_hint = str(n.get("description", "") or "")[:80]
+                pool[npc.npc_id] = npc
+                adopted.append(name)
+            if adopted:
+                state["npc_system"] = self.npc_system.to_dict()
+                print(f"[DeathMode] 进区托管：{_loc} 补齐 {len(adopted)} 个预设NPC → " + "、".join(adopted))
+        except Exception as e:
+            print(f"[DeathMode] 进区托管异常: {e}")
+        return adopted
 
     def trigger_chapter_transition(self, force: bool = False) -> Dict:
         """网页端"新篇章"按钮入口：手动触发章节衔接
@@ -3252,28 +3342,45 @@ class DeathModeEngine:
                     # 用叙事中提到的名字覆盖
                     if name:
                         enemy["name"] = name if count == 1 else f"{name}{i+1}"
-                    # 坏人路线：敌人名匹配NPC → 标记 is_npc，残血时触发怜悯暂停
+                    # 坏人路线：敌人名匹配NPC → 标记 is_npc，残血时触发怜悯暂停。
+                    # 撞名根治：唯一 id + 全名匹配，避免"阿尔贝特"子串撞"阿尔贝特·冯·斯特恩"。
                     if self.npc_system:
                         _base_name = re.sub(r'\d+$', '', enemy["name"]).strip()
-                        for _n in self.npc_system.npcs.values():
-                            if not _n.alive:
-                                continue
-                            # 精确匹配 或 包含匹配（"药剂师莱恩"包含"莱恩"，或反之）
-                            _en_lower = enemy["name"].lower()
-                            _bn_lower = _base_name.lower()
-                            _npc_lower = _n.name.lower()
-                            if (_npc_lower == _en_lower or _npc_lower == _bn_lower
-                                    or (_npc_lower and _npc_lower in _en_lower)
-                                    or (_npc_lower and _npc_lower in _bn_lower)
-                                    or (_en_lower and _en_lower in _npc_lower)):
-                                enemy["is_npc"] = True
-                                enemy["npc_id"] = _n.npc_id
-                                # 用NPC的真实名字（避免"药剂师莱恩"和"莱恩"不一致）
-                                enemy["name"] = _n.name if count == 1 else f"{_n.name}{i+1}"
-                                # NPC作为敌人通常更强（有名字的角色）
-                                enemy["max_hp"] = int(enemy.get("max_hp", 50) * 1.5)
-                                enemy["hp"] = enemy["max_hp"]
+                        _matched_npc = None
+                        _all = [n for n in self.npc_system.npcs.values() if n.alive]
+                        _en_lower = enemy["name"].lower()
+                        _bn_lower = _base_name.lower()
+                        # ① 全名等价（敌人名/基础名 == NPC全名）
+                        for _n in _all:
+                            if _n.name.lower() == _en_lower or _n.name.lower() == _bn_lower:
+                                _matched_npc = _n
                                 break
+                        # ② 敌人名包含NPC全名：选最长（最具体）的全名，避免短名误命中长全名
+                        if not _matched_npc:
+                            _sub = [n for n in _all if n.name.lower() and n.name.lower() in _bn_lower]
+                            if _sub:
+                                _matched_npc = max(_sub, key=lambda x: len(x.name))
+                        # ③ NPC全名包含敌人名（含称号前缀，如注册"莱恩"对敌人"药剂师莱恩"）：
+                        #    选最短NPC名，降低"斯特恩"对"阿尔贝特·冯·斯特恩"这类误匹配
+                        if not _matched_npc and len(_bn_lower) >= 2:
+                            _sup = [n for n in _all if _bn_lower in n.name.lower()]
+                            if _sup:
+                                _matched_npc = min(_sup, key=lambda x: len(x.name))
+                        if _matched_npc:
+                            enemy["is_npc"] = True
+                            enemy["npc_id"] = _matched_npc.npc_id
+                            enemy["name"] = _matched_npc.name if count == 1 else f"{_matched_npc.name}{i+1}"
+                            # 强度尊重设定：用NPC自身等级/属性（不再对随机怪×1.5），
+                            # 让"最强战力"名副其实。
+                            enemy["level"] = _matched_npc.level
+                            enemy["max_hp"] = _matched_npc.max_hp
+                            enemy["hp"] = _matched_npc.max_hp
+                            enemy["attack_power"] = max(
+                                int(enemy.get("attack_power", 10)),
+                                int(8 + _matched_npc.level * 3))
+                            enemy["defense_power"] = max(
+                                int(enemy.get("defense_power", 5)),
+                                int(4 + _matched_npc.level * 2))
 
                     # 坏人路线兜底：NPC不在npc_system中，但从action_text可判断是攻击有名字的角色
                     if not enemy.get("is_npc"):
@@ -5750,6 +5857,11 @@ class DeathModeEngine:
         # 移动
         self.world_map.current_region_id = target_region_id
         target.explored = True
+        # 进区托管：把该区预设NPC补齐进可交互池（含战力/交易/任务能力）
+        try:
+            self._adopt_region_npcs(state, target_region_id)
+        except Exception:
+            pass
         # 清理旧区域任务委托
         QuestSystem.cleanup_offers_by_region(state)
 
