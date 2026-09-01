@@ -664,6 +664,11 @@ class EquipmentSystem:
         inventory = character.get("inventory", [])
         subtype = item.get("subtype", "one_handed")
 
+        # 穿着装备（衣服）没有 subtype，若保留默认"one_handed"会被误判成单手武器装进武器槽。
+        # 强制置 None → 走下方 else 按 get_item_slot 落到 outfit（穿着）槽。
+        if item.get("type") == "outfit":
+            subtype = None
+
         # 找出当前主手/副手已装备的物品
         main_hand_item = None
         off_hand_item = None
