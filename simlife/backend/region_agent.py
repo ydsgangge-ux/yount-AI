@@ -16,6 +16,7 @@
 import json
 import random
 import re
+import time as _time
 from typing import Dict, Optional, List
 from simlife.backend.world_map import WorldMap, WorldRegion
 
@@ -27,6 +28,9 @@ class RegionAgent:
         self.world_map = world_map
         self.world_id = world_id
         self._region_cache: Dict[str, Dict] = {}
+        # 空白区域 LLM 生成熔断：连续失败≥2次进入熔断窗口，期间直接模板兜底（防UI超时）
+        self._blank_llm_fails = 0
+        self._blank_llm_fail_until = 0.0
 
     # ── 方向移动 ──────────────────────────────────────
 
@@ -59,11 +63,13 @@ class RegionAgent:
 
         # 检查目标位置是否有区域
         target = self.world_map.get_region_at(new_x, new_y)
+        _generated = False
         if target is None:
-            # 空白格子 → 生成新区域
+            # 空白格子 → 生成新区域（耗时：LLM 生成迷你世界设定）
             target = self._generate_blank_region(new_x, new_y, direction, current)
             if target is None:
                 return {"moved": False, "reason": "generation_failed", "direction": direction}
+            _generated = True
 
         old_region_name = current.name
         # 执行移动
@@ -78,6 +84,7 @@ class RegionAgent:
             "region_file": region_file or {},
             "direction": direction,
             "old_region_name": old_region_name,
+            "generated": _generated,  # 空白区域即时生成标记（供上层跳过二次叙事LLM，防UI超时）
         }
 
     def _generate_blank_region(self, x: int, y: int, direction: str,
@@ -190,8 +197,15 @@ class RegionAgent:
 
         try:
             from simlife.backend.generator import _llm_json
-            data = _llm_json(llm_client, prompt, max_tokens=700, temperature=0.8,
-                             attempts=3, label=f"空白区域生成({x},{y})")
+            # 熔断窗口内直接模板兜底（LLM持续抽风时不再空耗，移动秒回，防UI超时）
+            if self._blank_llm_fails >= 2 and _time.time() < self._blank_llm_fail_until:
+                print(f"[RegionAgent] 空白区域生成 LLM 熔断中（连续{self._blank_llm_fails}次失败），直接模板兜底：({x},{y})")
+                return self._template_blank_region(
+                    x, y, direction, adjacent_region,
+                    suggested_danger, suggested_type, world_name, world_type, ws)
+            data = _llm_json(llm_client, prompt, max_tokens=1600, temperature=0.8,
+                             attempts=1, label=f"空白区域生成({x},{y})",
+                             timeout=30)
         except Exception as e:
             print(f"[RegionAgent] LLM生成空白区域失败: {e}")
             data = None
@@ -199,9 +213,14 @@ class RegionAgent:
         if not isinstance(data, dict):
             # 预设终点：LLM失败不卡死玩家，用确定性模板兜底（世界继续运转）
             print(f"[RegionAgent] LLM生成空白区域失败: 无法获取有效JSON结构 → 模板兜底")
+            self._blank_llm_fails += 1
+            self._blank_llm_fail_until = _time.time() + 60
             return self._template_blank_region(
                 x, y, direction, adjacent_region,
                 suggested_danger, suggested_type, world_name, world_type, ws)
+        # LLM 成功：重置熔断
+        self._blank_llm_fails = 0
+        self._blank_llm_fail_until = 0.0
 
         region = WorldRegion(
             region_id=data.get("region_id", f"region_{x}_{y}"),

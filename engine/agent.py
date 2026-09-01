@@ -1653,7 +1653,7 @@ class ConsciousnessAgent:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=120) as r:
                 data = json.loads(r.read().decode("utf-8"))
 
             result = "──── ☠️ 死亡模式 ────\n"

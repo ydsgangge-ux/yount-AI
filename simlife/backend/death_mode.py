@@ -1611,6 +1611,11 @@ class DeathModeEngine:
                     _original_location = state.get("story", {}).get("current_location", "")
                     state["story"]["current_location"] = _target.name
                     state["story"]["scene_description"] = _target.description
+                    # 进区托管：新区域预设NPC（含LLM即时生成的空白区域）立即注册进可交互池
+                    try:
+                        self._adopt_region_npcs(state, _target.region_id)
+                    except Exception:
+                        pass
                     # 清理旧区域任务委托
                     QuestSystem.cleanup_offers_by_region(state)
                     print(f"[DeathMode] 方向移动：{_original_location} → {_target.name}（方向={_wanted_dir}）")
@@ -1688,7 +1693,6 @@ class DeathModeEngine:
             })
             return _blocked_result
 
-        # 3. 非移动 或 移动成功 → 调用StoryAgent生成叙事
         # 世界BOSS身份交流拦截：谈判/求饶/逃跑/加入势力，在LLM叙事前用硬性判定，避免即兴致死
         try:
             _boss_dialogue = self._handle_world_boss_dialogue(state, action, sender=sender)
@@ -1701,10 +1705,20 @@ class DeathModeEngine:
                                           "world_boss_dialogue", None, _boss_dialogue)
             return _boss_dialogue
 
-        agent_result = self.agent.process_action(state, action, action_type, sender=sender)
-        narrative = agent_result.get("narrative", "")
-        outcome_type = agent_result.get("outcome_type", "nothing")
-        next_tension = agent_result.get("next_tension", "medium")
+        # 3. 生成叙事：
+        #    移动场景跳过 StoryAgent 二次 LLM 叙事生成（空白区域即时生成已耗一次 LLM，
+        #    再串行一次叙事 LLM 会击穿 UI 超时上限）→ 用区域数据模板构造到达叙事。
+        #    非移动才调用 StoryAgent。
+        if _region_moved and _region_move_result:
+            agent_result = self._build_move_agent_result(_region_move_result)
+            narrative = agent_result.get("narrative", "")
+            outcome_type = agent_result.get("outcome_type", "move")
+            next_tension = agent_result.get("next_tension", "medium")
+        else:
+            agent_result = self.agent.process_action(state, action, action_type, sender=sender)
+            narrative = agent_result.get("narrative", "")
+            outcome_type = agent_result.get("outcome_type", "nothing")
+            next_tension = agent_result.get("next_tension", "medium")
 
         # 3.1 子场景切换：进入/离开当前区域内的具体地点（如井底）。
         # 在战斗触发前应用，确保随后的叙事与战斗都发生在子场景内。
@@ -1734,14 +1748,9 @@ class DeathModeEngine:
         except Exception as e:
             print(f"[DeathMode] 子场景切换异常: {e}")
 
-        # 4. 如果移动成功 → 在叙事后添加到达描述
+        # 4. 如果移动成功 → 任务进度触发（到达叙事已由 _build_arrival_note 模板构造，无需重复追加）
         if _region_moved and _region_move_result:
             _target = _region_move_result["region"]
-            _original = _region_move_result.get("old_region_name", "")
-            _arrival_dir = _region_move_result.get("direction", "")
-            _arrival_note = f"\n\n两人离开{_original}，向{_arrival_dir}方前行。前方出现了新的景象——{_target.description}"
-            narrative += _arrival_note
-            agent_result["narrative"] = narrative
             # 任务进度：到达新区域触发（任务校验器：多源精确判定，含英文ID）
             try:
                 QuestSystem.validate_visit_locations(state,
@@ -2681,6 +2690,102 @@ class DeathModeEngine:
             "heal_mp": heal_mp,
             "description": f"恢复{'和'.join(desc_parts)}",
             "value": 30 + char_level * 5,
+        }
+
+    def _build_arrival_note(self, region, region_file, original: str, direction: str) -> str:
+        """基于区域数据构造"到达叙事"（移动场景跳过二次LLM叙事生成，防UI超时）。
+        覆盖 NPC / 怪物 / 资源 / 本地剧情，让到达体验不因省掉LLM而空洞。
+        """
+        _type_label = {
+            "town": "城镇", "wild": "野外", "dungeon": "地下城",
+            "boss_lair": "Boss巢穴", "secret": "隐秘区域",
+        }.get(getattr(region, "region_type", ""), "")
+        _danger = getattr(region, "danger_level", 1)
+        _desc = (getattr(region, "description", "") or "").strip()
+
+        parts = [f"\n\n两人离开{original}，向{direction}方前行。"]
+        _head = f"前方出现了新的景象——{region.name}"
+        if _type_label:
+            _head += f"（{_type_label}，危险等级{_danger}）"
+        _head += f"。{_desc}" if _desc else "。"
+        parts.append(_head)
+
+        # NPC：优先区域文件，回退方格数据
+        _npcs = []
+        if isinstance(region_file, dict):
+            _npcs = region_file.get("npcs", []) or []
+        if not _npcs and getattr(region, "npcs", None):
+            _npcs = region.npcs or []
+        _npc_names = []
+        for _n in _npcs[:4]:
+            if isinstance(_n, dict) and _n.get("name"):
+                _npc_names.append(_n["name"] + (f"（{_n.get('role', '')}）" if _n.get("role") else ""))
+            elif isinstance(_n, str) and _n:
+                _npc_names.append(_n)
+        if _npc_names:
+            parts.append(f"这里可见的人物：{'、'.join(_npc_names)}。")
+
+        # 怪物：写入叙事（供 _extract_enemy_names_from_narrative 兜底识别为可遭遇敌人）
+        _mons = []
+        if isinstance(region_file, dict):
+            _mons = region_file.get("monsters", []) or []
+        if not _mons and getattr(region, "monsters", None):
+            _mons = region.monsters or []
+        _mon_names = []
+        for _m in _mons[:4]:
+            if isinstance(_m, dict) and _m.get("name"):
+                _mon_names.append(_m["name"])
+            elif isinstance(_m, str) and _m:
+                _mon_names.append(_m)
+        if _mon_names:
+            parts.append(f"此间出没的怪物：{'、'.join(_mon_names)}。")
+
+        # 资源
+        _res = []
+        if isinstance(region_file, dict):
+            _res = region_file.get("resources", []) or []
+        _res_names = []
+        for _r in _res[:4]:
+            if isinstance(_r, dict) and _r.get("name"):
+                _res_names.append(_r["name"] + (f"（{_r.get('rarity', '')}）" if _r.get("rarity") else ""))
+            elif isinstance(_r, str) and _r:
+                _res_names.append(_r)
+        if _res_names:
+            parts.append(f"可采集的资源：{'、'.join(_res_names)}。")
+
+        # 本地剧情提示
+        _quests = []
+        if isinstance(region_file, dict):
+            _quests = region_file.get("quests", []) or []
+        if _quests:
+            _q = _quests[0]
+            _qt = _q.get("title", "") if isinstance(_q, dict) else str(_q)
+            _qg = _q.get("giver", "") if isinstance(_q, dict) else ""
+            if _qt:
+                parts.append(f"似乎有传闻：『{_qt}』" + (f"（可向 {_qg} 打听）" if _qg else "") + "。")
+
+        return "\n".join(parts)
+
+    def _build_move_agent_result(self, move_result: Dict) -> Dict:
+        """移动场景的模板化结果：跳过 StoryAgent 二次 LLM 叙事生成。
+        区域移动（尤其空白区域即时生成）已耗一次 LLM，再串行一次叙事 LLM
+        会击穿 UI 超时上限 → 直接基于区域数据构造到达叙事。
+        """
+        region = move_result.get("region")
+        region_file = move_result.get("region_file") or {}
+        original = move_result.get("old_region_name", "")
+        direction = move_result.get("direction", "")
+        narrative = self._build_arrival_note(region, region_file, original, direction)
+        return {
+            "narrative": narrative,
+            "outcome_type": "move",          # 移动到达：不触发即时战斗
+            "next_tension": "medium",
+            "enter_sub_scene": None,
+            "exit_sub_scene": None,
+            "region_story_updates": None,
+            "spotted_enemies": [],           # 由叙事兜底识别区域怪物
+            "unresolved_hooks": [],
+            "plot_thread_updates": [],
         }
 
     def _record_history_and_save(self, state: Dict, action: str, narrative: str,

@@ -148,12 +148,56 @@ def _safe_json_loads(text: str):
         r = _try_load(_repair_json(match.group(0)))
         if r is not None:
             return r
+        # 6. 截断补全：LLM输出被max_tokens截断时，末尾缺闭合括号 → 按括号栈补全重试
+        r = _try_load_closed(_repair_json(match.group(0)))
+        if r is not None:
+            return r
+
+    # 7. 截断在最深处（连一个闭合括号都没有，正则提取不到）：
+    #    从第一个 {/[ 位置截取，按括号栈补全闭合符，救回最深截断场景
+    m2 = _re_sj.search(r'[\{\[]', text)
+    if m2:
+        r = _try_load_closed(text[m2.start():])
+        if r is not None:
+            return r
 
     raise json.JSONDecodeError("无法修复的JSON", text, 0)
 
 
+def _try_load_closed(s: str):
+    """尝试补全被截断的JSON：按括号栈从内到外补闭合符，直到能解析（针对LLM输出截断）"""
+    stack = []
+    in_str = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if in_str:
+            if c == '\\':
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c in '{[':
+                stack.append(c)
+            elif c in '}]':
+                if stack:
+                    stack.pop()
+        i += 1
+    if not stack:
+        return None
+    suffix = ''.join('}' if c == '{' else ']' for c in reversed(stack))
+    try:
+        return json.loads(s + suffix)
+    except json.JSONDecodeError:
+        return None
+
+
 def _llm_json(llm, prompt: str, *, max_tokens: int, temperature: float = 0.8,
-              attempts: int = 3, label: str = "") -> Any:
+              attempts: int = 3, label: str = "", timeout: Optional[int] = None,
+              thinking: bool = False) -> Any:
     """调用 LLM 生成结构并安全解析出 JSON（dict/list）。
 
     统一处理三类 LLM 通病：
@@ -163,27 +207,24 @@ def _llm_json(llm, prompt: str, *, max_tokens: int, temperature: float = 0.8,
 
     返回解析成功的 dict/list；全部尝试失败返回 None（调用方用兜底逻辑兜住）。
     """
-    import re as _re_llj
-
     if attempts < 1:
         attempts = 1
     last_err = ""
     for _i in range(attempts):
         try:
             resp = llm.generate(prompt, max_tokens=max_tokens,
-                                temperature=temperature, thinking=False)
+                                temperature=temperature, thinking=thinking,
+                                timeout=timeout)
         except Exception as e:
             last_err = f"调用异常: {e}"
             continue
         if not resp or not str(resp).strip():
             last_err = "空响应"
             continue
-        m = _re_llj.search(r'[\{\[][\s\S]*[\}\]]', str(resp))
-        if not m:
-            last_err = "未提取到JSON"
-            continue
+        # 直接交给 _safe_json_loads：内部已包含 直接解析→清理→修复→正则提取→截断补全
+        # 不再提前正则提取（截断在最深处、连闭合括号都没有的响应，提前提取会直接漏掉）
         try:
-            data = _safe_json_loads(m.group(0))
+            data = _safe_json_loads(str(resp))
         except Exception as e:
             last_err = f"解析失败: {e}"
             continue
@@ -191,6 +232,15 @@ def _llm_json(llm, prompt: str, *, max_tokens: int, temperature: float = 0.8,
             return data
         last_err = "解析结果为空"
     print(f"[SimLife] {label or 'LLM-JSON'} {attempts}次尝试后失败: {last_err}")
+    # 诊断：打印原始响应摘要，便于定位 LLM 到底输出了什么
+    try:
+        _raw = resp if 'resp' in locals() else None
+        if _raw:
+            _sn = str(_raw)
+            _sn = _sn[:400] + ('…' if len(_sn) > 400 else '')
+            print(f"[SimLife] {label or 'LLM-JSON'} 原始响应前400字符: {_sn!r}")
+    except Exception:
+        pass
     return None
 
 

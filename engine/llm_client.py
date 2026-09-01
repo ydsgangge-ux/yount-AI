@@ -42,7 +42,8 @@ class OpenAICompatClient:
                  thinking: Optional[bool] = None,
                  thinking_effort: Optional[str] = None,
                  thinking_budget: Optional[int] = None,
-                 response_format: Optional[Dict] = None) -> str:
+                 response_format: Optional[Dict] = None,
+                 timeout: Optional[int] = None) -> str:
         if messages is None:
             msgs = []
             if system:
@@ -76,7 +77,7 @@ class OpenAICompatClient:
                      "Authorization": f"Bearer {self.api_key}"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with urllib.request.urlopen(req, timeout=timeout or 90) as r:
                 return json.loads(r.read())["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")

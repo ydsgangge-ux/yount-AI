@@ -1004,7 +1004,7 @@ class ChatPage(QWidget):
                     payload["free_action"] = free_action
                 data = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=30) as r:
+                with urllib.request.urlopen(req, timeout=120) as r:
                     result = json.loads(r.read().decode("utf-8"))
 
                 # 用信号在主线程显示结果
