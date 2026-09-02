@@ -116,6 +116,22 @@ class StoryAgent:
                     return c
         return ""
 
+    def _build_environment_desc(self, state: Dict) -> str:
+        """将死亡模式独立环境层（昼夜/天气/室内外）格式化为剧情叙事可感知的文本"""
+        try:
+            env = state.get("environment") or {}
+            if not isinstance(env, dict):
+                return ""
+            phase = env.get("day_phase_name", "")
+            weather = env.get("current_weather_name", "")
+            indoor = env.get("is_indoor", False)
+            if not phase and not weather:
+                return ""
+            indoor_desc = "室内" if indoor else "室外"
+            return f"当前环境：{phase} · {weather} · {indoor_desc}（请让场景感知并体现当前的天色与天气氛围）"
+        except Exception:
+            return ""
+
     def _resolve_current_region(self, state: Dict, ws: Dict):
         """根据当前状态解析玩家所在区域对象（优先匹配区域名）"""
         regions = ws.get("geography", {}).get("regions", [])
@@ -349,6 +365,9 @@ class StoryAgent:
         current_scene = state.get("story", {}).get("scene_description", "")
         current_location = state.get("story", {}).get("current_location", "")
 
+        # 环境氛围（昼夜/天气/室内外）——死亡模式独立环境层，注入剧情让场景感知天气时间
+        env_desc = self._build_environment_desc(state)
+
         # ── 隐藏结局方向提示（仅系统可见，不透露结局）──
         ending_hint = ""
         ending_region_hint = ""
@@ -402,6 +421,7 @@ class StoryAgent:
 {story_ctx}
 当前：第{chapter}章 · 第{day}天
 当前地点：{current_location or '未知（刚开始冒险）'}
+{env_desc}
 
 【地图信息】
 {map_context or '（无地图信息）'}
@@ -489,6 +509,7 @@ class StoryAgent:
         char_ctx = self._build_character_context(state)
         current_scene = state.get("story", {}).get("scene_description", "")
         current_location = state.get("story", {}).get("current_location", "")
+        env_desc = self._build_environment_desc(state)
         choices = state.get("story", {}).get("choices", [])
 
         # 构建可移动方向上下文（供LLM知道哪些方向可走）
@@ -746,6 +767,7 @@ class StoryAgent:
 【当前场景】
 当前地点：{current_location or '未知'}
 场景描述：{current_scene or '（无特定场景，参考最近行动记录）'}
+{env_desc}
 {directions_ctx}
 
 【角色行动】

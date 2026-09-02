@@ -22,6 +22,31 @@ const DeathModePanel = {
     document.getElementById('chatTitle').textContent = '死亡模式';
     this._startAutoRefresh();
     this.refreshAll();
+    // 事件委托：点卡片名折叠/展开 HP/MP/EXP 详情（仅绑定一次）
+    if (!this._toggleBound) {
+      this._toggleBound = true;
+      const bar = document.getElementById('dmStatusBar');
+      if (bar) {
+        bar.addEventListener('click', (e) => {
+          const toggle = e.target.closest('.dm-char-toggle');
+          if (!toggle) return;
+          const card = toggle.closest('.dm-char-card');
+          if (!card) return;
+          card.classList.toggle('collapsed');
+          const arrow = card.querySelector('.dm-char-arrow');
+          if (arrow) arrow.textContent = card.classList.contains('collapsed') ? '▸' : '▾';
+        });
+      }
+    }
+    // 浏览器切回本标签页时强制刷新（interval 在后台被挂起，内容可能已丢失）
+    if (!this._visibilityBound) {
+      this._visibilityBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && document.getElementById('deathModeView')?.classList.contains('active')) {
+          this.refreshAll();
+        }
+      });
+    }
   },
 
   // 切换回聊天视图
@@ -106,8 +131,10 @@ const DeathModePanel = {
     const expPct = c.exp_to_next > 0 ? ((c.experience || 0) / c.exp_to_next * 100) : 0;
     const hpColor = hpPct > 60 ? '#16a34a' : hpPct > 30 ? '#d97706' : '#dc2626';
     const dead = c.hp <= 0;
-    return `<div class="dm-char-card${dead ? ' dead' : ''}">
-      <div class="dm-char-name">${icon} ${c.name || '?'} <span class="dm-char-class">${c.class_name || ''} Lv.${c.level || 1}${dead ? ' · 已倒下' : ''}</span></div>
+    // 默认收起 HP/MP/EXP 详情，点卡片名展开
+    return `<div class="dm-char-card collapsed${dead ? ' dead' : ''}">
+      <div class="dm-char-name dm-char-toggle" title="点击展开/收起状态">${icon} ${c.name || '?'} <span class="dm-char-class">${c.class_name || ''} Lv.${c.level || 1}${dead ? ' · 已倒下' : ''}</span><span class="dm-char-arrow">▸</span></div>
+      <div class="dm-char-detail">
       <div class="dm-bar-row"><span style="color:#dc2626;">HP</span><span>${c.hp || 0}/${c.max_hp || 0}</span></div>
       <div class="dm-bar"><div class="dm-bar-fill" style="width:${hpPct}%;background:${hpColor};"></div></div>
       <div class="dm-bar-row"><span style="color:#2563eb;">MP</span><span>${c.mp || 0}/${c.max_mp || 0}</span></div>
@@ -115,6 +142,7 @@ const DeathModePanel = {
       <div class="dm-bar-row"><span style="color:#d97706;">EXP</span><span>${c.experience || 0}/${c.exp_to_next || 100}</span></div>
       <div class="dm-bar"><div class="dm-bar-fill" style="width:${expPct}%;background:#d97706;"></div></div>
       ${c.gold !== undefined ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px;">💰 ${c.gold}</div>` : ''}
+      </div>
     </div>`;
   },
 
@@ -130,7 +158,10 @@ const DeathModePanel = {
         return;
       }
       const logs = data.logs || [];
-      if (data.total === this._lastLogTotal && container.children.length > 0) return;
+      // 去重保护：仅当容器非空 且 总条数未变 且 日志条数一致时才跳过重渲染
+      // （浏览器切走标签页后 interval 被挂起，回来时容器可能已清空，必须强制重建）
+      if (data.total === this._lastLogTotal && container.children.length > 0
+          && container.children.length === logs.length) return;
       this._lastLogTotal = data.total;
 
       if (logs.length === 0) {

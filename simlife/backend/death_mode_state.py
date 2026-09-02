@@ -257,6 +257,7 @@ def create_initial_state(
         "enemy": None,  # 当前遭遇的敌人信息（兼容旧版）
         "enemies": [],  # 当前遭遇的敌人列表（支持一群怪）
         "in_combat": False,  # 是否在战斗中
+        "environment": {},  # 死亡模式独立环境状态(昼夜/天气/内外室)，由 DeathModeEnvironment 填充
         "is_alive": True,
         "death_cause": None,
         "play_time_days": 1,

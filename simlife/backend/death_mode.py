@@ -314,7 +314,55 @@ class DeathModeEngine:
                         _migrated = True
             if _migrated:
                 save_state(self.state)
+        # 环境随真实时间刷新（昼夜实时，天气跨天变化）——玩家隔久上线也感知到时间流逝
+        # 旧存档没有 environment 时也要初始化（用当前区域 biome）
+        if self.state:
+            try:
+                from simlife.backend.death_mode_environment import (
+                    from_state_env, update_environment, init_environment,
+                )
+                _cur_biome = "wild"
+                _mid = self.state.get("story", {}).get("current_region_id")
+                if self.world_map:
+                    _r = self.world_map.get_region(_mid) if _mid else self.world_map.get_current_region()
+                    if getattr(_r, "region_type", None):
+                        _cur_biome = _r.region_type
+                _start_time = self.state.get("start_time", datetime.now().isoformat())
+                _old_env = self.state.get("environment")
+                if not _old_env:
+                    # 旧存档无环境 → 初始化
+                    _env = init_environment(_start_time, biome=_cur_biome)
+                    self.state["environment"] = _env.to_dict()
+                    save_state(self.state)
+                else:
+                    _env = update_environment(
+                        from_state_env(_old_env),
+                        _start_time,
+                        current_biome=_cur_biome,
+                        force_reevaluate=False,
+                    )
+                    if _env.to_dict() != _old_env:
+                        self.state["environment"] = _env.to_dict()
+                        save_state(self.state)
+            except Exception:
+                pass
         return self.state
+
+    def _apply_indoor_by_subscene(self, state, location_name: str, indoor: bool):
+        """按子场景名称关键字设置环境的室内/室外标记（室内削弱天气影响）"""
+        try:
+            from simlife.backend.death_mode_environment import (
+                from_state_env, set_indoor,
+            )
+            env = from_state_env(state.get("environment") or {})
+            # 室内关键字：带屋顶/围合的封闭地点判定为室内
+            _indoor_kw = ("旅馆", "酒馆", "客栈", "酒店", "旅店", "屋内", "屋里", "房屋",
+                          "房间", "室内", "大厅", "店内", "商店", "山洞", "洞穴", "矿洞",
+                          "地下", "地下室", "宝库", "碉堡", "密室", "殿堂", "酒窖", "地牢")
+            _actual = indoor and any(k in location_name for k in _indoor_kw)
+            state["environment"] = set_indoor(env, _actual).to_dict()
+        except Exception:
+            pass
 
     @staticmethod
     def _migrate_skill_names_to_ids(skills: list) -> list:
@@ -535,6 +583,13 @@ class DeathModeEngine:
             if region:
                 self.state["story"]["current_location"] = region.name
                 self.state["story"]["scene_description"] = region.description
+                self.state["story"]["current_region_id"] = self.world_map.start_region_id
+                from simlife.backend.death_mode_environment import init_environment
+                env = init_environment(
+                    self.state.get("start_time", datetime.now().isoformat()),
+                    biome=region.region_type or "wild",
+                )
+                self.state["environment"] = env.to_dict()
 
         self._save()
 
@@ -613,6 +668,8 @@ class DeathModeEngine:
                 "choices": state.get("story", {}).get("choices", []),
                 "pending_action": state.get("story", {}).get("pending_action"),
             },
+            # 死亡模式独立环境层（昼夜/天气/内外室）
+            "environment": state.get("environment", {}),
             "enemies": state.get("enemies", []),
             "enemy": state.get("enemy"),  # 兼容旧版
             "play_time_days": play_time_days,
@@ -1762,6 +1819,8 @@ class DeathModeEngine:
                         _sub_desc = str(_enter_sub.get("scene_description", "")).strip()
                         state["story"]["scene_description"] = _sub_desc or _sub_name
                         print(f"[DeathMode] 子场景进入：{_sub_name}")
+                        # 进入子场景：按名称关键字判定室内/室外（室内削弱天气影响）
+                        self._apply_indoor_by_subscene(state, _sub_name, indoor=True)
             elif _exit_sub:
                 stack = state.get("sub_scene_stack", [])
                 if stack:
@@ -1769,6 +1828,8 @@ class DeathModeEngine:
                     state["story"]["current_location"] = _prev.get("location") or state["story"].get("current_location", "")
                     state["story"]["scene_description"] = _prev.get("scene_description") or state["story"].get("scene_description", "")
                     print(f"[DeathMode] 子场景离开，退回：{state['story']['current_location']}")
+                    # 退出子场景：恢复为室外（野外区域）
+                    self._apply_indoor_by_subscene(state, state["story"].get("current_location", ""), indoor=False)
         except Exception as e:
             print(f"[DeathMode] 子场景切换异常: {e}")
 
@@ -6028,6 +6089,23 @@ class DeathModeEngine:
         # 更新故事位置
         state["story"]["current_location"] = target.name
         state["story"]["scene_description"] = target.description
+        state["story"]["current_region_id"] = target.region_id
+
+        # 环境随区域变化重新评估（昼夜天气/内外室）
+        try:
+            from simlife.backend.death_mode_environment import (
+                update_environment, from_state_env,
+            )
+            env = from_state_env(state.get("environment") or {})
+            env = update_environment(
+                env,
+                state.get("start_time", datetime.now().isoformat()),
+                current_biome=target.region_type or "wild",
+                force_reevaluate=True,
+            )
+            state["environment"] = env.to_dict()
+        except Exception:
+            pass
 
         # 任务进度：到达新区域触发（任务校验器：多源精确判定）
         try:
@@ -6388,6 +6466,23 @@ class DeathModeEngine:
         old_name = result.get("old_region_name", "")
         state["story"]["current_location"] = target.name
         state["story"]["scene_description"] = target.description
+        state["story"]["current_region_id"] = target.region_id
+
+        # 环境随区域变化重新评估
+        try:
+            from simlife.backend.death_mode_environment import (
+                update_environment, from_state_env,
+            )
+            env = from_state_env(state.get("environment") or {})
+            env = update_environment(
+                env,
+                state.get("start_time", datetime.now().isoformat()),
+                current_biome=target.region_type or "wild",
+                force_reevaluate=True,
+            )
+            state["environment"] = env.to_dict()
+        except Exception:
+            pass
 
         # 清理旧区域任务委托
         QuestSystem.cleanup_offers_by_region(state)

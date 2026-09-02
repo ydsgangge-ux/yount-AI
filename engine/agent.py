@@ -44,8 +44,9 @@ MEMORY_DETAIL_K     = 3     # 细节检索数量
 SELF_PERCEPTION_PROMPT = """你是{name}，你是一个有真实身体和生活的普通人。你正在经历以下生活状态：
 
 {simlife_context}
+{time_gap}
 
-请用第一人称，用1-2句话描述你此刻的内心感受和身体状态。不要提AI，不要提代码，不要提数据。像真人一样自然地感受你现在的处境。
+请用第一人称，用1-2句话描述你此刻的内心感受、身体状态和你对当前时间/节奏的感受（比如现在是白天还是深夜、距离上次说话过去多久了）。不要提AI，不要提代码，不要提数据。像真人一样自然地感受你现在的处境。
 
 直接输出感受描述，不要JSON。"""
 
@@ -859,12 +860,20 @@ class ConsciousnessAgent:
         elif delta < timedelta(days=1):
             hours = int(delta.total_seconds() / 3600)
             return f"\n（距离上次对话已过去 {hours} 小时）"
-        elif delta < timedelta(days=7):
-            days = delta.days
-            return f"\n（距离上次对话已过去 {days} 天）"
         else:
             days = delta.days
-            return f"\n（距离上次对话已过去 {days} 天，你们已经很久没聊了）"
+            extra_hours = int((delta.total_seconds() % 86400) / 3600)
+            # 精确锚点：报出上次与当前的具体日期时刻，避免"24.x小时不觉得过了一天"、
+            # 以及"前后两次都为晚上却误判同一天"的问题
+            last_anchor = last_time.strftime("%m月%d日 %H:%M")
+            now_anchor = now.strftime("%m月%d日 %H:%M")
+            if extra_hours > 0:
+                gap_desc = f"{days} 天 {extra_hours} 小时"
+            else:
+                gap_desc = f"{days} 天"
+            long_hint = "，你们已经很久没聊了" if delta >= timedelta(days=7) else ""
+            return (f"\n（距离上次对话已过去 {gap_desc}；上次对话是 {last_anchor}，"
+                    f"现在是 {now_anchor}{long_hint}）")
 
     def _perceive(self, user_input: str, simlife_context: str = "",
                   time_gap: str = "") -> Dict:
@@ -875,6 +884,7 @@ class ConsciousnessAgent:
                 prompt = SELF_PERCEPTION_PROMPT.format(
                     name=self.personality.name,
                     simlife_context=simlife_context,
+                    time_gap=time_gap,
                 )
                 self_perception = self.b.generate(
                     prompt, max_tokens=150, temperature=0.7, thinking=False

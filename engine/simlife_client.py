@@ -261,6 +261,15 @@ class SimLifeClient:
         else:
             lines.append("状态：已死亡")
 
+        # 环境氛围（昼夜/天气/内外室）——死亡模式独立环境层，非真实天气
+        env = dm.get("environment") or {}
+        env_phase = env.get("day_phase_name", "")
+        env_weather = env.get("current_weather_name", "")
+        env_indoor = env.get("is_indoor", False)
+        if env_phase or env_weather:
+            indoor_suffix = "· 室内" if env_indoor else "· 室外"
+            lines.append(f"环境：{env_phase} · {env_weather}{indoor_suffix}")
+
         # 战斗状态
         if dm.get("in_combat"):
             enemies = dm.get("enemies", [])

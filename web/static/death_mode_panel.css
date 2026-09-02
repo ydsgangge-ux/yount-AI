@@ -112,6 +112,33 @@
   margin-bottom: 1px;
 }
 
+/* 折叠状态栏：默认收起 HP/MP/EXP 详情，点卡片名展开 */
+.dm-char-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.dm-char-toggle:hover .dm-char-class {
+  color: var(--text-secondary);
+}
+.dm-char-arrow {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.dm-char-card .dm-char-detail {
+  display: block;
+}
+.dm-char-card.collapsed .dm-char-detail {
+  display: none;
+}
+.dm-char-card.collapsed .dm-char-arrow {
+  transform: rotate(0deg);
+}
+.dm-char-card:not(.collapsed) .dm-char-arrow {
+  transform: rotate(90deg);
+}
+
 .dm-enemies-card {
   flex: 1;
   min-width: 200px;
