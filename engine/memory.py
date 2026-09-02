@@ -10,6 +10,7 @@ import json
 import math
 import hashlib
 import uuid
+import os
 import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
@@ -60,7 +61,19 @@ def _init_embedding():
 
         from sentence_transformers import SentenceTransformer
         model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-        _embedding_model = SentenceTransformer(model_name)
+        # 模型已本地缓存时强制离线加载：transformers 会对本地缺失的可选配置
+        # 文件（adapter_config.json / processor_config.json 等）联网 HEAD 检查"是否存在"，
+        # 无外网/代理环境下会超时卡住并重试（WinError 10060），白白等待。
+        # 离线模式直接读本地缓存、跳过这些可选文件的联网确认。
+        # 若模型其实尚未下载（离线加载失败）→ 才允许联网下载。
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        try:
+            _embedding_model = SentenceTransformer(model_name)
+        except Exception:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            _embedding_model = SentenceTransformer(model_name)
         _embedding_mode  = "transformer"
         print(f"✅ 语义向量：sentence-transformers ({model_name})")
     except ImportError:

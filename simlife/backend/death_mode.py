@@ -290,6 +290,30 @@ class DeathModeEngine:
                         _need_save = True
             if _need_save:
                 save_state(self.state)
+        # 迁移旧存档：修正衣服(outfit)装备 slot 脏数据
+        # 历史 bug：outfit 无 subtype 被当作单手武器，slot 被写成 main_hand，
+        # 前端按 slot 渲染导致衣服显示成武器。加载时统一按 type 归一化。
+        if self.state:
+            _migrated = False
+            _containers = []
+            for _ck in ("character", "user_character"):
+                _ch = self.state.get(_ck, {})
+                if _ch:
+                    _containers.append(_ch.get("equipment", []))
+                    _containers.append(_ch.get("inventory", []))
+            _containers.append(self.state.get("shared_inventory") or [])
+            _ls = self.state.get("life_state") or {}
+            _containers.append(_ls.get("equipment", []))
+            for _cont in _containers:
+                if not isinstance(_cont, list):
+                    continue
+                for _it in _cont:
+                    if isinstance(_it, dict) and _it.get("type") == "outfit" and _it.get("slot") != "outfit":
+                        _it["slot"] = "outfit"
+                        _it.pop("equipped_slot", None)
+                        _migrated = True
+            if _migrated:
+                save_state(self.state)
         return self.state
 
     @staticmethod

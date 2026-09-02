@@ -1106,7 +1106,8 @@ const DeathModeUI = {
 
   _getItemSlotIcon(item) {
     const slotIcons = { main_hand: '🗡️', off_hand: '🛡️', ranged: '🏹', outfit: '👕' };
-    const slot = item.slot || this._guessItemSlot(item);
+    // 优先按 type 判断：衣服(outfit)即使 slot 被历史 bug 写成 main_hand，也应显示穿着图标
+    const slot = item.type === 'outfit' ? 'outfit' : (item.slot || this._guessItemSlot(item));
     return slotIcons[slot] || '📦';
   },
 
@@ -1130,7 +1131,8 @@ const DeathModeUI = {
     // 按槽位查找装备
     function getBySlot(id) {
       for (const eq of equipment) {
-        const slot = eq.slot || 'main_hand';
+        // 衣服(outfit)按 type 落到穿着槽，不信任可能被历史 bug 写成 main_hand 的 slot
+        const slot = eq.type === 'outfit' ? 'outfit' : (eq.slot || 'main_hand');
         if (slot === id) return eq;
       }
       return null;

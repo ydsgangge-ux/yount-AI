@@ -772,8 +772,12 @@ class EquipmentSystem:
         # 卸下的装备恢复成"背包物品"状态（清理槽位标记）
         found_clean = dict(found)
         found_clean.pop("equipped_slot", None)
-        found_subtype = found_clean.get("subtype", "one_handed")
-        found_clean["slot"] = EquipmentSystem.SUBTYPE_SLOT_MAP.get(found_subtype, "main_hand")
+        if found_clean.get("type") == "outfit":
+            # 衣服（outfit）没有 subtype，slot 必须恢复为 outfit，避免被当成武器
+            found_clean["slot"] = "outfit"
+        else:
+            found_subtype = found_clean.get("subtype", "one_handed")
+            found_clean["slot"] = EquipmentSystem.SUBTYPE_SLOT_MAP.get(found_subtype, "main_hand")
         inventory.append(found_clean)
         character["inventory"] = inventory
         for ri in related_items:
