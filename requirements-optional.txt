@@ -1,0 +1,9 @@
+# Optional deps: semantic vector memory search
+# Installed via install.bat prompt, or manually:
+#   pip install -r requirements-optional.txt
+#
+# Note: sentence-transformers pulls in torch (~2GB). Install only if you
+# want real semantic memory search (instead of keyword-hash matching).
+# If absent, the app silently falls back to hash search; no impact.
+sentence-transformers>=2.3.0
+numpy>=1.24.0

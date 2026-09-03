@@ -90,6 +90,25 @@ if errorlevel 1 (
 
 echo   [OK] Core dependencies installed.
 
+:: ---- 3.5 Optional: semantic vector memory (sentence-transformers) ----
+:: Large (includes torch ~2GB); installed only when user explicitly chooses
+:: Delegates to install_semantic_memory.bat (uses China mirror for library + weights)
+echo.
+echo   [Optional] Semantic vector memory (sentence-transformers)
+echo          - Enables real semantic memory search instead of keyword-hash matching
+echo          - Installs torch (~2GB) + downloads model weights (~500MB)
+echo          - If skipped, the app falls back to hash search; no impact
+echo.
+set "SEM_ANSWER="
+set /p "SEM_ANSWER=Install? (y/N, Enter = skip): "
+if /i NOT "%SEM_ANSWER%"=="y" goto :skip_sem
+echo.
+echo   [1/1] Installing semantic vector memory (library + model weights, China mirror)...
+echo         This may take a while (library ~2GB, model ~500MB)...
+call "%~dp0install_semantic_memory.bat"
+echo   [OK] Semantic vector memory step finished.
+:skip_sem
+
 :: ---- 3.5 Install optional packages (non-fatal) ----
 echo.
 echo   Checking optional packages...
@@ -257,7 +276,7 @@ if errorlevel 1 (
     echo   [OK] fastapi/uvicorn/PyJWT - already installed
 )
 
-::: httpx / feedparser / beautifulsoup4 (热点趋势工具)
+::: httpx / feedparser / beautifulsoup4 (trending tools)
 %PYTHON_CMD% -c "import httpx" >nul 2>&1
 if errorlevel 1 (
     echo   [..] httpx/feedparser/bs4 - installing...
@@ -272,7 +291,7 @@ if errorlevel 1 (
     echo   [OK] httpx/feedparser/bs4 - already installed
 )
 
-::: pydantic (SimLife 生活模拟模块依赖)
+::: pydantic (SimLife life sim module dependency)
 %PYTHON_CMD% -c "import pydantic" >nul 2>&1
 if errorlevel 1 (
     echo   [..] pydantic         - installing...
@@ -287,7 +306,7 @@ if errorlevel 1 (
     echo   [OK] pydantic         - already installed
 )
 
-::: websocket-client / sounddevice / SoundFile (语音识别 STT 依赖，可选)
+::: websocket-client / sounddevice / SoundFile (STT speech recognition deps, optional)
 set "STT_OK=1"
 %PYTHON_CMD% -c "import websocket" >nul 2>&1
 if errorlevel 1 (
@@ -310,7 +329,7 @@ if errorlevel 1 (
     %PYTHON_CMD% -m pip install sounddevice SoundFile --quiet 2>nul
     %PYTHON_CMD% -c "import sounddevice" >nul 2>&1
     if errorlevel 1 (
-        echo   [!!] sounddevice     - FAILED (STT 录音不可用，文件识别仍可用)
+        echo   [!!] sounddevice     - FAILED (STT recording unavailable, file recognition still works)
         set "STT_OK=0"
     ) else (
         echo   [OK] sounddevice     - installed
@@ -319,7 +338,7 @@ if errorlevel 1 (
     echo   [OK] sounddevice     - already installed
 )
 
-::: paho-mqtt (传感器模块 Sensor Agent 依赖，可选)
+::: paho-mqtt (sensor module dependency, optional)
 set "SENSOR_OK=1"
 %PYTHON_CMD% -c "import paho.mqtt" >nul 2>&1
 if errorlevel 1 (
@@ -327,7 +346,7 @@ if errorlevel 1 (
     %PYTHON_CMD% -m pip install paho-mqtt --quiet 2>nul
     %PYTHON_CMD% -c "import paho.mqtt" >nul 2>&1
     if errorlevel 1 (
-        echo   [!!] paho-mqtt      - FAILED (传感器模块将被禁用，不影响主程序)
+        echo   [!!] paho-mqtt      - FAILED (sensor module disabled, main program unaffected)
         set "SENSOR_OK=0"
     ) else (
         echo   [OK] paho-mqtt      - installed
@@ -336,7 +355,7 @@ if errorlevel 1 (
     echo   [OK] paho-mqtt      - already installed
 )
 
-::: PyQt6-WebEngine (VRM 虚拟形象模块依赖，可选)
+::: PyQt6-WebEngine (VRM virtual avatar module dependency, optional)
 set "VRM_OK=1"
 %PYTHON_CMD% -c "from PyQt6.QtWebEngineWidgets import QWebEngineView" >nul 2>&1
 if errorlevel 1 (
@@ -344,7 +363,7 @@ if errorlevel 1 (
     %PYTHON_CMD% -m pip install PyQt6-WebEngine --quiet 2>nul
     %PYTHON_CMD% -c "from PyQt6.QtWebEngineWidgets import QWebEngineView" >nul 2>&1
     if errorlevel 1 (
-        echo   [!!] PyQt6-WebEngine - FAILED (VRM 模块将被禁用，不影响主程序)
+        echo   [!!] PyQt6-WebEngine - FAILED (VRM module disabled, main program unaffected)
         set "VRM_OK=0"
     ) else (
         echo   [OK] PyQt6-WebEngine - installed

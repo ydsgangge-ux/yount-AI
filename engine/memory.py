@@ -48,6 +48,37 @@ def cosine_similarity(a, b) -> float:
 _embedding_model = None
 _embedding_mode  = "hash"   # "transformer" | "hash"
 
+
+def _local_model_path(model_name: str) -> Optional[str]:
+    """返回模型在本机 HF 缓存的完整快照目录（含 config.json），无缓存则 None。
+
+    路径形如：<cache>/models--<org>--<name>/snapshots/<commit>。
+    必须传完整 repo id（含组织前缀），因为缓存目录名是 models--sentence-transformers--...。
+    """
+    cache_root = os.environ.get("HF_HUB_CACHE") or os.path.join(
+        os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    repo_dir = os.path.join(cache_root, "models--" + model_name.replace("/", "--"))
+    # 优先用 refs/main 指向的 commit 快照
+    refs_file = os.path.join(repo_dir, "refs", "main")
+    if os.path.isfile(refs_file):
+        commit = open(refs_file).read().strip()
+        snap = os.path.join(repo_dir, "snapshots", commit)
+        if os.path.isfile(os.path.join(snap, "config.json")):
+            return snap
+    # 兜底：扫描 snapshots，返回第一个含 config.json 的快照目录
+    snaps = os.path.join(repo_dir, "snapshots")
+    if os.path.isdir(snaps):
+        for root, _, files in os.walk(snaps):
+            if "config.json" in files:
+                return root
+    return None
+
+
+def _model_cached(model_name: str) -> bool:
+    """模型是否已完整缓存在本地 HF 缓存（snapshots 下含权重文件）"""
+    return _local_model_path(model_name) is not None
+
+
 def _init_embedding():
     """启动时检测 sentence-transformers，有则使用，没有降级到哈希"""
     global _embedding_model, _embedding_mode
@@ -60,22 +91,26 @@ def _init_embedding():
             raise ImportError("torch 不可用，跳过 sentence-transformers")
 
         from sentence_transformers import SentenceTransformer
-        model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-        # 模型已本地缓存时强制离线加载：transformers 会对本地缺失的可选配置
-        # 文件（adapter_config.json / processor_config.json 等）联网 HEAD 检查"是否存在"，
-        # 无外网/代理环境下会超时卡住并重试（WinError 10060），白白等待。
-        # 离线模式直接读本地缓存、跳过这些可选文件的联网确认。
-        # 若模型其实尚未下载（离线加载失败）→ 才允许联网下载。
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        # 必须带组织前缀 "sentence-transformers/"：缓存目录名是
+        # models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2，
+        # 缺前缀会判"未缓存"，进而联网超时降级。
+        model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        # 关键：缓存命中时必须喂【本地目录路径】而不是 repo id。
+        # 新版 transformers 对非本地路径会在 tokenizer 加载时走 is_base_mistral → model_info
+        # 联网查询，即使传了 local_files_only 也会 HTTP 超时/OfflineModeIsEnabled，
+        # 最终被静默降级到哈希。传本地路径后 _is_local=True，完全不联网。
+        local_path = _local_model_path(model_name)
         try:
-            _embedding_model = SentenceTransformer(model_name)
+            if local_path:
+                _embedding_model = SentenceTransformer(local_path)
+            else:
+                # 未缓存 → 首次联网下载
+                _embedding_model = SentenceTransformer(model_name)
         except Exception:
-            os.environ.pop("HF_HUB_OFFLINE", None)
-            os.environ.pop("TRANSFORMERS_OFFLINE", None)
-            _embedding_model = SentenceTransformer(model_name)
+            # 本地路径加载失败（缓存损坏等）：联网也救不了；未缓存下载失败同样直接降级
+            raise
         _embedding_mode  = "transformer"
-        print(f"✅ 语义向量：sentence-transformers ({model_name})")
+        print(f"✅ 语义向量：sentence-transformers ({local_path or model_name})")
     except ImportError:
         _embedding_mode = "hash"
         # 静默降级，不打印警告（用户不需要知道）

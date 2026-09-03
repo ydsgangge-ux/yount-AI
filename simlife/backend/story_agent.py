@@ -915,42 +915,67 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
 
 只返回JSON，不要其他文字。"""
 
-        try:
-            response = self.llm.generate(prompt, max_tokens=1200, temperature=0.8, thinking=False)
-            response = response.strip()
-            # 清理 LLM 输出：提取 JSON
-            result = self._extract_json(response)
+        # LLM 偶发把 narrative 拼成 narnative 等变体，或返回空JSON/无法解析文本 →
+        # 用容错键名提取 + 最多3次重试，尽量不让玩家看到"行动执行完毕。"
+        def _pick_key(d, *names, default=""):
+            for n in names:
+                if n in d and d[n] not in (None, ""):
+                    return d[n]
+            return default
 
-            if isinstance(result, list):
-                result = result[0] if result and isinstance(result[0], dict) else {}
+        result = None
+        response = ""
+        for _try in range(3):
+            try:
+                _resp = self.llm.generate(prompt, max_tokens=1200, temperature=0.8, thinking=False)
+                _resp = (_resp or "").strip()
+                response = _resp
+                _res = self._extract_json(_resp)
+                if isinstance(_res, list):
+                    _res = _res[0] if _res and isinstance(_res[0], dict) else {}
+                if not isinstance(_res, dict) or not _res:
+                    print(f"[StoryAgent] 行动解析异常，重试({_try+1}/3)：{_resp[:200]!r}")
+                    continue
+                _nar = _pick_key(_res, "narrative", "narnative", "narative", "narration",
+                                 "result", "description")
+                if not _nar:
+                    print(f"[StoryAgent] 行动缺少叙事文本，重试({_try+1}/3)：{_resp[:200]!r}")
+                    continue
+                result = _res
+                break
+            except Exception as _e:
+                print(f"[StoryAgent] 行动LLM调用异常，重试({_try+1}/3)：{_e}")
+                continue
 
-            if not isinstance(result, dict):
-                return {"narrative": "行动执行完毕。", "outcome_type": "nothing", "next_tension": "medium"}
+        if result is None:
+            return {"narrative": "行动执行完毕。", "outcome_type": "nothing", "next_tension": "medium"}
 
-            return {
-                "narrative": str(result.get("narrative", "行动执行完毕。")),
-                "outcome_type": str(result.get("outcome_type", "nothing")),
-                "next_tension": str(result.get("next_tension", "medium")),
-                "region_story_updates": result.get("region_story_updates"),
-                "items_gained": result.get("items_gained"),
-                "gold_spent": result.get("gold_spent"),
-                "gold_gained": result.get("gold_gained"),
-                "hp_change": result.get("hp_change"),
-                "mp_change": result.get("mp_change"),
-                "quest_offers": result.get("quest_offers"),
-                # 叙事中提到的敌人（玩家"清掉这些怪"时用这些，不再随机生成）
-                "spotted_enemies": result.get("spotted_enemies"),
-                # 这段叙事留下的未解决钩子（后续必须承接）
-                "unresolved_hooks": result.get("unresolved_hooks"),
-                # 剧情线更新（introduce/advance/resolve）
-                "plot_thread_updates": result.get("plot_thread_updates"),
-                # 子场景切换（进入/离开当前区域内的具体地点，如井底）
-                "enter_sub_scene": result.get("enter_sub_scene"),
-                "exit_sub_scene": result.get("exit_sub_scene"),
-            }
-        except Exception as e:
-            print(f"[DeathMode] 行动处理失败: {e}")
-            return {"narrative": "行动执行完毕，但结果未知。", "outcome_type": "nothing", "next_tension": "medium"}
+        _nar = _pick_key(result, "narrative", "narnative", "narative", "narration",
+                         "result", "description")
+        _outc = _pick_key(result, "outcome_type", "outcome", "type", default="nothing")
+        _tens = _pick_key(result, "next_tension", "tension", default="medium")
+
+        return {
+            "narrative": str(_nar or "行动执行完毕。"),
+            "outcome_type": str(_outc or "nothing"),
+            "next_tension": str(_tens or "medium"),
+            "region_story_updates": result.get("region_story_updates"),
+            "items_gained": result.get("items_gained"),
+            "gold_spent": result.get("gold_spent"),
+            "gold_gained": result.get("gold_gained"),
+            "hp_change": result.get("hp_change"),
+            "mp_change": result.get("mp_change"),
+            "quest_offers": result.get("quest_offers"),
+            # 叙事中提到的敌人（玩家"清掉这些怪"时用这些，不再随机生成）
+            "spotted_enemies": result.get("spotted_enemies"),
+            # 这段叙事留下的未解决钩子（后续必须承接）
+            "unresolved_hooks": result.get("unresolved_hooks"),
+            # 剧情线更新（introduce/advance/resolve）
+            "plot_thread_updates": result.get("plot_thread_updates"),
+            # 子场景切换（进入/离开当前区域内的具体地点，如井底）
+            "enter_sub_scene": result.get("enter_sub_scene"),
+            "exit_sub_scene": result.get("exit_sub_scene"),
+        }
 
     def process_combat_action(self, state: Dict, action: str, combat_result: Dict,
                                sender: str = "user") -> Dict:

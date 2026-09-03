@@ -156,18 +156,64 @@ class QwenClient(OpenAICompatClient):
 
 # ── 智谱 GLM (ZhipuAI) ───────────────────────────────────────────────
 class ZhipuClient(OpenAICompatClient):
+    # 强制思考模型：API 不接受 thinking.type=disabled（错误 1210），
+    # 只能用 reasoning_effort 档位（low/high/max）控制思考强度。
+    _ALWAYS_THINK_PREFIXES = ("glm-5.3", "glm-4.7", "glm-4.5v")
+    # 强制思考模型思考过程占用大量 token，调用点常用的小 max_tokens(50~300)
+    # 会被思考部分占满，导致 content 截断为空 → 自动抬升下限。
+    _ALWAYS_THINK_MIN_TOKENS = 1024
+
     def __init__(self, api_key: str, model: str = "glm-5.2"):
         super().__init__(api_key,
                          "https://open.bigmodel.cn/api/paas/v4",
                          model)
 
+    def generate(self, prompt: str, system: str = None,
+                 max_tokens: int = 1000, temperature: float = 0.7,
+                 messages: List[Dict] = None, model: str = None,
+                 thinking: Optional[bool] = None,
+                 thinking_effort: Optional[str] = None,
+                 thinking_budget: Optional[int] = None,
+                 response_format: Optional[Dict] = None,
+                 timeout: Optional[int] = None) -> str:
+        # 强制思考模型：确保给足"思考 + 回答"的预算，否则 content 会被截断为空
+        if self.model.lower().startswith(self._ALWAYS_THINK_PREFIXES):
+            max_tokens = max(max_tokens, self._ALWAYS_THINK_MIN_TOKENS)
+        return super().generate(
+            prompt, system=system, max_tokens=max_tokens, temperature=temperature,
+            messages=messages, model=model, thinking=thinking,
+            thinking_effort=thinking_effort, thinking_budget=thinking_budget,
+            response_format=response_format, timeout=timeout)
+
+    @staticmethod
+    def _normalize_effort(effort: Optional[str]) -> str:
+        """把任意档位名归一化为 GLM 合法值：max/high/low（GLM-5.3 只认这三个）"""
+        e = (effort or "").lower()
+        if e in ("low", "high", "max"):
+            return e
+        if e in ("minimal", "none"):
+            return "low"
+        if e in ("medium",):
+            return "high"
+        if e in ("xhigh",):
+            return "max"
+        return "max"  # 未知/空 → 默认 max
+
     def _build_thinking_params(self, thinking, thinking_effort, thinking_budget):
-        params = {}
-        if thinking is not None:
-            params["enable_thinking"] = thinking
-        if thinking_budget:
-            params["thinking_budget"] = thinking_budget
-        return params
+        always = self.model.lower().startswith(self._ALWAYS_THINK_PREFIXES)
+        effort = self._normalize_effort(thinking_effort)
+        if always:
+            # 强制思考模型：无法关闭思考，thinking=False 也退化为"最低档位思考"
+            return {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": effort,
+            }
+        # GLM-5.2 及以下：支持真正关闭思考
+        if thinking is False:
+            return {"thinking": {"type": "disabled"}}
+        if thinking is True:
+            return {"thinking": {"type": "enabled"}, "reasoning_effort": effort}
+        return {}  # None = 跟随模型默认（5.2 默认自适应思考）
 
 
 # ── 豆包 (Doubao / 字节跳动 火山引擎) ─────────────────────────────────
@@ -495,9 +541,10 @@ PROVIDER_INFO = {
     "zhipu": {
         "name": "智谱 GLM",
         "url":  "https://open.bigmodel.cn",
-        # GLM-5.2(2026-06 旗舰, 1M 上下文)/ GLM-5 / GLM-4.7；GLM-4.7-flash 免费
-        "models": ["glm-5.2", "glm-5", "glm-4.7", "glm-4.7-flash",
-                   "glm-4.5-air"],
+        # GLM-5.3(2026 旗舰, 强制思考, 仅 low/high/max 档位)/ GLM-5.2(1M 上下文)
+        # / GLM-5 / GLM-4.7；GLM-4.5-air 免费
+        "models": ["glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5", "glm-4.7",
+                   "glm-4.7-flash", "glm-4.5-air"],
         "default_model": "glm-5.2",
         "thinking_capable": True,
     },
