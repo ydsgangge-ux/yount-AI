@@ -84,3 +84,5 @@ simlife/data/story_cast.json
 simlife/data/story_archive/
 simlife/data/dungeons/
 simlife/data/worlds/
+simlife/data/death_mode_state.bak.*.json
+simlife/data/death_mode_state.json.bak

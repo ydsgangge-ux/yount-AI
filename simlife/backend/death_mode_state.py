@@ -3,6 +3,9 @@
 独立于原有 SimLife 系统，不影响现代/异世界模式
 """
 import json
+import os
+import time
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any
@@ -16,6 +19,16 @@ def _life_skill_init() -> Dict:
 DATA_DIR = Path(__file__).parent.parent / "data"
 STATE_FILE = DATA_DIR / "death_mode_state.json"
 HALL_FILE = DATA_DIR / "death_hall.json"
+
+# 存档读写线程锁：8769 服务的同步 handler 运行在 uvicorn 线程池，
+# 多个请求可并行调用 save_state，无锁并发 open("w") 会导致文件被交错拼接损坏。
+_STATE_LOCK = threading.Lock()
+
+# ── 自动备份配置（仿 engine/db_guard.py 思路）──────────
+MAX_STATE_BACKUPS = 5           # 最多保留几份存档备份（轮转删除旧份）
+BACKUP_INTERVAL_SECONDS = 600   # 距上次备份超过该秒数才创建新备份（限频，避免每次写都备份）
+
+_last_backup_time = 0.0         # 受 _STATE_LOCK 保护
 
 
 # ── 职业模板（按世界类型分组）──────────────────────────
@@ -295,61 +308,128 @@ def create_initial_state(
 # ── 持久化 ────────────────────────────────────────────
 
 def save_state(state: Dict):
-    """保存死亡模式状态"""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    """保存死亡模式状态（线程安全 + 原子写：先写临时文件再替换，避免写一半崩溃/并发拼接损坏存档）"""
+    with _STATE_LOCK:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, STATE_FILE)
+        # 限频自动备份一份快照（可回滚的保险）
+        _maybe_backup_state(state)
 
 
 def load_state() -> Optional[Dict]:
-    """加载死亡模式状态"""
-    if STATE_FILE.exists():
+    """加载死亡模式状态；若存档损坏则尝试从最近备份自动恢复"""
+    with _STATE_LOCK:
+        if STATE_FILE.exists():
+            try:
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data and data.get("is_alive"):
+                    return data
+            except Exception:
+                pass
+            # 存档损坏（或被判定无游戏）：尝试从最近备份自愈
+            recovered = _recover_state_from_backup()
+            if recovered:
+                return recovered
+    return None
+
+
+def _backup_files() -> List[Path]:
+    """按时间倒序返回所有存档备份文件"""
+    return sorted(
+        DATA_DIR.glob("death_mode_state.bak.*.json"),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+
+
+def _maybe_backup_state(state: Dict):
+    """限频创建存档备份（须在 _STATE_LOCK 内调用），防止频繁写导致大量小文件"""
+    global _last_backup_time
+    now = time.time()
+    if now - _last_backup_time < BACKUP_INTERVAL_SECONDS:
+        return
+    _last_backup_time = now
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        bak = DATA_DIR / f"death_mode_state.bak.{timestamp}.json"
+        with open(bak, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        _rotate_state_backups()
+    except Exception:
+        pass
+
+
+def _rotate_state_backups(max_backups: int = MAX_STATE_BACKUPS):
+    """轮转存档备份：保留最近 N 份，删除旧的"""
+    for p in _backup_files()[max_backups:]:
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def _recover_state_from_backup() -> Optional[Dict]:
+    """从最近的合法备份恢复存档（损坏自愈），成功则写回正式存档并返回状态"""
+    for bak in _backup_files():
+        try:
+            with open(bak, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if data and data.get("is_alive"):
+                tmp = STATE_FILE.with_suffix(".json.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp, STATE_FILE)
+                print(f"[death_mode] ⚠ 存档损坏，已自动从备份恢复: {bak.name}")
                 return data
         except Exception:
-            pass
+            continue
     return None
 
 
 def clear_state():
     """清除死亡模式状态（角色死亡后）"""
-    if STATE_FILE.exists():
-        try:
-            STATE_FILE.rename(STATE_FILE.with_suffix(".json.dead"))
-        except Exception:
-            pass
+    with _STATE_LOCK:
+        if STATE_FILE.exists():
+            try:
+                STATE_FILE.rename(STATE_FILE.with_suffix(".json.dead"))
+            except Exception:
+                pass
 
 
 def save_to_hall(state: Dict, death_cause: str, death_description: str):
     """将死亡角色保存到名人堂"""
-    hall = []
-    if HALL_FILE.exists():
-        try:
-            with open(HALL_FILE, "r", encoding="utf-8") as f:
-                hall = json.load(f)
-        except Exception:
-            pass
+    with _STATE_LOCK:
+        hall = []
+        if HALL_FILE.exists():
+            try:
+                with open(HALL_FILE, "r", encoding="utf-8") as f:
+                    hall = json.load(f)
+            except Exception:
+                pass
 
-    char = state.get("character", {})
-    hall.append({
-        "name": char.get("name", "无名"),
-        "class_name": char.get("class_name", ""),
-        "class_icon": char.get("class_icon", ""),
-        "level": char.get("level", 1),
-        "kill_count": state.get("kill_count", 0),
-        "play_time_days": state.get("play_time_days", 0),
-        "death_cause": death_cause,
-        "death_description": death_description[:500],
-        "died_at": datetime.now().isoformat(),
-    })
+        char = state.get("character", {})
+        hall.append({
+            "name": char.get("name", "无名"),
+            "class_name": char.get("class_name", ""),
+            "class_icon": char.get("class_icon", ""),
+            "level": char.get("level", 1),
+            "kill_count": state.get("kill_count", 0),
+            "play_time_days": state.get("play_time_days", 0),
+            "death_cause": death_cause,
+            "death_description": death_description[:500],
+            "died_at": datetime.now().isoformat(),
+        })
 
-    # 只保留最近 50 条
-    hall = hall[-50:]
-    with open(HALL_FILE, "w", encoding="utf-8") as f:
-        json.dump(hall, f, ensure_ascii=False, indent=2)
+        # 只保留最近 50 条
+        hall = hall[-50:]
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = HALL_FILE.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(hall, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, HALL_FILE)
 
 
 def load_hall() -> List[Dict]:

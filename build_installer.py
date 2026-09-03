@@ -512,6 +512,9 @@ Unicode True
 !include "LogicLib.nsh"
 
 !define MUI_ABORTWARNING
+; 快捷方式统一使用产品自定义运行时图标（安装后的 assets/icon.ico）
+; 备注：安装程序自身的 exe/ico 此处保持 NSIS 默认，避免中文绝对路径在编译期出问题
+!define APP_ICON "$INSTDIR\\assets\\icon.ico"
 !define MUI_ICON "${{NSISDIR}}\\Contrib\\Graphics\\Icons\\modern-install.ico"
 !define MUI_UNICON "${{NSISDIR}}\\Contrib\\Graphics\\Icons\\modern-uninstall.ico"
 !define MUI_WELCOMEFINISHPAGE_BITMAP "${{NSISDIR}}\\Contrib\\Graphics\\Wizard\\win.bmp"
@@ -556,14 +559,14 @@ Section "MainSection" SecMain
   ; 卸载信息
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
   
-  ; 开始菜单快捷方式
+  ; 开始菜单快捷方式（图标使用产品自定义 ico）
   CreateDirectory "$SMPROGRAMS\\${{APP_NAME}}"
-  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\${{APP_NAME}}.lnk" "$INSTDIR\\launch_portable.bat" "" "$INSTDIR\\launch_portable.bat" 0
-  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\SimLife后端.lnk" "$INSTDIR\\launch_simlife.bat" "" "$INSTDIR\\launch_simlife.bat" 0
-  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\卸载.lnk" "$INSTDIR\\Uninstall.exe" "" "$INSTDIR\\Uninstall.exe" 0
-  
-  ; 桌面快捷方式
-  CreateShortCut "$DESKTOP\\${{APP_NAME}}.lnk" "$INSTDIR\\launch_portable.bat" "" "$INSTDIR\\launch_portable.bat" 0
+  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\${{APP_NAME}}.lnk" "$INSTDIR\\launch_portable.bat" "" "${{APP_ICON}}" 0
+  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\SimLife后端.lnk" "$INSTDIR\\launch_simlife.bat" "" "${{APP_ICON}}" 0
+  CreateShortCut "$SMPROGRAMS\\${{APP_NAME}}\\卸载.lnk" "$INSTDIR\\Uninstall.exe" "" "${{APP_ICON}}" 0
+
+  ; 桌面快捷方式（图标使用产品自定义 ico）
+  CreateShortCut "$DESKTOP\\${{APP_NAME}}.lnk" "$INSTDIR\\launch_portable.bat" "" "${{APP_ICON}}" 0
   
   ; 详细信息
   DetailPrint "安装完成！"
