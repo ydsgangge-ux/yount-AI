@@ -2914,7 +2914,8 @@ class DeathModeEngine:
         """战斗回合的公共逻辑：记录历史 + 剧情线 + 摘要 + 保存"""
         # 记录剧情钩子
         if combat_result:
-            hooks = [f"战斗中：{combat_result.get('combat_log', ['战斗进行中'])[-1]}"]
+            _clog = combat_result.get('combat_log') or ['战斗进行中']  # 兜底空列表/缺失键，避免 [-1] 越界
+            hooks = [f"战斗中：{_clog[-1]}"]
             existing = state.get("story", {}).get("unresolved_hooks", [])
             for h in hooks:
                 if isinstance(h, str) and h.strip() and h.strip() not in existing:
@@ -3697,6 +3698,15 @@ class DeathModeEngine:
                 boss_enemy["behavior"] = boss_data["description"]
             return [boss_enemy]
 
+        # 每个敌人的序号起点：从区域文件的 encounter_seq 继续（序号往后排，跨战斗持久）
+        _seq_start = 0
+        try:
+            if world_id and cur_region_name:
+                _r0 = wm.load_region(world_id, cur_region_name) or {}
+                _seq_start = int(_r0.get("encounter_seq") or 0)
+        except Exception:
+            pass
+
         enemies = []
         for i in range(count):
             # 低风险区域出低等级怪（玩家可以刷级）
@@ -3746,10 +3756,20 @@ class DeathModeEngine:
                 # 只有名字，回退到旧逻辑
                 enemy["name"] = random.choice(region_monster_names)
 
-            # 多个敌人时编号
+            # 多个敌人时编号（序号从区域文件 encounter_seq 继续，往后排）
             if count > 1:
-                enemy["name"] = f"{enemy['name']}{i+1}"
+                enemy["name"] = f"{enemy['name']}{_seq_start + i + 1}"
             enemies.append(enemy)
+
+        # 序号往后排：把本次消耗的序号写回区域文件（持久化，下次从这接着排）
+        if count > 1 and world_id and cur_region_name:
+            try:
+                _r1 = wm.load_region(world_id, cur_region_name)
+                if _r1:  # 仅当该区域文件确实存在时至写回，避免凭空生成空区域文件
+                    _r1["encounter_seq"] = _seq_start + count
+                    wm.save_region(world_id, _r1)
+            except Exception:
+                pass
 
         return enemies
 
@@ -4322,49 +4342,58 @@ class DeathModeEngine:
         total_combat_log = []
         victory = False
         death_return = None
-        # ── 远程先手攻击（远程职业/法术在战斗开始时先造成一轮伤害，敌人无防御）──
-        ranged_classes = ("法师", "术士", "弓手", "猎人", "游侠", "巫师", "贤者", "牧师")
+        # ── 接战距离先手：远程/法系技能在敌人接近前白打（看技能射程，不看职业）──
+        # 射程：magic/ranged=3、finesse=2、physical=1；只有射程≥2(远程/法系/灵巧)能先手
         preemptive_log = []
-        for role_name, role_char in [("ai", char), ("user", user_char)]:
-            if role_char.get("hp", 0) <= 0:
-                continue
-            if role_name == "user" and not user_in_combat:
-                continue
-            class_name = role_char.get("class_name", "")
-            if not any(c in class_name for c in ranged_classes):
-                continue
-            # 找一个存活的敌人
-            target_enemy = next((e for e in enemies if e.get("hp", 0) > 0), None)
-            if not target_enemy:
-                continue
-            # 使用攻击技能或普通攻击
-            learned = role_char.get("skills", [])
-            atk_skill = None
-            mp = role_char.get("mp", 0)
-            for sid in learned:
-                sk = SkillSystem.get_skill(sid)
-                if sk and sk.type in ("physical", "magic", "finesse", "ranged") and sk.mp_cost <= mp:
-                    atk_skill = sk
+        _range_of = lambda _st: 3 if _st in ("magic", "ranged") else (2 if _st == "finesse" else 1)
+        # 接战距离（白打回合数）：普通遭遇3，缓慢/不追击怪5（敌人尚远可多打几回合）
+        _gap = 3
+        _slow_keys = ("史莱姆", "软泥", "元素", "植物", "蘑菇", "孢子", "水晶", "藤蔓")
+        for _e in enemies:
+            _en = str(_e.get("name", "?"))
+            if any(_k in _en for _k in _slow_keys):
+                _gap = max(_gap, 5)
+        for _pre_rnd in range(_gap):
+            _gap_acted = False
+            for role_name, role_char in [("ai", char), ("user", user_char)]:
+                if role_char.get("hp", 0) <= 0:
+                    continue
+                if role_name == "user" and not user_in_combat:
+                    continue
+                # 找一个存活的敌人（先手阶段敌人无防御，正在接近）
+                target_enemy = next((e for e in enemies if e.get("hp", 0) > 0), None)
+                if not target_enemy:
                     break
-            if atk_skill:
+                # 选一个射程≥2(远程/法系/灵巧)且够MP的攻击技能 → 看技能不看职业
+                atk_skill = None
+                for sid in role_char.get("skills", []):
+                    sk = SkillSystem.get_skill(sid)
+                    if not (sk and sk.type in ("physical", "magic", "finesse", "ranged")
+                            and sk.mp_cost <= role_char.get("mp", 0)):
+                        continue
+                    if _range_of(sk.type) >= 2 and (atk_skill is None or _range_of(sk.type) > _range_of(atk_skill.type)):
+                        atk_skill = sk
+                if atk_skill is None:
+                    continue  # 没有射程足够的远程手段 → 本回合只能等待敌人靠近
                 skill_mult = atk_skill.effects[0].value if atk_skill.effects else 1.0
                 _atk_type = CombatSystem.skill_attack_type(atk_skill.type)
-                role_char["mp"] = mp - atk_skill.mp_cost
-                skill_name = atk_skill.name
-            else:
-                skill_mult = 1.0
-                _atk_type = "physical"
-                skill_name = ""
-            # 先手攻击：敌人无防御
-            preemptive_result = CombatSystem.attack(role_char, target_enemy,
-                                                     defense_action=DefenseAction.NONE,
-                                                     attack_type=_atk_type,
-                                                     skill_multiplier=skill_mult)
-            preemptive_log.append(f"{role_char.get('name','?')}{'【'+skill_name+'】' if skill_name else ''}先手突袭{preemptive_result['description']} → {target_enemy.get('name', '?')}")
-            preemptive_log += CombatSystem.enchant_on_hit(role_char, target_enemy, preemptive_result, enemies)
-            _check_drop(target_enemy, role_char.get("stats", {}))
+                role_char["mp"] = max(0, role_char.get("mp", 0) - atk_skill.mp_cost)
+                # 先手攻击：敌人无防御（还在接战距离外）
+                preemptive_result = CombatSystem.attack(role_char, target_enemy,
+                                                         defense_action=DefenseAction.NONE,
+                                                         attack_type=_atk_type,
+                                                         skill_multiplier=skill_mult)
+                preemptive_log.append(f"{role_char.get('name','?')}【{atk_skill.name}】{preemptive_result['description']} → {target_enemy.get('name', '?')}")
+                preemptive_log += CombatSystem.enchant_on_hit(role_char, target_enemy, preemptive_result, enemies)
+                _check_drop(target_enemy, role_char.get("stats", {}))
+                _gap_acted = True
+                if all(e.get("hp", 0) <= 0 for e in enemies):
+                    break
+            # 无远程手段或敌人已全灭 → 停止先手，进入近战
+            if not _gap_acted or all(e.get("hp", 0) <= 0 for e in enemies):
+                break
         if preemptive_log:
-            combat_log.append("🏹 远程先手攻击：")
+            combat_log.append(f"🏹 接战先手（敌人尚在距离{_gap}格外，先发制人）：")
             combat_log.extend(preemptive_log)
         for sub_round in range(1, max_sub_rounds + 1):
             # 检查存活敌人
@@ -4468,6 +4497,25 @@ class DeathModeEngine:
                             _log_parts.append(f"+{_heal_mp}MP")
                         round_log.append(f"🧪 {attacker.get('name','?')}使用【{_consumable_name}】{'·'.join(_log_parts)}")
                         continue
+
+                # ── AI自动奶：自动战斗（无人点名技能）且有人残血时，牧师类智能优先救血 ──
+                # 优先级高于默普攻：谁血少先奶谁（自己或用户队友），不抢玩家点名指令
+                if (role == "ai" and not cmd.get("ai_support_skill") and not cmd.get("ai_skill")
+                        and not cmd.get("ai_use_consumable")):
+                    _heal_threshold = 0.45
+                    _ally_list = [attacker]
+                    if user_in_combat and user_char.get("hp", 0) > 0:
+                        _ally_list.append(user_char)
+                    # 找当前血量比例最低的友方（残血优先）
+                    _lowest = min(_ally_list, key=lambda _c: (_c.get("hp", 0) / max(1, _c.get("max_hp", 50)))
+                                  if _c.get("max_hp", 0) > 0 else 1.0)
+                    _ratio = (_lowest.get("hp", 0) / max(1, _lowest.get("max_hp", 50))) if _lowest.get("max_hp", 0) > 0 else 1.0
+                    if _ratio <= _heal_threshold:
+                        for _sid in attacker.get("skills", []):
+                            _sk = SkillSystem.get_skill(_sid)
+                            if _sk and _sk.type in ("heal", "utility") and attacker.get("mp", 0) >= _sk.mp_cost:
+                                cmd["ai_support_skill"] = _sk.id
+                                break
 
                 # ── 辅助技能（heal/buff/utility）：走 resolve_skill，不攻击敌人 ──
                 _support_skill_id = cmd.get(f"{role}_support_skill")

@@ -335,7 +335,7 @@ SKILL_DATABASE = {
         ],
         "archer": [
             # 1级
-            {"id": "arc_precise_shot", "name": "精准射击", "type": "physical", "mp_cost": 6,
+            {"id": "arc_precise_shot", "name": "精准射击", "type": "ranged", "mp_cost": 6,
              "effects": _s("ranged", 1.3), "req_level": 1, "description": "远程精准射击"},
             {"id": "arc_quick_move", "name": "快速移动", "type": "buff", "mp_cost": 8,
              "effects": [{"type": "buff_stat", "target": "self", "value": 5, "duration": 2, "stat": "agility"}],
@@ -355,7 +355,7 @@ SKILL_DATABASE = {
              "req_level": 7, "req_stats": {"agility": 16}, "cooldown": 2,
              "description": "箭雨覆盖所有敌人并减速"},
             # 9级
-            {"id": "arc_snipe", "name": "狙击", "type": "physical", "mp_cost": 20,
+            {"id": "arc_snipe", "name": "狙击", "type": "ranged", "mp_cost": 20,
              "effects": [{"type": "execute", "target": "single_enemy", "value": 2.2}],
              "req_level": 9, "req_stats": {"agility": 18}, "cooldown": 2,
              "description": "远程狙击，对低血量敌人造成巨额伤害"},
@@ -369,7 +369,7 @@ SKILL_DATABASE = {
              "effects": _s("ranged", 1.1) + [{"type": "dot", "target": "single_enemy", "value": 0.4, "duration": 3}],
              "req_level": 12, "description": "淬毒箭矢，持续中毒"},
             # 15级
-            {"id": "arc_explosive_shot", "name": "爆裂箭", "type": "physical", "mp_cost": 28,
+            {"id": "arc_explosive_shot", "name": "爆裂箭", "type": "ranged", "mp_cost": 28,
              "effects": _s("ranged", 1.8, "all_enemies"),
              "req_level": 15, "req_stats": {"agility": 24}, "cooldown": 3,
              "description": "爆炸箭矢，范围高伤害"},
@@ -556,7 +556,7 @@ SKILL_DATABASE = {
             {"id": "wx_assassin_shadow", "name": "影杀", "type": "physical", "mp_cost": 20,
              "effects": [{"type": "execute", "target": "single_enemy", "value": 2.5}],
              "req_level": 7, "req_stats": {"agility": 16}, "cooldown": 2, "description": "暗影刺杀，低血量必杀"},
-            {"id": "wx_assassin_trace", "name": "追魂镖", "type": "physical", "mp_cost": 15,
+            {"id": "wx_assassin_trace", "name": "追魂镖", "type": "ranged", "mp_cost": 15,
              "effects": _s("ranged", 1.2) + [{"type": "dot", "target": "single_enemy", "value": 0.4, "duration": 3}],
              "req_level": 5, "description": "追魂镖，持续流血"},
         ],
@@ -625,7 +625,7 @@ SKILL_DATABASE = {
             {"id": "pa_scav_disarm", "name": "缴械", "type": "utility", "mp_cost": 12,
              "effects": [{"type": "debuff_stat", "target": "single_enemy", "value": -5, "duration": 2, "stat": "strength"}],
              "req_level": 5, "cooldown": 2, "description": "缴械攻击，降低敌人攻击力"},
-            {"id": "pa_scav_ambush", "name": "伏击", "type": "physical", "mp_cost": 18,
+            {"id": "pa_scav_ambush", "name": "伏击", "type": "ranged", "mp_cost": 18,
              "effects": [{"type": "execute", "target": "single_enemy", "value": 2.2}],
              "req_level": 9, "req_stats": {"agility": 18}, "cooldown": 2, "description": "伏击，低血量致命一击"},
         ],
@@ -1368,11 +1368,11 @@ class SkillSystem:
             "log": [],
         }
 
-        caster_stats = caster.get("stats", {})
         caster_level = caster.get("level", 1)
-        caster_attack = (caster_stats.get("strength", 5) * 2 +
-                         caster_stats.get("agility", 5) * 0.5 +
-                         caster_stats.get("intelligence", 5) * 0.5)
+        # 技能按"总攻击力"结算（含装备bonus + 附魔攻击 + 主属性×2+次属性×1）
+        from simlife.backend.combat_system import CombatSystem
+        atk_type = CombatSystem.skill_attack_type(skill.type)
+        caster_attack = CombatSystem.calc_attack_power(caster, atk_type)
 
         for effect in skill.effects:
             effect_result = cls._resolve_effect(effect, caster, targets,
@@ -1709,3 +1709,91 @@ class SkillSystem:
             if k in stats:
                 stats[k] = max(1, stats[k] + v)
         return stats
+
+
+# ── 技能数值参考（伤害/治疗估算，随角色属性变化）────────────────────
+_STAT_CN = {"strength": "力量", "agility": "敏捷", "intelligence": "智力",
+            "vitality": "体质", "luck": "运气"}
+
+
+def build_skill_power_text(skill: "Skill", char: Optional[Dict] = None) -> str:
+    """根据技能效果 + 角色属性，生成一句中文数值参考说明。
+
+    估算逻辑与战斗结算对齐（见 combat_system.calc_attack_power / resolve_skill）：
+    - 伤害 ≈ 主属性攻击力 × 倍率（为"防御前"值，目标防御/闪避会再降低）
+    - 治疗 ≈ 最大HP × 倍率 × (1+智力×0.02)（回MP按最大MP×倍率）
+    - 增益/减益按属性和数值标注
+    传入 None 时退化为倍率说明，不绑定具体角色。
+    """
+    if not skill or not getattr(skill, "effects", None):
+        return ""
+    from simlife.backend.combat_system import CombatSystem
+    stats = (char or {}).get("stats", {}) or {}
+    max_hp = (char or {}).get("max_hp", 50) or 50
+    max_mp = (char or {}).get("max_mp", 50) or 50
+    atk_type = CombatSystem.skill_attack_type(skill.type)
+    # 角色模式下用真实总攻击力；否则用主属性×2+次属性×1 估算
+    if char:
+        base_atk = CombatSystem.calc_attack_power(char, atk_type)
+    else:
+        _map = {"magic": ("intelligence", "agility"),
+                "ranged": ("agility", "strength"),
+                "finesse": ("agility", "strength")}
+        primary, secondary = _map.get(atk_type, ("strength", "agility"))
+        base_atk = int(stats.get(primary, 5) * 2 + stats.get(secondary, 5))
+
+    parts = []
+    for eff in skill.effects:
+        eff_type = getattr(eff, "type", "")
+        value = getattr(eff, "value", 1.0) or 1.0
+        if eff_type == "damage":
+            raw = int(base_atk * value)
+            if char:
+                parts.append(f"⚔️伤害≈{raw}（攻击{base_atk}×倍率{value:g}，目标防御/闪避会降低实际值）")
+            else:
+                parts.append(f"⚔️伤害倍率×{value:g}（总攻击=主属性×2+次属性+武器/附魔，随角色变化）")
+        elif eff_type == "heal":
+            if getattr(eff, "stat", None) == "mp":
+                rec = int(max_mp * value)
+                pct = int(100 * value)
+                if char:
+                    parts.append(f"🔷回复{rec}MP（最大MP{max_mp}×{pct}%）")
+                else:
+                    parts.append(f"🔷回复最大MP的{pct}%")
+            else:
+                intel = stats.get("intelligence", 5) or 5
+                bonus = 1 + intel * 0.02
+                amt = int(max_hp * value * bonus)
+                pct = int(100 * value)
+                if char:
+                    parts.append(f"💚回复≈{amt}HP（最大HP{max_hp}×{pct}%×智力加成{bonus:.2f}）")
+                else:
+                    parts.append(f"💚回复最大HP的{pct}%×(1+智力×0.02)")
+        elif eff_type in ("buff_stat", "debuff_stat"):
+            stat_cn = _STAT_CN.get(getattr(eff, "stat", ""), getattr(eff, "stat", ""))
+            v = int(value)
+            dur = int(getattr(eff, "duration", 0) or 0)
+            arrow = "-" if v < 0 else "+"
+            parts.append(f"✨{stat_cn}{arrow}{abs(v)}（持续{dur}回合）")
+        elif eff_type in ("stun", "freeze"):
+            parts.append(f"⏸️定身{int(getattr(eff, 'duration', 0) or 1)}回合（目标无法行动）")
+        elif eff_type in ("dot", "poison"):
+            v = int(value) if value else ""
+            parts.append(f"☠️持续伤害{v}/回合")
+        elif eff_type == "shield":
+            # 护盾：吸收固定点数的伤害（见 resolve_skill SHIELD 分支）
+            parts.append(f"🛡️护盾吸收{int(value)}点伤害")
+        elif eff_type in ("hot", "regen"):
+            # 再生：每回合恢复 目标最大HP×倍率 点
+            dur = int(getattr(eff, "duration", 0) or 0)
+            tick = int(max_hp * value)
+            if char:
+                parts.append(f"💚再生：每回合恢复{tick}HP（最大HP×{value:g}），持续{dur}回合")
+            else:
+                parts.append(f"💚再生：每回合恢复最大HP×{value:g}，持续{dur}回合")
+        elif eff_type in ("buff", "buff_stat"):
+            stat_cn = _STAT_CN.get(getattr(eff, "stat", ""), getattr(eff, "stat", ""))
+            v = int(value)
+            dur = int(getattr(eff, "duration", 0) or 0)
+            parts.append(f"✨{stat_cn}+{v}（持续{dur}回合）")
+    return " · ".join(p for p in parts if p)

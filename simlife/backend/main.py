@@ -1531,6 +1531,186 @@ def api_death_mode_state():
 
 
 # ══════════════════════════════════════════════════════
+# 一键生成场景图（基于当前场景描述，调用本地 ComfyUI）
+# ══════════════════════════════════════════════════════
+
+# 场景关键词 → 英文画面主题（仅作为 LLM 失败时的兜底，非主要来源）
+_SCENE_IMAGE_KEYWORDS = [
+    (["城镇", "集市", "广场", "街道", "商铺", "小镇", "市场", "村庄", "村子"], "a bustling medieval fantasy town square with market stalls and stone buildings"),
+    (["酒馆", "旅馆", "旅店", "客栈", "休息", "吧"], "a cozy fantasy tavern interior with wooden tables, warm candlelight and a fireplace"),
+    (["森林", "树林", "丛林", "密林", "精灵", "古木"], "a mystical ancient forest with towering trees, glowing fireflies and mossy paths"),
+    (["城堡", "宫殿", "王城", "皇宫", "大厅", "城墙"], "a grand fantasy castle with stone towers, banners and epic architecture"),
+    (["学院", "魔法", "图书馆", "研究", "塔"], "a magical academy tower filled with floating books, glowing runes and arcane energy"),
+    (["地下", "地牢", "副本", "洞窟", "矿坑", "迷宫", "洞穴"], "a dark fantasy dungeon with torches, stone corridors and mysterious shadows"),
+    (["营地", "扎营", "篝火", "野营", "露营"], "a night camp with a glowing campfire, tents and a starry sky"),
+    (["湖", "河", "溪", "水边", "泉", "瀑布"], "a serene lakeside with clear water, soft reflections and gentle mist"),
+    (["山", "峡谷", "关隘", "山道", "高地", "雪山"], "a majestic mountain pass with rocky cliffs, a winding path and dramatic clouds"),
+    (["神殿", "祠堂", "祭坛", "遗迹", "古", "圣"], "an ancient temple ruin with stone pillars, moss and a sacred atmosphere"),
+    (["草原", "平原", "田野", "牧场", "旷野", "草地"], "a vast grassy plain with wildflowers, rolling hills and open sky"),
+    (["沙漠", "沙丘", "戈壁"], "a vast desert with golden sand dunes and a distant oasis"),
+    (["雪", "冰", "极地", "冰川"], "a snowy frozen landscape with snow-covered trees and icy mountains"),
+    (["海", "港口", "码头", "海滩", "沙滩", "船"], "a coastal harbor with ships, ocean waves and seaside buildings"),
+    (["王座", "宴会", "王宫"], "a grand royal throne hall with marble columns, chandeliers and red carpets"),
+    (["墓", "坟", "陵"], "an ancient cemetery with gravestones, cypress trees and moonlight"),
+    (["庭院", "花园", "花", "玫瑰"], "a beautiful fantasy garden with blooming flowers, fountains and manicured hedges"),
+    (["教堂", "礼拜", "修道院"], "a gothic fantasy cathedral interior with stained glass and candlelight"),
+    (["桥", "石桥"], "an old stone bridge over a river in fantasy scenery"),
+]
+
+
+def _collect_scene_context(engine, dm_state) -> Dict:
+    """动态提取场景上下文：当前区域设定 + 最近的行动内容（不硬编码）"""
+    ctx = {"region_name": "", "region_desc": "", "region_type": "", "events": []}
+
+    # 1. 当前区域设定（name + description + region_type）
+    try:
+        if getattr(engine, "world_map", None):
+            cur = engine.world_map.get_current_region()
+            if cur:
+                ctx["region_name"] = (cur.name or "").strip()
+                ctx["region_desc"] = (cur.description or "").strip()
+                ctx["region_type"] = (cur.region_type or "").strip()
+    except Exception:
+        pass
+    if not ctx["region_name"]:
+        # 兜底：从 story 读取当前位置
+        story = dm_state.get("story") or {}
+        ctx["region_name"] = (story.get("current_location") or "").strip()
+
+    # 2. 最近的行动内容（取最新几条有意义的日志）
+    logs = dm_state.get("action_log") or []
+    events = []
+    for log in reversed(logs):
+        d = log.get("data") or {}
+        t = log.get("type", "")
+        text = ""
+        if t == "scene":
+            text = d.get("description") or ""
+            loc = d.get("location") or ""
+            if loc:
+                text = f"{text}（位置：{loc}）" if text else f"当前位置：{loc}"
+        elif t in ("action", "combat_round"):
+            parts = []
+            if d.get("action"):
+                parts.append(str(d["action"]))
+            if d.get("outcome"):
+                parts.append(str(d["outcome"]))
+            combat = d.get("combat") or {}
+            enemy_names = combat.get("enemy_names") or []
+            if enemy_names:
+                parts.append("与 " + "、".join(enemy_names) + " 战斗")
+            if parts:
+                text = "；".join(parts)
+        elif t == "move":
+            if d.get("to"):
+                text = f"移动到了{d.get('to')}"
+        text = (text or "").strip()
+        if text and text not in events:
+            events.append(text)
+        if len(events) >= 3:
+            break
+    ctx["events"] = events
+    return ctx
+
+
+def _llm_scene_prompt(ctx: Dict) -> str:
+    """用 LLM 把「区域设定 + 行动内容」动态转成英文绘图提示词"""
+    from simlife.backend.generator import get_llm_client
+    llm = get_llm_client()
+
+    lines = []
+    if ctx.get("region_name"):
+        lines.append(f"当前区域名称：{ctx['region_name']}")
+    if ctx.get("region_desc"):
+        lines.append(f"区域设定描述：{ctx['region_desc']}")
+    if ctx.get("events"):
+        lines.append("最近发生的行动：")
+        lines.extend(f"- {e}" for e in ctx["events"])
+    context_text = "\n".join(lines) or "当前身处一片未知的奇幻大陆。"
+
+    sys_prompt = (
+        "你是游戏场景美术设定师。根据游戏当前区域的设定和玩家最近的行动内容，"
+        "生成一段用于 Stable Diffusion / ComfyUI 绘图的英文画面提示词。\n"
+        "要求：\n"
+        "1. 只输出英文，逗号分隔的标签式提示词，不要任何解释文字、编号或引号。\n"
+        "2. 画面必须忠实反映区域的地形地貌，并体现最近行动中正在发生的事件（如战斗、探索、互动、生活行为）。\n"
+        "3. 奇幻游戏原画风格，强调光影氛围、细节丰富、电影感。\n"
+        "4. 若行动涉及战斗，用英文描述敌人/怪物形象；画面中不要出现人类角色。\n"
+    )
+    try:
+        prompt = (llm.generate(f"{sys_prompt}\n\n{context_text}", max_tokens=300, temperature=0.8, thinking=False) or "").strip()
+        if prompt:
+            return prompt
+    except Exception as e:
+        print(f"[场景图] LLM 提示词生成失败，退回关键词兜底: {e}")
+    return ""
+
+
+def _scene_to_image_prompt(ctx: Dict) -> str:
+    """生成英文画面提示词：优先 LLM 动态生成（区域+行动），失败则退回关键词映射"""
+    # 1. 优先 LLM 动态生成
+    prompt = _llm_scene_prompt(ctx)
+    if prompt:
+        return prompt
+
+    # 2. 兜底：关键词映射 + 原文（区域设定或最近行动文本）
+    scene_desc = ctx.get("region_desc") or ((ctx.get("events") or [""])[0]) or ctx.get("region_name") or ""
+    theme = ""
+    for keywords, en in _SCENE_IMAGE_KEYWORDS:
+        if any(kw in scene_desc for kw in keywords):
+            theme = en
+            break
+    desc_tail = scene_desc[:100].replace("\n", " ")
+    if theme:
+        return f"{theme}, {desc_tail}, fantasy art style, highly detailed, cinematic lighting, epic atmosphere, masterpiece"
+    if desc_tail:
+        return f"{desc_tail}, fantasy landscape, highly detailed, cinematic lighting, epic atmosphere, masterpiece"
+    return "a mysterious fantasy landscape, epic scenery, highly detailed, cinematic lighting, masterpiece"
+
+
+@app.post("/api/death-mode/generate-scene-image")
+def api_death_mode_generate_scene_image():
+    """一键生成当前场景图（提取区域设定+最近行动，动态生成提示词，调用本地 ComfyUI）"""
+    try:
+        from engine.tools import generate_image_comfy
+    except Exception as e:
+        return {"ok": False, "error": f"图像生成模块不可用: {e}"}
+
+    # 1. 获取当前游戏状态与场景上下文
+    from simlife.backend.death_mode import DeathModeEngine
+    engine = DeathModeEngine()
+    dm_state = engine.get_game_state()
+    if not dm_state.get("active"):
+        return {"ok": False, "error": "当前没有进行中的死亡模式游戏"}
+
+    ctx = _collect_scene_context(engine, dm_state)
+
+    # 2. 动态生成英文提示词（区域设定 + 行动内容）
+    prompt = _scene_to_image_prompt(ctx)
+
+    # 3. 调用 ComfyUI 生成（纯场景/怪物，无人类角色）
+    try:
+        result = generate_image_comfy(prompt=prompt, no_human=True, width=1024, height=768)
+    except Exception as e:
+        return {"ok": False, "error": f"生成失败: {e}"}
+
+    if not result.get("ok"):
+        return result
+
+    # 4. 拼接前端可访问的图片 URL
+    image_path = result.get("image_path", "")
+    if image_path:
+        result["image_url"] = "/agi-images/" + os.path.basename(image_path)
+    # 附上"本图基于什么生成"的上下文，供前端展示
+    result["scene_context"] = {
+        "region_name": ctx.get("region_name", ""),
+        "region_desc": ctx.get("region_desc", ""),
+        "events": ctx.get("events", []),
+    }
+    return result
+
+
+# ══════════════════════════════════════════════════════
 # 生活技能系统 API（烹饪/锻造/钓鱼）
 # ══════════════════════════════════════════════════════
 
@@ -2830,7 +3010,7 @@ def api_death_mode_learnable_skills(who: str = "ai"):
     return {
         "learnable_skills": [
             {
-                "skill": item["skill"].to_dict(),
+                "skill": _skill_with_power(item["skill"], character),
                 "source": item["source"],
                 "source_class_id": item["source_class_id"],
                 "class_icon": item["class_icon"],
@@ -2983,16 +3163,42 @@ def api_death_mode_passive_skill(who: str = "ai"):
     return passive
 
 
+def _skill_with_power(skill, character=None):
+    """给 Skill 对象附加 power_text 数值参考（返回新 dict，不改原对象）"""
+    from simlife.backend.skill_system import build_skill_power_text
+    d = skill.to_dict()
+    try:
+        d["power_text"] = build_skill_power_text(skill, character)
+    except Exception:
+        d["power_text"] = build_skill_power_text(skill)
+    if not d.get("power_text"):
+        d["power_text"] = build_skill_power_text(skill)
+    return d
+
+
 @app.get("/api/death-mode/skill-info")
-def api_death_mode_skill_info(skill_id: str = ""):
-    """获取技能信息 by ID"""
-    from simlife.backend.skill_system import SkillSystem
+def api_death_mode_skill_info(skill_id: str = "", who: str = "ai"):
+    """获取技能信息 by ID（可附数值参考 power_text，需指定 who 拿对应角色属性）"""
+    from simlife.backend.skill_system import SkillSystem, build_skill_power_text
+    from simlife.backend.death_mode import DeathModeEngine
     if not skill_id:
         return {"error": "no_skill_id"}
     skill = SkillSystem.get_skill(skill_id)
     if not skill:
         return {"error": "skill_not_found"}
-    return skill.to_dict()
+    data = skill.to_dict()
+    try:
+        state = DeathModeEngine()._load()
+        role = None
+        if state:
+            role = state.get("user_character", {}) if who.strip().lower() == "user" else state.get("character", {})
+            role = role or None
+        data["power_text"] = build_skill_power_text(skill, role)
+    except Exception:
+        data["power_text"] = _skill_with_power(skill)["power_text"]
+    if not data.get("power_text"):
+        data["power_text"] = _skill_with_power(skill)["power_text"]
+    return data
 
 
 @app.get("/api/death-mode/awakening-skills")
@@ -3453,6 +3659,15 @@ def serve_index():
 # 挂载前端静态文件（JS/CSS/图片）
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# 挂载 AGI 生成的图片目录（供场景图等展示）
+try:
+    from engine.image_gen import get_image_dir
+    _agi_image_dir = str(get_image_dir())
+    if os.path.isdir(_agi_image_dir):
+        app.mount("/agi-images", StaticFiles(directory=_agi_image_dir), name="agi-images")
+except Exception:
+    pass
 
 # favicon 路由（避免404）
 @app.get("/favicon.ico")

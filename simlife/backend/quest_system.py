@@ -45,6 +45,7 @@ _TERM_ALIASES = [
     ["kingdom", "王国", "皇国", "帝国"],
     ["town", "镇", "小镇", "村庄", "村落"],
     ["forest", "森林", "林", "密林"],
+    ["treant", "tree spirit", "tree", "树精", "腐化树精", "古树", "树人", "大树精"],
     ["mine", "矿洞", "矿区", "矿脉", "矿井"],
     ["harbor", "port", "港口", "码头", "海港"],
     ["dungeon", "地下城", "地牢", "密室"],
@@ -80,6 +81,166 @@ def _smart_match(kw: str, texts) -> bool:
             if term in t:
                 return True
     return False
+
+
+def _expand_keyword(kw: str, state: Dict = None) -> List[str]:
+    """把任务目标关键词扩展为一组等价别名（解决 LLM 生成的中英漂移/乱码）。
+
+    扩展来源（全部代码处理，零 LLM）：
+    1. 原词本身 + 按 _/-/空格 拆分出的子词
+    2. _TERM_ALIASES 别名表（命中任一组则并入整组）
+    3. 实时世界数据反向对齐：
+       - 世界设定 monster_types（怪名）→ 关键词的英文片段若包含在怪名中，则并入怪名
+       - 世界设定 items（物品）→ 同上
+       - npc_system 注册 NPC 名 → 含日文片假名/乱码的目标，用真实 NPC 名兜底
+       - shared_inventory 背包物品名 → 让"污染核心"能对齐"腐化树脂核心"
+    4. 中英映射：英文关键词 → 尝试挂接别名表中的中文；中文关键词保留原样
+    5. 乱码纠错：含非中日韩字符的目标，用最长公共子串(≥2)匹配注册 NPC 名，唯一命中即并入
+    """
+    if not kw:
+        return []
+    kw_l = str(kw).strip()
+    if not kw_l:
+        return []
+    k = kw_l.lower()
+    aliases = [kw_l, k]
+    # 1) 拆分（_ / - / 空格）
+    for sep in ("_", "-", " "):
+        if sep in k:
+            aliases.extend(p for p in k.split(sep) if p)
+    # 2) 别名表整组并入
+    for group in _TERM_ALIASES:
+        if any(t and t in k for t in group):
+            aliases.extend(group)
+    # 3) 实时世界数据反向对齐
+    if state:
+        try:
+            _ws = state.get("world_setting") or {}
+            # 3a) 怪物名（world_setting.monster_types 可能是 list / dict）
+            _mons = _ws.get("monster_types") or []
+            if isinstance(_mons, dict):
+                _mons = list(_mons.keys())
+            if isinstance(_mons, list):
+                for _mn in _mons:
+                    _ms = str(_mn).strip().lower()
+                    if not _ms or len(_ms) < 2:
+                        continue
+                    if _ms == k or _ms in k or k in _ms:
+                        aliases.append(str(_mn))
+            # 3b) 物品（world_setting.items / items_schema）
+            _items = _ws.get("items") or []
+            if isinstance(_items, dict):
+                _items = list(_items.keys())
+            if isinstance(_items, list):
+                for _inm in _items:
+                    _is = str(_inm).strip().lower()
+                    if not _is or len(_is) < 2:
+                        continue
+                    if _is == k or _is in k or k in _is:
+                        aliases.append(str(_inm))
+            # 3c) 注册 NPC 名（npc_system.npcs，处理乱码/拼错目标）
+            _ns = (state.get("npc_system") or {}).get("npcs") or {}
+            for _npc in (_ns.values() if isinstance(_ns, dict) else []):
+                _nm = str(_npc.get("name", "")) if isinstance(_npc, dict) else str(_npc)
+                _nml = _nm.strip().lower()
+                if not _nml or len(_nml) < 2:
+                    continue
+                if _nml == k or _nml in k or k in _nml:
+                    aliases.append(_nm)
+            # 3d) 背包物品名（shared_inventory）
+            _inv = state.get("shared_inventory") or []
+            for _it in _inv:
+                _inm = str(_it.get("name", "")) if isinstance(_it, dict) else str(_it)
+                _inl = _inm.strip().lower()
+                if not _inl or len(_inl) < 2:
+                    continue
+                if _inl == k or _inl in k or k in _inl:
+                    aliases.append(_inm)
+        except Exception:
+            pass
+    # 5) 乱码纠错：含非中日韩字符的目标，用最长公共子串(>=2)匹配注册 NPC 名
+    if state:
+        try:
+            import re as _re
+            _has_garbled = _re.search(r"[^\u4e00-\u9fffA-Za-z0-9_\-·\.]", k)
+            if _has_garbled:
+                _ns = (state.get("npc_system") or {}).get("npcs") or {}
+                _hits = []
+                for _npc in (_ns.values() if isinstance(_ns, dict) else []):
+                    _nm = str(_npc.get("name", "")) if isinstance(_npc, dict) else str(_npc)
+                    if not _nm or len(_nm) < 2:
+                        continue
+                    if _lcs_len(k, _nm) >= 2:
+                        _hits.append(_nm)
+                if len(_hits) == 1:  # 唯一命中才并入，避免歧义
+                    aliases.append(_hits[0])
+        except Exception:
+            pass
+    # 去重（保序），过滤空串
+    seen = set()
+    out = []
+    for a in aliases:
+        a = str(a).strip()
+        if not a:
+            continue
+        key = a.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(a)
+    return out
+
+
+def _strip_qty_suffix(name: str) -> str:
+    """去掉物品名末端的数量后缀（"腐化树脂核心x3" → "腐化树脂核心"，"干粮 x5" → "干粮"）"""
+    s = str(name or "").strip()
+    if not s:
+        return s
+    import re as _re
+    # x3 / x 3 / 空格x3 / *3
+    s = _re.sub(r"[\s*]*[xX×][\s]*\d+\s*$", "", s)
+    s = _re.sub(r"[\s*]*\d+\s*$", "", s)
+    return s.strip()
+
+
+def _lcs_len(a: str, b: str) -> int:
+    """最长连续公共子串长度（用于乱码目标纠错）"""
+    a, b = str(a).lower(), str(b).lower()
+    m, n = len(a), len(b)
+    if m == 0 or n == 0:
+        return 0
+    dp = [0] * (n + 1)
+    best = 0
+    for i in range(1, m + 1):
+        prev = 0
+        for j in range(1, n + 1):
+            tmp = dp[j]
+            if a[i - 1] == b[j - 1]:
+                dp[j] = prev + 1
+                if dp[j] > best:
+                    best = dp[j]
+            else:
+                dp[j] = 0
+            prev = tmp
+    return best
+
+
+
+def _match_aliases(aliases: List[str], texts) -> bool:
+    """用一组别名（含中英）去匹配文本集合，任一命中即 True（大小写不敏感、子串匹配）。"""
+    if not aliases:
+        return False
+    lowered = [str(t).lower() for t in texts if t]
+    if not lowered:
+        return False
+    for a in aliases:
+        al = a.lower()
+        if not al:
+            continue
+        for t in lowered:
+            if al in t:
+                return True
+    return False
+
 
 
 # ─────────────────────────────────────────────
@@ -383,6 +544,7 @@ class QuestSystem:
                 norm_objs.append({
                     "type": t,
                     "target_keyword": kw,
+                    "aliases": _expand_keyword(kw, state),  # 预存归一化别名，运行时匹配 + 存档查看都直接用
                     "count": min(cnt, 20),  # 上限防止滥用
                 })
             if not norm_objs:
@@ -653,27 +815,36 @@ class QuestSystem:
                 kw = obj["target_keyword"].lower()
                 if not kw:
                     continue
+                # 统一归一化：优先用创建时预存的 aliases，缺失则实时扩展（中英/乱码/编号漂移都覆盖）
+                aliases = obj.get("aliases") or _expand_keyword(kw, state)
+                if not aliases:
+                    aliases = [kw]
                 matched = False
                 if event_type == "kill":
                     names = kwargs.get("enemy_names", [])
-                    matched = _smart_match(kw, names)
+                    matched = _match_aliases(aliases, names)
                     if not matched:
-                        matched = _smart_match(kw, [_narrative])
+                        matched = _match_aliases(aliases, [_narrative])
                 elif event_type == "collect":
                     items = kwargs.get("items", [])
-                    matched = _smart_match(kw, [it.get("name", "") for it in items])
+                    # 背包物品名可能带数量后缀（如 "腐化树脂核心x3"），去后缀后再匹配
+                    _item_names = []
+                    for _it in items:
+                        _nm = str(_it.get("name", "") if isinstance(_it, dict) else _it)
+                        _item_names.append(_strip_qty_suffix(_nm))
+                    matched = _match_aliases(aliases, _item_names)
                     if not matched:
-                        matched = _smart_match(kw, [_narrative, _action])
+                        matched = _match_aliases(aliases, [_narrative, _action])
                 elif event_type == "visit_location":
                     loc = str(kwargs.get("location", "") or "")
-                    matched = _smart_match(kw, [loc])
+                    matched = _match_aliases(aliases, [loc])
                     if not matched:
-                        matched = _smart_match(kw, [_narrative, _action])
+                        matched = _match_aliases(aliases, [_narrative, _action])
                 elif event_type == "talk_npc":
                     npc = str(kwargs.get("npc_name", "") or "")
-                    matched = _smart_match(kw, [npc])
+                    matched = _match_aliases(aliases, [npc])
                     if not matched:
-                        matched = _smart_match(kw, [_narrative, _action])
+                        matched = _match_aliases(aliases, [_narrative, _action])
 
                 if matched:
                     obj["progress"] = min(obj["count"], obj["progress"] + 1)

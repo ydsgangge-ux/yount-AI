@@ -268,20 +268,39 @@ class CombatSystem:
         return entity.get("name", "未知")
 
     @staticmethod
+    def _enchant_attack_bonus(entity) -> int:
+        """附魔/锻造的攻击加成（stat_bonus.attack + enchant.stat_type=='attack'，全攻击类型通用）"""
+        equip_list = entity.get("equipment", []) if isinstance(entity, dict) else entity.equipment
+        total = 0
+        for e in equip_list or []:
+            if not isinstance(e, dict):
+                continue
+            sb = e.get("stat_bonus") or {}
+            total += int(sb.get("attack", 0) or 0)
+            ench = e.get("enchant")
+            if isinstance(ench, dict) and ench.get("stat_type") == "attack":
+                total += int(ench.get("stat_value", 0) or 0)
+        return total
+
+    @staticmethod
     def calc_attack_power(entity, attack_type: str = "physical") -> int:
         """
-        计算攻击力
-        attack_type: physical(近战物理) / ranged(远程物理) / magic(法术)
+        计算总攻击力 = 主属性×2 + 次属性×1 + 武器bonus + 附魔/锻造攻击加成
+        attack_type: physical(近战物理) / ranged(远程物理) / magic(法术) / finesse(灵巧)
+        主属性：magic→智力；ranged/finesse→敏捷；physical→力量
+        次属性：magic→敏捷；ranged/finesse→力量；physical→敏捷
         """
         s = CombatSystem._get_stats(entity)
         bonus = CombatSystem._weapon_bonus_by_type(entity, attack_type)
         if attack_type == "magic":
-            base = s.get("intelligence", 5) * 2
+            primary, secondary = s.get("intelligence", 5), s.get("agility", 5)
         elif attack_type in ("ranged", "finesse"):
-            base = s.get("agility", 5) * 2
+            primary, secondary = s.get("agility", 5), s.get("strength", 5)
         else:  # physical
-            base = s.get("strength", 5) * 2
-        raw = int(base + bonus)
+            primary, secondary = s.get("strength", 5), s.get("agility", 5)
+        base = primary * 2 + secondary
+        enchant_atk = CombatSystem._enchant_attack_bonus(entity)
+        raw = int(base + bonus + enchant_atk)
         # 职业被动伤害加成
         passive = CombatSystem._get_passive(entity)
         if attack_type == "magic" and passive.get("magic_damage_mult"):

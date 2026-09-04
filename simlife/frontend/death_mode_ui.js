@@ -239,7 +239,10 @@ const DeathModeUI = {
         <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;">
           <div style="padding:8px 16px;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:13px;color:#58a6ff;font-weight:600;">📜 行动记录</span>
-            <span id="dm-log-count" style="font-size:11px;color:#484f58;"></span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button id="dm-gen-scene-btn" style="padding:3px 10px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:6px;color:#58a6ff;cursor:pointer;font-size:11px;">🖼️ 生成场景图</button>
+              <span id="dm-log-count" style="font-size:11px;color:#484f58;"></span>
+            </div>
           </div>
           <div id="dm-log-container" style="flex:1;overflow-y:auto;padding:12px 16px;">
             <div style="text-align:center;color:#484f58;padding:40px 0;">加载中...</div>
@@ -268,6 +271,10 @@ const DeathModeUI = {
       } else {
         alert('生活技能模块未加载');
       }
+    });
+
+    panel.querySelector('#dm-gen-scene-btn').addEventListener('click', () => {
+      this._generateSceneImage();
     });
 
     // 加载状态和日志
@@ -838,6 +845,82 @@ const DeathModeUI = {
     } catch (e) {
       container.innerHTML = `<div style="text-align:center;color:#f85149;padding:40px 0;">加载失败</div>`;
     }
+  },
+
+  // ── 一键生成当前场景图 ──
+  async _generateSceneImage() {
+    const btn = document.getElementById('dm-gen-scene-btn');
+    if (!btn) return;
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    btn.textContent = '⏳ 生成中…（约30-60秒）';
+    btn.disabled = true;
+
+    // 进度遮罩
+    const overlay = document.createElement('div');
+    overlay.id = 'dm-scene-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #58a6ff;border-radius:12px;padding:32px 40px;text-align:center;max-width:400px;width:90%;">
+        <div style="font-size:36px;margin-bottom:12px;">🖼️</div>
+        <div style="color:#58a6ff;font-size:15px;font-weight:bold;margin-bottom:8px;">正在绘制当前场景…</div>
+        <div style="color:#8b949e;font-size:12px;line-height:1.7;">本地 ComfyUI 生成中<br>通常需要 30-60 秒，请稍候</div>
+        <div style="margin-top:14px;height:3px;background:#21262d;border-radius:2px;overflow:hidden;">
+          <div style="width:100%;height:100%;background:linear-gradient(90deg,#58a6ff,#a371f7);animation:dm-scene-slide 1.2s ease-in-out infinite;"></div>
+        </div>
+        <style>@keyframes dm-scene-slide{0%{transform:translateX(-100%);}100%{transform:translateX(100%);}}</style>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    try {
+      const resp = await fetch('/api/death-mode/generate-scene-image', { method: 'POST' });
+      const data = await resp.json();
+      overlay.remove();
+      if (data.error || !data.ok) {
+        alert('生成失败：' + (data.error || '未知错误'));
+        return;
+      }
+      this._showSceneImage(data);
+    } catch (e) {
+      overlay.remove();
+      alert('生成失败：' + (e.message || e));
+    } finally {
+      btn.textContent = '🖼️ 生成场景图';
+      btn.disabled = false;
+      delete btn.dataset.busy;
+    }
+  },
+
+  // 展示生成的场景图（弹窗）
+  _showSceneImage(data) {
+    const modal = document.createElement('div');
+    modal.id = 'dm-scene-image-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    const prompt = (data.prompt || '').replace(/</g, '&lt;');
+    const sc = data.scene_context || {};
+    let ctxHtml = '';
+    if (sc.region_name || (sc.events && sc.events.length)) {
+      const esc = s => String(s || '').replace(/</g, '&lt;');
+      ctxHtml = `<div style="margin-top:10px;font-size:11px;color:#8b949e;text-align:left;line-height:1.6;padding:8px;background:#161b22;border-radius:6px;">`;
+      if (sc.region_name) ctxHtml += `<div>📍 区域：${esc(sc.region_name)}</div>`;
+      if (sc.region_desc) ctxHtml += `<div style="color:#484f58;">区域设定：${esc(sc.region_desc)}</div>`;
+      (sc.events || []).slice(0, 3).forEach(e => { ctxHtml += `<div>🎯 行动：${esc(e)}</div>`; });
+      ctxHtml += `</div>`;
+    }
+    modal.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #58a6ff;border-radius:12px;padding:20px;max-width:900px;width:94%;max-height:92vh;overflow:auto;text-align:center;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="color:#58a6ff;font-size:15px;font-weight:bold;">🖼️ 当前场景图</div>
+          <button id="dm-scene-close" style="padding:4px 12px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">关闭</button>
+        </div>
+        <img src="${data.image_url || ''}" style="max-width:100%;max-height:62vh;border-radius:8px;border:1px solid #30363d;display:block;margin:0 auto;" onerror="this.parentNode.insertAdjacentHTML('afterbegin','<div style=color:#f85149;font-size:12px;padding:20px;>图片加载失败</div>');this.remove();"/>
+        ${ctxHtml}
+        <div style="margin-top:10px;font-size:11px;color:#8b949e;text-align:left;word-break:break-all;">提示词：${prompt || '（无）'}</div>
+        <div style="margin-top:8px;font-size:11px;color:#3fb950;">已保存到本地图片目录，可在主程序中查看</div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#dm-scene-close').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
   },
 
   // 将日志文本中的"你"替换为用户名
@@ -1690,7 +1773,7 @@ const DeathModeUI = {
       const skillNameCache = {};
       await Promise.all(learnedSkills.map(async sid => {
         try {
-          const r = await fetch(`/api/death-mode/skill-info?skill_id=${encodeURIComponent(sid)}`);
+          const r = await fetch(`/api/death-mode/skill-info?skill_id=${encodeURIComponent(sid)}&who=${who}`);
           if (r.ok) {
             const d = await r.json();
             if (d && d.name) skillNameCache[sid] = d;
@@ -1831,6 +1914,7 @@ const DeathModeUI = {
             · Lv.${skill.req_level}
           </div>
           <div style="font-size:9px;color:#484f58;margin-top:1px;">${skill.description || ''}</div>
+          ${skill.power_text ? `<div style="font-size:9px;color:#f0883e;margin-top:2px;font-weight:600;line-height:1.4;">${skill.power_text}</div>` : ''}
         </div>`;
       }
       html += `</div></div>`;
@@ -1860,6 +1944,7 @@ const DeathModeUI = {
                   ${item.source ? `· ${item.source}` : ''}
                 </div>
                 <div style="font-size:9px;color:#484f58;margin-top:1px;">${skill.description || ''}</div>
+                ${skill.power_text ? `<div style="font-size:9px;color:#f0883e;margin-top:2px;font-weight:600;line-height:1.4;">${skill.power_text}</div>` : ''}
                 ${reqText ? `<div style="font-size:8px;color:#d29922;margin-top:1px;">需求: ${reqText}</div>` : ''}
               </div>
               <button ${btnStyle}>${canLearn ? '学习' : '🔒'}</button>

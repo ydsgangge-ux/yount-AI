@@ -38,6 +38,7 @@ REGION_SCHEMA = {
     "controller": None,  # 区域主要控制势力（如"黑风山贼团"控山林、"地下组织"控暗巷）；dict 或缺省
     "level_range": [],   # 建议等级范围 [min, max]
     "biome": "",         # 生态/地貌类型（town/wild/dungeon/boss_lair/secret）
+    "encounter_seq": 0,  # 怪物遭遇序号计数器（序号往后排：本次从上次结束处继续）
 }
 
 NPC_SCHEMA = {
