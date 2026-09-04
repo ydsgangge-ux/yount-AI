@@ -1022,7 +1022,9 @@ class FloatingWindow(QWidget):
         except Exception:
             pass
 
-        self.add_dm_system_message("\n".join(parts))
+        # ── 遭遇确认：把"迎战/绕开"等可选按钮渲染出来 ──
+        _choices = result.get("choices") or (result.get("story") or {}).get("choices")
+        self.add_dm_system_message("\n".join(parts), choices=_choices)
 
     def _on_dm_action_error(self, err: str):
         self.add_dm_system_message(f"❌ 行动失败：{err}")

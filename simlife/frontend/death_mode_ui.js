@@ -365,13 +365,20 @@ const DeathModeUI = {
             if (sbParts.length > 0) bonusText += (bonusText ? ' ' : '') + sbParts.join(' ');
           }
           const bonusHtml = bonusText ? `<span style="font-size:9px;color:#3fb950;">${bonusText}</span>` : '';
-          return `<div style="font-size:11px;color:${item.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${slotIcon} ${item.name}（${item.rarity_name || '普通'}）${bonusHtml}</span>
-            <div style="display:flex;gap:3px;flex-shrink:0;">
-              <button onclick="DeathModeUI._equipFromInv('${item.name}','ai')" style="font-size:9px;padding:1px 4px;background:#1a3a1a;border:1px solid #3fb950;border-radius:3px;color:#3fb950;cursor:pointer;">AI</button>
-              <button onclick="DeathModeUI._equipFromInv('${item.name}','user')" style="font-size:9px;padding:1px 4px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:3px;color:#58a6ff;cursor:pointer;">我</button>
-              <button onclick="DeathModeUI._sellFromInv('${item.name}',${item.sell_price||5})" style="font-size:9px;padding:1px 4px;background:#3d2a1a;border:1px solid #f0883e;border-radius:3px;color:#f0883e;cursor:pointer;">售${item.sell_price||5}</button>
+          // 附魔描述（若已附魔）
+          const enchantText = this._enchantText(item);
+          const enchantHtml = enchantText ? `<div style="font-size:9px;color:#d29922;margin-top:1px;">${enchantText}</div>` : '';
+          return `<div style="font-size:11px;color:${item.color || '#c9d1d9'};margin-bottom:3px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${slotIcon} ${item.name}（${item.rarity_name || '普通'}）</span>
+              <div style="display:flex;gap:3px;flex-shrink:0;">
+                <button onclick="DeathModeUI._equipFromInv('${item.name}','ai')" style="font-size:9px;padding:1px 4px;background:#1a3a1a;border:1px solid #3fb950;border-radius:3px;color:#3fb950;cursor:pointer;">AI</button>
+                <button onclick="DeathModeUI._equipFromInv('${item.name}','user')" style="font-size:9px;padding:1px 4px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:3px;color:#58a6ff;cursor:pointer;">我</button>
+                <button onclick="DeathModeUI._sellFromInv('${item.name}',${item.sell_price||5})" style="font-size:9px;padding:1px 4px;background:#3d2a1a;border:1px solid #f0883e;border-radius:3px;color:#f0883e;cursor:pointer;">售${item.sell_price||5}</button>
+              </div>
             </div>
+            <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;font-size:9px;">${bonusHtml}</div>
+            ${enchantHtml}
           </div>`;
         }).join('');
       } else {
@@ -1104,6 +1111,20 @@ const DeathModeUI = {
 
   // ── 装备槽位渲染 ──────────────────────────────────
 
+  // ── 装备附魔描述 ────────────────────────────────
+  _enchantText(item) {
+    const ench = item && item.enchant;
+    if (!ench || typeof ench !== 'object') return '';
+    const labelMap = { attack: '攻', defense: '防', hp: '生命', mp: '魔法' };
+    const label = labelMap[ench.stat_type] || ench.stat_type;
+    let txt = `✨${ench.name || '附魔'}${label && ench.stat_value ? label + '+' + ench.stat_value : ''}`;
+    const effects = ench.effects || [];
+    if (effects.length) {
+      txt += '·' + effects.map(e => e.name || '').filter(Boolean).join('、');
+    }
+    return txt;
+  },
+
   _getItemSlotIcon(item) {
     const slotIcons = { main_hand: '🗡️', off_hand: '🛡️', ranged: '🏹', outfit: '👕' };
     // 优先按 type 判断：衣服(outfit)即使 slot 被历史 bug 写成 main_hand，也应显示穿着图标
@@ -1168,15 +1189,23 @@ const DeathModeUI = {
         weightHtml = `<span style="font-size:8px;color:${overload ? '#f85149' : '#484f58'};margin-left:2px;">⚖️${eq.weight}</span>`;
       }
       const subtypeText = eq.subtype ? (eq.subtype === 'one_handed' ? '单手' : eq.subtype === 'two_handed' ? '双手' : eq.subtype === 'ranged' ? '弓' : eq.subtype === 'wand' ? '法杖' : eq.subtype === 'shield' ? '盾牌' : eq.subtype === 'off_hand' ? '副手' : '') : '';
-      return `<div style="font-size:10px;color:${eq.color || '#c9d1d9'};display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;padding:2px 4px;background:#161b22;border-radius:3px;border:1px solid #21262d;">
-        <span style="display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;">
-          <span>${slot.icon}</span>
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</span>
-          <span style="font-size:8px;color:#484f58;">${subtypeText}</span>
+      // 附魔描述（若已附魔）
+      const enchantText = this._enchantText(eq);
+      const enchantHtml = enchantText ? `<div style="font-size:8px;color:#d29922;margin-top:1px;">${enchantText}</div>` : '';
+      return `<div style="font-size:10px;color:${eq.color || '#c9d1d9'};margin-bottom:2px;padding:2px 4px;background:#161b22;border-radius:3px;border:1px solid #21262d;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+          <span style="display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;flex:1;">
+            <span>${slot.icon}</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${eq.name}</span>
+            <span style="font-size:8px;color:#484f58;flex-shrink:0;">${subtypeText}</span>
+          </span>
+          <button onclick="DeathModeUI._unequip('${eq.name}','${owner}')" style="font-size:8px;padding:1px 3px;background:#21262d;border:1px solid #30363d;border-radius:2px;color:#8b949e;cursor:pointer;flex-shrink:0;">卸下</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;font-size:9px;">
           ${bonusHtml}
           ${weightHtml}
-        </span>
-        <button onclick="DeathModeUI._unequip('${eq.name}','${owner}')" style="font-size:8px;padding:1px 3px;background:#21262d;border:1px solid #30363d;border-radius:2px;color:#8b949e;cursor:pointer;flex-shrink:0;">卸下</button>
+        </div>
+        ${enchantHtml}
       </div>`;
     }).join('');
   },

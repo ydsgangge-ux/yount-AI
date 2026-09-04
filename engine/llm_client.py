@@ -187,7 +187,13 @@ class ZhipuClient(OpenAICompatClient):
 
     @staticmethod
     def _normalize_effort(effort: Optional[str]) -> str:
-        """把任意档位名归一化为 GLM 合法值：max/high/low（GLM-5.3 只认这三个）"""
+        """把任意档位名归一化为 GLM 合法值：max/high/low（GLM-5.3 只认这三个）。
+
+        空/未知 → 默认 high（而非 max）。原因：max 最重思考档会把输出预算几乎全部
+        耗在 reasoning 上，长 prompt 下 content 返回空（实测 1193/1200 token 耗在思考、
+        finish_reason=length）。simlife 大量裸调用点不传 thinking_effort（None），若
+        落在 max 档会批量产生"空叙事/行动失败"。high 档实测正常且质量足够好。
+        """
         e = (effort or "").lower()
         if e in ("low", "high", "max"):
             return e
@@ -197,13 +203,19 @@ class ZhipuClient(OpenAICompatClient):
             return "high"
         if e in ("xhigh",):
             return "max"
-        return "max"  # 未知/空 → 默认 max
+        return "high"  # 未知/空 → 默认 high（避免 max 耗尽输出）
 
     def _build_thinking_params(self, thinking, thinking_effort, thinking_budget):
         always = self.model.lower().startswith(self._ALWAYS_THINK_PREFIXES)
-        effort = self._normalize_effort(thinking_effort)
         if always:
-            # 强制思考模型：无法关闭思考，thinking=False 也退化为"最低档位思考"
+            # 强制思考模型：无法关闭思考。若调用方明确 thinking=False（想省 token）
+            # 且未显式指定档位，则用最低档 low——绝不落到默认 max（最重思考会把
+            # 输出预算占满导致 content 为空，实测 max 档长 prompt 下 1193/1200 token
+            # 全耗在 reasoning，finish_reason=length、返回空字符串）。
+            if thinking is False and not thinking_effort:
+                effort = "low"
+            else:
+                effort = self._normalize_effort(thinking_effort)
             return {
                 "thinking": {"type": "enabled"},
                 "reasoning_effort": effort,

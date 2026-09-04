@@ -162,6 +162,20 @@ const LifeSkillsUI = {
     return { ingredient: '食材', ore: '矿材', misc: '材料', bait: '鱼饵', enchant: '附魔材料', rare: '稀有材料' }[t] || t;
   },
 
+  // 装备附魔描述（附魔名+数值类型+特效）
+  _enchantText(item) {
+    const ench = item && item.enchant;
+    if (!ench || typeof ench !== 'object') return '';
+    const labelMap = { attack: '攻', defense: '防', hp: '生命', mp: '魔法' };
+    const label = labelMap[ench.stat_type] || ench.stat_type;
+    let txt = `✨${ench.name || '附魔'}${label && ench.stat_value ? label + '+' + ench.stat_value : ''}`;
+    const effects = ench.effects || [];
+    if (effects.length) {
+      txt += '·' + effects.map(e => e.name || '').filter(Boolean).join('、');
+    }
+    return txt;
+  },
+
   async _buy(id, qty) {
     const resp = await fetch('/api/death-mode/life-skills/buy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -236,8 +250,9 @@ const LifeSkillsUI = {
         </div>`)}
       ${card('⚔️ 锻造装备', '#a371f7', eq, it => `
         <div style="padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;">
-          <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span>${it.enchant?` <span style="color:#f0883e;font-size:10px;">✨${it.enchant.name}+${it.enchant.stat_value}</span>`:''}</div>
+          <div style="font-size:12px;color:#c9d1d9;">${it.icon} ${it.name} <span style="color:#8b949e;">×${it.qty}</span></div>
           <div style="font-size:9px;color:#8b949e;margin:2px 0;">${it.rarity_name||'稀有'} · 加成+${it.bonus}${it.desc?` · ${it.desc}`:''}</div>
+          ${it.enchant?`<div style="font-size:10px;color:#f0883e;margin:2px 0;">${this._enchantText(it)}</div>`:''}
           <div style="display:flex;gap:4px;">
             <button onclick="LifeSkillsUI._equipItem('${it.name}')" style="flex:1;padding:3px;background:#1a2a3a;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;cursor:pointer;font-size:10px;">放入共享背包</button>
             ${it.enchant?'':`<button onclick="LifeSkillsUI._openEnchant('${it.name}')" style="flex:1;padding:3px;background:#2d2d0d;border:1px solid #f0883e;border-radius:4px;color:#f0883e;cursor:pointer;font-size:10px;">✨附魔</button>`}

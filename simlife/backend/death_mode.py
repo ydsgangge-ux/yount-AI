@@ -1065,6 +1065,22 @@ class DeathModeEngine:
         if not action:
             return {"error": "no_action"}
 
+        # ── 遭遇确认响应：用户对"待确认遭遇"选择迎战/绕开 ──
+        if state.get("pending_encounter"):
+            _enc_fight = (action == "_encounter_fight"
+                          or (action_type == "free" and any(k in (action or "") for k in
+                                                            ("迎战", "应战", "开打", "开战", "上吧", "干他们", "杀了它们",
+                                                             "打就打", "打吧", "动手", "迎上去", "奉陪", "应敌"))))
+            _enc_avoid = (action == "_encounter_avoid"
+                          or (action_type == "free" and any(k in (action or "") for k in
+                                                            ("绕开", "避开", "绕道", "躲开", "不打了", "不打", "撤退", "离开"))))
+            if _enc_fight or _enc_avoid:
+                _enc_result = self._resolve_pending_encounter(state, fight=_enc_fight)
+                # 绕开 → 直接返回平静叙事；迎战 → 敌人已入战斗，继续走正常战斗流程
+                if not _enc_fight:
+                    self._save()
+                    return _enc_result
+
         # 进区托管：每次行动前把当前区域预设NPC补齐进可交互池（覆盖LLM叙事移动/战斗场景）
         try:
             self._adopt_region_npcs(state)
@@ -2240,6 +2256,26 @@ class DeathModeEngine:
                 state["_current_action"] = action  # 临时存储，供敌人生成时判断坏人路线
                 enemies_list = self._generate_enemies_with_spotted(state, risk_level)
                 state.pop("_current_action", None)
+
+                # ── 遭遇确认：被动遇敌先给"迎战/绕开"选择，不强行开战 ──
+                # 用户主动（扫荡/攻击/击杀等关键词）→ 直接开战；被动 → 先确认。
+                # 世界BOSS/精英/普通怪一视同仁，都可绕开，避免"路过被秒"。
+                if self._should_confirm_encounter(action, sender):
+                    state["_pending_risk"] = risk_level
+                    # 复用 LLM 已生成的触发叙事（narrative）作为遭遇介绍
+                    _pending_result = self._build_encounter_pending(
+                        state, enemies_list, narrative=narrative)
+                    # 被动遭遇确认也必须写入行动日志，否则网页端日志/历史看不到这段行动
+                    # （此前此处提前 return 不落 action_log，导致主程序行动"没上"8769网页）
+                    self._log_action("action", {
+                        "action": action,
+                        "action_type": action_type,
+                        "outcome": "encounter_pending",
+                        "narrative": (_pending_result.get("narrative") or "")[:300],
+                    })
+                    self._save()
+                    return _pending_result
+
                 state["enemies"] = enemies_list
                 state["in_combat"] = True
 
@@ -5192,6 +5228,154 @@ class DeathModeEngine:
 
         # 普通怪直接扫荡
         return True
+
+    # ── 遭遇确认机制（防止"被动遇敌"强拉进战斗，世界BOSS也可绕开）────────
+    @staticmethod
+    def _should_confirm_encounter(action: str, sender: str = "user") -> bool:
+        """判断一次被 LLM 判定的遇敌是否需要"先确认再打"。
+
+        仅对【被动触发】要求确认：用户/系统没有显式的战斗意图（扫荡/清怪/攻击/
+        击杀/挑衅等）时，遇敌先给出遭遇提示 + 迎战/绕开选择，避免"闲聊一句突然
+        开打"或"路过世界BOSS被秒杀"。用户主动发起的战斗直接开战。
+        sender: "ai" 表示系统角色自主行动，同样适用被动确认（系统角色也不会无缘无故打架）。
+        """
+        t = (action or "").strip()
+        if not t:
+            return False
+        # 明确的战斗意图 → 直接开战，不确认
+        combat_keywords = (
+            "扫荡", "清掉", "清理", "清空", "直接打完", "速战速决", "自动战斗",
+            "快速战斗", "速杀", "碾压", "一举歼灭", "全部消灭", "一口气", "连战",
+            "连杀", "横扫", "直接杀", "打到底", "战斗到底", "打完", "刷怪", "刷完",
+            "全灭", "一扫", "小怪", "怪物", "攻击", "袭击", "击杀", "杀掉", "杀死",
+            "干掉", "除掉", "了结", "处决", "斩杀", "劈", "砍", "刺", "揍",
+            "挑衅", "宣战", "开战", "迎战", "挑战", "攻打", "击退", "驱赶",
+            "打怪", "打它", "打他", "打他们", "把它们",
+        )
+        for kw in combat_keywords:
+            if kw in t:
+                return False
+        # 其余（闲聊/打听/探索/对话/移动等）→ 被动遇敌需确认
+        return True
+
+    def _build_encounter_pending(self, state: Dict, enemies: list,
+                                 narrative: str = "") -> Dict:
+        """把一次被动遇敌落成"待确认遭遇"：
+        - 敌人先不进入战斗（state["in_combat"] 保持 False）
+        - 存入 state["pending_encounter"]，等用户选"迎战"才真正开战
+        - 写入 story["choices"]，前端自动渲染"迎战/绕开"两个按钮
+        - 附带同区域 NPC 的叙事反应，让角色世界有真实感
+        """
+        state["pending_encounter"] = {
+            "enemies": enemies,
+            "risk_level": state.get("_pending_risk", "medium"),
+            "narrative": narrative or "",
+        }
+        state.pop("_pending_risk", None)
+        # 清掉已实体化的 spotted（避免重复生成）
+        state["spotted_enemies"] = []
+
+        # 组装遭遇叙事：同区域 NPC 反应（若有人在旁）
+        npc_react = self._encounter_npc_reaction(state)
+        if npc_react:
+            narrative = (narrative + "\n\n" + npc_react).strip() if narrative else npc_react
+
+        # 写选择项（前端渲染成按钮）
+        state.setdefault("story", {})["choices"] = [
+            {"id": "_encounter_fight", "text": "⚔️ 迎战",
+             "risk": "medium", "type": "encounter_fight"},
+            {"id": "_encounter_avoid", "text": "🏃 绕开（不战斗）",
+             "risk": "low", "type": "encounter_avoid"},
+        ]
+
+        return {
+            "narrative": narrative,
+            "in_combat": False,
+            "pending_encounter": True,
+            "encounter": True,
+            "choices": state["story"]["choices"],
+            "enemies_sighted": [{"name": e.get("name", "?"),
+                                 "level": e.get("level", 1),
+                                 "type": e.get("type", "normal")} for e in enemies],
+        }
+
+    def _encounter_npc_reaction(self, state: Dict) -> str:
+        """同区域友好 NPC 对敌人出现的叙事反应（仅叙事，不实际入队）"""
+        try:
+            region = self.world_map.current_region_id if self.world_map else None
+            cands = [n for n in (self.npc_system.npcs.values() if self.npc_system else [])
+                     if getattr(n, "alive", True) and (not region or n.location == region)]
+            if not cands:
+                return ""
+            # 优先挑选当前场景中已出现的 NPC（scene_description/当前叙事提到过），
+            # 避免随机拉出一个从未出场的 NPC，让玩家觉得"突然冒出来"
+            _scene_text = " ".join([
+                str(state.get("story", {}).get("scene_description", "") or ""),
+                str(state.get("story", {}).get("current_location", "") or ""),
+                str(state.get("story", {}).get("pending_action", "") or ""),
+            ])
+
+            def _in_scene(n):
+                if not getattr(n, "name", ""):
+                    return False
+                if n.name in _scene_text:
+                    return True
+                # 拆分全名（如"艾尔文·月歌"），任一段出现在场景文本即视为在场
+                parts = [p for p in re.split(r"[·、\s]", n.name) if p]
+                return any(len(p) >= 2 and p in _scene_text for p in parts)
+
+            in_scene = [n for n in cands if _in_scene(n)]
+            # 挑一个最可能的同行者（优先在场 NPC；无则随机，避免每次都同一人）
+            npc = random.choice(in_scene) if in_scene else random.choice(cands)
+            name = npc.name or "同行者"
+            # 用 NPC 性格/好感度轻微影响反应措辞
+            rel = getattr(npc, "relationship", 0) or 0
+            brave = getattr(npc, "bravery", 50) or 50
+            if rel >= 40 and brave >= 50:
+                react = f"{name}一步上前，握紧武器护在你身前，沉声道：'当心！我来替你挡一阵！'"
+            elif brave < 30:
+                react = f"{name}脸色煞白，往后连退两步，声音发颤：'那、那些东西……我们快走！'"
+            else:
+                react = f"{name}压低身形，压低声音提醒：'别出声，它们盯上这边了。要打还是撤？'"
+            return react
+        except Exception:
+            return ""
+
+    def _resolve_pending_encounter(self, state: Dict, fight: bool) -> Dict:
+        """用户对"待确认遭遇"做出选择：
+        - fight=True  → 迎战：把 pending 敌人正式带入战斗
+        - fight=False → 绕开：敌人从当前场景消失，正常探索
+        """
+        pending = state.get("pending_encounter") or {}
+        enemies = pending.get("enemies", [])
+        state.pop("pending_encounter", None)
+        state.setdefault("story", {})["choices"] = []
+        if not enemies:
+            return {"narrative": "你四下张望，刚才的动静似乎已经散去，四周重归平静。",
+                    "in_combat": False, "encounter_resolved": True}
+
+        if fight:
+            # 迎战：正式进入战斗
+            state["enemies"] = enemies
+            state["in_combat"] = True
+            names = "、".join(e.get("name", "?") for e in enemies[:3])
+            more = f" 等" if len(enemies) > 3 else ""
+            return {
+                "narrative": f"你握紧武器，迎着{names}{more}冲了上去——战斗开始！",
+                "in_combat": True,
+                "enemies": enemies,
+                "encounter_resolved": True,
+                "fight": True,
+            }
+        else:
+            # 绕开：敌人离开，正常探索
+            return {
+                "narrative": "你压低身形，借着地形悄然绕开了眼前的威胁。它们没有追来，你安全脱身。",
+                "in_combat": False,
+                "encounter_resolved": True,
+                "fight": False,
+                "avoided": True,
+            }
 
     @staticmethod
     def _parse_combat_command(text: str, ai_char: dict, user_char: dict, enemies: list, state: dict, sender: str = "user") -> dict:
