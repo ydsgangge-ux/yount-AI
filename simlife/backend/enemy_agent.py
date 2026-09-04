@@ -278,7 +278,7 @@ class EnemyAgent:
                 "crisis_low_hp": ["*愤怒咆哮*"],
             },
             "default": {
-                "battle_start": ["[{}]准备受死！", "你的死期到了！", "入侵者，滚出去！"],
+                "battle_start": ["[{name}]准备受死！", "你的死期到了！", "入侵者，滚出去！"],
                 "crisis_low_hp": ["绝不投降！", "我还能战斗！"],
                 "kill_player": ["下一个！"],
                 "player_crit": ["哼，算你厉害。"],
