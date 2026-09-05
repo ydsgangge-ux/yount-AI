@@ -1350,10 +1350,23 @@ const DeathModeUI = {
       return '#3fb950';
     }
 
-    // 区域类型图标
+    // 区域类型图标：归一化类型（去尾逗号）；未识别类型用中性图标，避免与"当前位置"📍混淆
     function regionIcon(type) {
-      const icons = { town: '🏘️', wild: '🌲', dungeon: '🕳️', boss_lair: '👑', secret: '✨', unknown: '❓' };
-      return icons[type] || '📍';
+      const t = String(type || '').trim().replace(/[,，]\s*$/, '').toLowerCase();
+      if (t === 'town' || t === 'village' || t.includes('镇') || t.includes('村')) return '🏘️';
+      if (t === 'wild' || t.includes('森林') || t.includes('林地') || t.includes('forest')) return '🌲';
+      if (t.includes('山') || t.includes('矿') || t.includes('矮人')) return '⛰️';
+      if (t.includes('遗迹') || t.includes('废墟') || t.includes('ruin')) return '🏚️';
+      if (t.includes('污染') || t.includes('废土')) return '☣️';
+      if (t.includes('港口') || t.includes('海岸') || t.includes('港') || t.includes('海')) return '⚓';
+      if (t.includes('地下') || t === 'dungeon' || t.includes('洞')) return '🕳️';
+      if (t === 'race_capital' || t.includes('王') || t.includes('首都') || t.includes('capital')) return '🏰';
+      if (t === 'mixed_city' || t.includes('城') || t.includes('city')) return '🏙️';
+      if (t.includes('精灵')) return '🌳';
+      if (t === 'boss_lair') return '👑';
+      if (t === 'secret' || t.includes('秘')) return '✨';
+      if (t === 'unknown' || t === '' || t === '未知') return '❓';
+      return '🗺️';
     }
 
     let cells = '';
@@ -1462,10 +1475,23 @@ const DeathModeUI = {
       regionMap[`${r.x},${r.y}`] = r;
     }
 
-    // 区域类型图标
+    // 区域类型图标：归一化类型（去尾逗号）；未识别类型用中性图标，避免与"当前位置"📍混淆
     function regionIcon(type) {
-      const icons = { town: '🏘️', wild: '🌲', dungeon: '🕳️', boss_lair: '👑', secret: '✨', unknown: '❓' };
-      return icons[type] || '📍';
+      const t = String(type || '').trim().replace(/[,，]\s*$/, '').toLowerCase();
+      if (t === 'town' || t === 'village' || t.includes('镇') || t.includes('村')) return '🏘️';
+      if (t === 'wild' || t.includes('森林') || t.includes('林地') || t.includes('forest')) return '🌲';
+      if (t.includes('山') || t.includes('矿') || t.includes('矮人')) return '⛰️';
+      if (t.includes('遗迹') || t.includes('废墟') || t.includes('ruin')) return '🏚️';
+      if (t.includes('污染') || t.includes('废土')) return '☣️';
+      if (t.includes('港口') || t.includes('海岸') || t.includes('港') || t.includes('海')) return '⚓';
+      if (t.includes('地下') || t === 'dungeon' || t.includes('洞')) return '🕳️';
+      if (t === 'race_capital' || t.includes('王') || t.includes('首都') || t.includes('capital')) return '🏰';
+      if (t === 'mixed_city' || t.includes('城') || t.includes('city')) return '🏙️';
+      if (t.includes('精灵')) return '🌳';
+      if (t === 'boss_lair') return '👑';
+      if (t === 'secret' || t.includes('秘')) return '✨';
+      if (t === 'unknown' || t === '' || t === '未知') return '❓';
+      return '🗺️';
     }
 
     // 危险色

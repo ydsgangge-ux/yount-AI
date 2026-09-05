@@ -1558,7 +1558,7 @@ _SCENE_IMAGE_KEYWORDS = [
 ]
 
 
-def _collect_scene_context(engine, dm_state) -> Dict:
+def _collect_scene_context(engine, dm_state) -> dict:
     """动态提取场景上下文：当前区域设定 + 最近的行动内容（不硬编码）"""
     ctx = {"region_name": "", "region_desc": "", "region_type": "", "events": []}
 
@@ -1613,7 +1613,7 @@ def _collect_scene_context(engine, dm_state) -> Dict:
     return ctx
 
 
-def _llm_scene_prompt(ctx: Dict) -> str:
+def _llm_scene_prompt(ctx: dict) -> str:
     """用 LLM 把「区域设定 + 行动内容」动态转成英文绘图提示词"""
     from simlife.backend.generator import get_llm_client
     llm = get_llm_client()
@@ -1646,7 +1646,7 @@ def _llm_scene_prompt(ctx: Dict) -> str:
     return ""
 
 
-def _scene_to_image_prompt(ctx: Dict) -> str:
+def _scene_to_image_prompt(ctx: dict) -> str:
     """生成英文画面提示词：优先 LLM 动态生成（区域+行动），失败则退回关键词映射"""
     # 1. 优先 LLM 动态生成
     prompt = _llm_scene_prompt(ctx)
