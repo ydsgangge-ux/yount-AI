@@ -4861,11 +4861,13 @@ class DeathModeEngine:
         if death_return:
             # 同步队友状态到state
             self._sync_party_state(state, party_in_combat)
+            self._clear_transient_buffs(state)
             death_return["combat_log"] = total_combat_log + death_return.get("combat_log", [])
             return death_return
 
         # 同步队友状态到state
         self._sync_party_state(state, party_in_combat)
+        self._clear_transient_buffs(state)
 
         return {
             "victory": victory,
@@ -4874,6 +4876,18 @@ class DeathModeEngine:
             "drops": drops,
             "npc_mercy_pause": bool(state.get("npc_mercy_pause")),
         }
+
+    def _clear_transient_buffs(self, state: Dict):
+        """战斗结束后清除参战角色残留的临时buff/debuff/护盾，防止跨战斗永久累积。
+        此前 temp_buffs 只增不减（cleanup_temp_buffs 从未被调用），
+        导致盗贼敏捷等属性被无限叠加、攻击力膨胀。"""
+        targets = [state.get("character"), state.get("user_character")]
+        targets += [pm for pm in state.get("party_members", []) if isinstance(pm, dict)]
+        for t in targets:
+            if isinstance(t, dict):
+                t.pop("temp_buffs", None)
+                t.pop("temp_debuffs", None)
+                t.pop("shield", None)
 
     def _quick_combat(self, state: Dict, enemies: list, action_text: str = "",
                       sender: str = "user", max_rounds: int = 30,
