@@ -2257,7 +2257,7 @@ const DeathModeUI = {
     overlay.innerHTML = `
       <div style="background:#0d1117;border:1px solid #a371f7;border-radius:16px;padding:20px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;color:#c9d1d9;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h3 style="margin:0;color:#a371f7;font-size:16px;">📜 任务面板</h3>
+          <h3 style="margin:0;color:#a371f7;font-size:16px;">🧭 剧情指引</h3>
           <button onclick="this.closest('#dm-quest-panel').remove()" style="padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:12px;">✕ 关闭</button>
         </div>
         <div id="dm-quest-content" style="text-align:center;color:#8b949e;font-size:12px;">加载中...</div>
@@ -2282,77 +2282,57 @@ const DeathModeUI = {
 
       let html = '';
 
-      // 系列任务总览
+      // 系列指引总览
       if (series.length > 0) {
         html += `<div style="margin-bottom:14px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;">
-          <div style="font-size:12px;color:#a371f7;font-weight:600;margin-bottom:8px;">📖 系列任务</div>`;
+          <div style="font-size:12px;color:#a371f7;font-weight:600;margin-bottom:8px;">📖 系列剧情</div>`;
         for (const s of series) {
-          const pct = s.total_quests > 0 ? (s.completed_quests / s.total_quests * 100) : 0;
           html += `<div style="margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;font-size:11px;color:#c9d1d9;">
               <span>${s.title}</span>
-              <span style="color:#8b949e;">${s.completed_quests}/${s.total_quests}</span>
+              <span style="color:#8b949e;">第 ${s.completed_quests}/${s.total_quests} 段</span>
             </div>
             <div style="font-size:10px;color:#8b949e;margin:2px 0;">${s.description}</div>
-            <div style="height:3px;background:#21262d;border-radius:2px;overflow:hidden;">
-              <div style="height:100%;width:${pct}%;background:#a371f7;"></div>
-            </div>
           </div>`;
         }
         html += `</div>`;
       }
 
-      // 进行中任务
+      // 当前指引
       html += `<div style="margin-bottom:14px;">
-        <div style="font-size:12px;color:#3fb950;font-weight:600;margin-bottom:6px;">▶ 进行中任务（${active.length}）</div>`;
+        <div style="font-size:12px;color:#3fb950;font-weight:600;margin-bottom:6px;">▶ 当前指引（${active.length}）</div>`;
       if (active.length === 0) {
-        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无进行中任务，去任务板接一个吧</div>`;
+        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无指引。剧情会不断推进，留意 NPC 的委托与传闻。</div>`;
       } else {
         for (const q of active) {
-          const objectives = (q.objectives || []).map(o => {
-            const pct = o.count > 0 ? Math.min(100, o.progress / o.count * 100) : 0;
-            const done = o.progress >= o.count;
-            return `<div style="margin-top:4px;">
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:${done ? '#3fb950' : '#c9d1d9'};">
-                <span>${o.type === 'kill' ? '击杀' : o.type === 'collect' ? '收集' : o.type === 'visit_location' ? '到达' : '对话'}: ${o.target_keyword}</span>
-                <span>${o.progress}/${o.count} ${done ? '✓' : ''}</span>
-              </div>
-              <div style="height:3px;background:#21262d;border-radius:2px;overflow:hidden;margin-top:2px;">
-                <div style="height:100%;width:${pct}%;background:${done ? '#3fb950' : '#58a6ff'};"></div>
-              </div>
-            </div>`;
-          }).join('');
-          const allDone = (q.objectives || []).every(o => o.progress >= o.count);
-          html += `<div style="padding:10px;background:#0d1117;border:1px solid ${allDone ? '#3fb950' : '#30363d'};border-radius:8px;margin-bottom:6px;">
-            <div style="font-size:12px;font-weight:bold;color:#c9d1d9;">${q.title}${allDone ? ' <span style="color:#3fb950;font-size:10px;">✓ 可交付</span>' : ''}</div>
-            <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
-            ${objectives}
-            <div style="font-size:9px;color:#d29922;margin-top:4px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}${(q.rewards||{}).items ? ' · 物品' : ''}</div>
+          const guideText = q.guide_text || q.description || '';
+          html += `<div style="padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin-bottom:6px;">
+            <div style="font-size:12px;font-weight:bold;color:#c9d1d9;">${q.title}</div>
+            <div style="font-size:10px;color:#8b949e;margin:3px 0;">${guideText}</div>
             <div style="margin-top:6px;display:flex;gap:6px;">
-              ${allDone ? `<button onclick="DeathModeUI._turnInQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#1a3a1a;border:1px solid #3fb950;border-radius:4px;color:#3fb950;cursor:pointer;font-size:11px;">交付任务</button>` : ''}
-              ${!allDone ? `<button onclick="DeathModeUI._abandonQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#3a1a1a;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:11px;">放弃任务</button>` : ''}
+              <button onclick="DeathModeUI._abandonQuest('${q.id}')" style="flex:1;padding:4px 12px;background:#3a1a1a;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-size:11px;">取消指引</button>
             </div>
           </div>`;
         }
       }
       html += `</div>`;
 
-      // 可接任务
+      // 可触发指引
       html += `<div style="margin-bottom:14px;">
-        <div style="font-size:12px;color:#d29922;font-weight:600;margin-bottom:6px;">📋 可接任务（${available.length}）</div>`;
+        <div style="font-size:12px;color:#d29922;font-weight:600;margin-bottom:6px;">📋 可触发指引（${available.length}）</div>`;
       if (available.length === 0) {
-        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无可接任务（继续探索世界，或关注酒馆新闻）</div>`;
+        html += `<div style="padding:10px;background:#161b22;border:1px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;font-size:11px;">暂无可触发指引（继续探索世界，或关注酒馆新闻）</div>`;
       } else {
         for (const q of available) {
+          const guideText = q.guide_text || q.description || '';
           html += `<div style="padding:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:6px;">
             <div style="display:flex;justify-content:space-between;align-items:start;">
               <div style="flex:1;min-width:0;">
                 <div style="font-size:12px;font-weight:bold;color:#c9d1d9;">${q.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin:3px 0;">${q.description || ''}</div>
-                <div style="font-size:9px;color:#58a6ff;">发布人：${q.quest_giver || '未知'} ${q.location_hint ? '· ' + q.location_hint : ''}</div>
-                <div style="font-size:9px;color:#d29922;margin-top:2px;">奖励：经验${(q.rewards||{}).exp||0} · 金币${(q.rewards||{}).gold||0}</div>
+                <div style="font-size:10px;color:#8b949e;margin:3px 0;">${guideText}</div>
+                <div style="font-size:9px;color:#58a6ff;">提供者：${q.quest_giver || '未知'} ${q.location_hint ? '· ' + q.location_hint : ''}</div>
               </div>
-              <button onclick="DeathModeUI._acceptQuest('${q.id}','ai')" style="flex-shrink:0;padding:4px 10px;background:#3a2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;margin-left:6px;">接受</button>
+              <button onclick="DeathModeUI._acceptQuest('${q.id}','ai')" style="flex-shrink:0;padding:4px 10px;background:#3a2d0d;border:1px solid #d29922;border-radius:4px;color:#d29922;cursor:pointer;font-size:10px;margin-left:6px;">跟随</button>
             </div>
           </div>`;
         }
@@ -2360,7 +2340,7 @@ const DeathModeUI = {
       html += `</div>`;
 
       if (completedIds.length > 0) {
-        html += `<div style="font-size:10px;color:#484f58;text-align:center;">已完成 ${completedIds.length} 个任务</div>`;
+        html += `<div style="font-size:10px;color:#484f58;text-align:center;">已完成 ${completedIds.length} 段指引</div>`;
       }
 
       document.getElementById('dm-quest-content').innerHTML = html;

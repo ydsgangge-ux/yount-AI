@@ -775,7 +775,7 @@ class StoryAgent:
 
 {_subject_hint}
 
-{("【当前任务】" + chr(10) + quest_summary) if quest_summary else ""}
+{("【当前指引】" + chr(10) + quest_summary) if quest_summary else ""}
 【已有待接任务委托】{offers_count} 个
 {ending_hint}{ending_region_hint}{region_completed_hint}{repeat_action_hint}
 【设计原则】
@@ -811,23 +811,25 @@ class StoryAgent:
     如果当前行动没有推进区域剧情，region_story_updates 填 null。
 21. 【子场景切换·可选】当行动是"进入当前区域内某个剧情明确的具体地点"（如跳入井里、钻进地窖、进入钟楼、下到地牢，且该地点在【最近行动记录】或【剧情线】中已有铺垫）时，应在 enter_sub_scene 中返回：{{"name": "子场景名（如 雾谷前哨站·井底）", "scene_description": "该子场景的简短描述（环境、光线、氛围，2-3句）"}}。系统会同步更新当前地点，后续行动与战斗都会发生在这个子场景内。当行动是"离开该子场景"（如爬出井、回到地面、离开地窖）时，返回 exit_sub_scene: true，系统会退回上一地点。其余普通行动 enter_sub_scene 填 null、exit_sub_scene 填 null。
 
-【任务系统联动·重要】
-当角色的行动符合以下情况之一时，应生成 quest_offers（任务委托）：
+【剧情指引系统·重要】
+当角色的行动符合以下情况之一时，应生成 quest_offers（剧情指引/推荐路线）：
 - 与 NPC 对话（酒馆老板、村长、商人、铁匠、长老等）
 - 查看告示板、打听消息、听传闻
 - 探索时发现需要帮助的场景
-- 当前已有任务完成，NPC 提出后续委托
+- 当前系列剧情推进，NPC 提出后续指引
 
-任务难度根据角色等级（Lv.{char_level}）决定：
-- 简单 (easy)：单一目标，如"杀3只史莱姆"——适合低等级
-- 普通 (normal)：2-3个目标，如"杀怪+收集"——适合中等级
-- 困难 (hard)：系列任务，多个 offer 共享同一个 series_id，按 series_order 递增（1,2,3...）——适合高等级或剧情节点
+指引是"推荐路线"，不是硬性任务：不要求玩家完成特定击杀/收集/到达，而是给出下一步该去哪、该做什么的文本建议。玩家可以随时取消指引，世界照常运转。
+
+指引难度根据角色等级（Lv.{char_level}）决定：
+- 简单 (easy)：单一方向，如"调查村外徘徊的史莱姆"——适合低等级
+- 普通 (normal)：多步骤推荐路线——适合中等级
+- 困难 (hard)：系列指引，多个 offer 共享同一个 series_id，按 series_order 递增（1,2,3...）——适合高等级或剧情节点
 
 限制规则：
-- 当前若已有 {offers_count} 个待接委托，且 ≥ 3 个，则不要再生成新委托（填 null）
-- 任务目标关键词必须是游戏内可触发的：kill（击杀敌人）, collect（获得物品）, visit_location（进入地点）, talk_npc（对话NPC）
-- rewards 要合理：easy 给 exp 20-40 / gold 10-30；normal 给 exp 40-80 / gold 30-60；hard 给 exp 80-200 / gold 50-150
-- 系列任务时，series_id 用英文蛇形命名（如 "series_dark_guild_probe"），series_title 给中文名
+- 当前若已有 {offers_count} 个待接指引，且 ≥ 3 个，则不要再生成新指引（填 null）
+- guide_text 是推荐路线文本（下一步该去哪、找谁、做什么），必须具体可执行（如"前往西边雾谷的废弃前哨，调查钟楼下的地窖"）
+- 系列指引时，series_id 用英文蛇形命名（如 "series_dark_guild_probe"），series_title 给中文名
+- 不再输出 objectives 英文关键词与 rewards 数值：奖励不由任务面板发放，NPC 在剧情中答应给什么，后续剧情兑现时通过 items_gained/gold_gained 发放
 
 返回JSON格式（重要：narrative控制在150字以内，确保outcome_type等后续字段能完整输出）：
 {{
@@ -848,21 +850,31 @@ class StoryAgent:
   "mp_change": 0 或 null,
   "quest_offers": [
     {{
-      "title": "任务标题（中文）",
-      "description": "任务描述（NPC说的话或委托内容）",
-      "quest_giver": "委托人名（如：酒馆老板）",
-      "location_hint": "任务地点提示（可选）",
+      "title": "指引标题（中文）",
+      "description": "指引描述（NPC说的话或推荐路线）",
+      "guide_text": "推荐路线文本：具体去哪/找谁/做什么（必填，替代旧 objectives）",
+      "quest_giver": "指引提供者名（如：酒馆老板）",
+      "location_hint": "地点提示（可选）",
       "difficulty": "easy/normal/hard",
-      "series_id": "系列ID（仅系列任务填，否则 null）",
+      "series_id": "系列ID（仅系列指引填，否则 null）",
       "series_order": 1,
-      "series_title": "系列名（仅系列任务首条填）",
-      "series_description": "系列简介（仅系列任务首条填）",
-      "objectives": [
-        {{"type": "kill/collect/visit_location/talk_npc", "target_keyword": "英文关键词（如 slime）", "count": 3}}
-      ],
-      "rewards": {{"exp": 40, "gold": 25}},
+      "series_title": "系列名（仅系列指引首条填）",
+      "series_description": "系列简介（仅系列指引首条填）",
       "auto_complete": true
     }}
+  ] 或 null,
+  "guide_advance": {{
+    "series_id": "已在进行中的系列ID",
+    "next_order": 2,
+    "title": "下一段指引标题",
+    "description": "下一段指引描述",
+    "guide_text": "下一段推荐路线文本"
+  }} 或 null,
+  "npc_commitments": [
+    {{"npc": "承诺的NPC名", "task": "承诺内容（如：给你50金币酬劳 / 修好你的武器）", "deadline_day": 5, "note": "备注（可选）"}}
+  ] 或 null,
+  "world_influences": [
+    {{"arc": "系列结局弧ID（格式 series_xxx，取自系列ID）", "delta": 15, "note": "影响说明（如：帮忙守住村口，局势缓和）"}}
   ] 或 null,
   "spotted_enemies": [
     {{"name": "敌人名（英文，如 Elemental Slime）", "count": 3}}
@@ -883,10 +895,28 @@ class StoryAgent:
 - 如果角色翻找尸体、搜索房间、拾取掉落物、收起战利品等，必须在items_gained中列出获得的物品名（剧情物品也要列出，如"冰晶地图"、"黑色骨片"等）
 - 如果没有任何物品/金币变动，对应字段填null
 
-任务生成规则：
+指引生成规则：
 - 仅在角色行动合理触发时才生成 quest_offers，否则填 null
-- 一次可生成 1-3 个 offer（系列任务时多个）
-- 不要重复生成已存在的委托（参考"已有待接任务委托"数量）
+- 一次可生成 1-3 个 offer（系列指引时多个）
+- 不要重复生成已存在的指引（参考"已有待接任务委托"数量）
+
+guide_advance 规则（系列指引递进·重要）：
+- 当角色在系列剧情中完成了当前指引的关键事件（如找到了铭文、守住了村子），且该系列还有下一段剧情时，应输出 guide_advance（series_id 与当前系列一致，next_order 递增）
+- 系统会自动取消旧段指引、追加新段指引，玩家无需手动操作
+- 如果当前没有系列剧情推进，填 null
+
+npc_commitments 规则（奖励记账·重要）：
+- 当 NPC 在剧情中明确答应给角色报酬/奖励（如"事成之后给你50金币""我帮你修好武器"），必须在此登记
+- deadline_day 是承诺兑现的倒计时天数（相对当前天数，如 3 表示 3 天后自动兑现）
+- 世界自转到期后该承诺自动兑现为既定事实；实际奖励（金币/物品/经验）在剧情兑现时通过 items_gained/gold_gained 发放
+- 如果 NPC 没有做出承诺，填 null
+
+world_influences 规则（系列结局弧·重要）：
+- 当角色行动直接影响某个系列剧情的走向（如帮忙守住村口、摧毁了敌军补给、放过了叛徒），应输出 world_influences
+- arc 填该系列的结局弧ID：格式为 "series_" + 系列ID（如系列ID是 series_dark_guild_probe，则弧ID是 series_series_dark_guild_probe）——不确定时填系列ID即可
+- delta 是影响幅度（正数=缓和局势/帮助，负数=加剧危机）
+- 系统会结算该影响，改变系列结局走向（不帮忙则世界按天自转恶化，最终可能"村子已毁"）
+- 如果角色行动不影响任何系列走向，填 null
 
 spotted_enemies 规则（关键！）：
 - 当叙事描述中出现了具体的敌人（如"三只史莱姆吸附在岩壁上"），必须在 spotted_enemies 里列出这些敌人
@@ -1360,7 +1390,7 @@ plot_thread_updates 规则（剧情线管理·最关键！）：
                 _val = _raw
             result[m.group(1)] = _val
         # null 值
-        for m in re.finditer(r'"(region_story_updates|new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers)"\s*:\s*(null)', text):
+        for m in re.finditer(r'"(region_story_updates|new_location|spotted_enemies|unresolved_hooks|items_gained|quest_offers|guide_advance|npc_commitments|world_influences)"\s*:\s*(null)', text):
             result[m.group(1)] = None
         # 数值
         for m in re.finditer(r'"(gold_spent|gold_gained|hp_change|mp_change)"\s*:\s*(-?\d+)', text):

@@ -2623,6 +2623,43 @@ class DeathModeEngine:
         except Exception as e:
             print(f"[DeathMode] 任务委托解析失败: {e}")
 
+        # 剧情指引系统：系列指引递进（剧情推进到下一段时，由 StoryAgent 输出 guide_advance）
+        try:
+            _ga = agent_result.get("guide_advance")
+            if _ga and isinstance(_ga, dict):
+                ok, gmsg = QuestSystem.advance_series_guide(state, _ga)
+                if ok:
+                    result["guide_advanced"] = gmsg
+        except Exception as e:
+            print(f"[DeathMode] 系列指引推进失败: {e}")
+
+        # 剧情指引系统：NPC 承诺登记（NPC 在剧情中答应给奖励/办某事 → 世界自转到期自动兑现）
+        try:
+            _commits = agent_result.get("npc_commitments")
+            if _commits and isinstance(_commits, list):
+                for _c in _commits:
+                    if not isinstance(_c, dict):
+                        continue
+                    WorldSimulation.commit_npc(
+                        state,
+                        npc=str(_c.get("npc", "") or "").strip(),
+                        task=str(_c.get("task", "") or "").strip(),
+                        deadline_day=_c.get("deadline_day"),
+                        note=str(_c.get("note", "") or "").strip(),
+                    )
+        except Exception as e:
+            print(f"[DeathMode] NPC 承诺登记失败: {e}")
+
+        # 剧情指引系统：玩家行动对系列结局弧的影响（帮忙→拉高弧值，推迟/避免坏结局）
+        try:
+            _infs = agent_result.get("world_influences")
+            if _infs and isinstance(_infs, list):
+                _applied = WorldSimulation.apply_influence(state, _infs, by="行动")
+                if _applied:
+                    result["world_influences_applied"] = _applied
+        except Exception as e:
+            print(f"[DeathMode] 世界影响力结算失败: {e}")
+
         # 世界推进：每次行动后检查是否触发新世界事件
         try:
             new_news = WorldProgress.check_and_advance(state)
@@ -2645,6 +2682,32 @@ class DeathModeEngine:
                     result["world_sim_events"] = _sim_msgs
         except Exception as _sim_e:
             print(f"[DeathMode] 世界模拟自转异常: {_sim_e}")
+
+        # 系列结局弧结算：已触发的系列结局 → 刷新区域剧情（如"村子已毁"）+ 取消该系列进行中指引
+        try:
+            _settlements = WorldSimulation.collect_series_settlements(state)
+            for _st in _settlements:
+                _sid = _st.get("series_id", "")
+                _fact = _st.get("fact", "")
+                _region = str(_st.get("region_id", "") or "").strip()
+                if _fact:
+                    # 写入区域剧情（story_state / story_progress），下次进入该区域即见结局
+                    try:
+                        if _region and self.region_agent:
+                            self.region_agent.update_region_state(_region, {
+                                "story_state": f"区域剧情已定局：{_fact}",
+                                "story_progress": _fact,
+                            })
+                    except Exception as _re:
+                        print(f"[DeathMode] 系列结局刷新区域失败: {_re}")
+                    # 取消该系列所有进行中指引（结局已定，指引作废）
+                    try:
+                        _n = QuestSystem.cancel_series_guides(state, _sid)
+                    except Exception:
+                        _n = 0
+                    result.setdefault("world_sim_events", []).append(f"【系列结局】{_fact}")
+        except Exception as _se:
+            print(f"[DeathMode] 系列结局结算异常: {_se}")
 
         # ── 隐藏结局进度检查 ──
         try:

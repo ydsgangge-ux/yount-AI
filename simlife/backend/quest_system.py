@@ -487,8 +487,14 @@ class QuestSystem:
         q.setdefault("available_offers", []) # LLM 动态生成的任务委托（未接受）
         q.setdefault("turned_in_ids", [])    # 已交付任务 id
         q.setdefault("failed_ids", [])       # 失败任务 id
+        q.setdefault("cancelled_ids", [])    # 已取消指引的任务 id（指引模式：取消不视为失败）
         q.setdefault("series_progress", {})  # series_id -> 当前可接的 order
         q.setdefault("dynamic_series", {})   # series_id -> {title, description}（LLM 生成的系列信息）
+
+        # 指引模式迁移：为存量 active 任务补 guide_text（旧任务无此字段）
+        for _aq in q.get("active", []):
+            if not _aq.get("guide_text"):
+                _aq["guide_text"] = _aq.get("description", _aq.get("title", ""))
         return q
 
     # ── 动态任务生成（LLM 叙事触发）──
@@ -525,29 +531,30 @@ class QuestSystem:
             title = str(offer.get("title", "")).strip()
             if not title or title in existing_titles:
                 continue
+            guide_text = str(offer.get("guide_text") or offer.get("description", "") or "").strip()
             objectives = offer.get("objectives", [])
-            if not isinstance(objectives, list) or not objectives:
-                continue
 
-            # 规范化 objectives
+            # 规范化 objectives（指引模式：允许为空，推荐路线文本即可；有则保留兼容旧结构）
             norm_objs = []
-            for o in objectives:
-                if not isinstance(o, dict):
-                    continue
-                t = str(o.get("type", "")).strip()
-                kw = str(o.get("target_keyword", "")).strip()
-                cnt = int(o.get("count", 1))
-                if t not in ("kill", "collect", "visit_location", "talk_npc"):
-                    continue
-                if not kw or cnt < 1:
-                    continue
-                norm_objs.append({
-                    "type": t,
-                    "target_keyword": kw,
-                    "aliases": _expand_keyword(kw, state),  # 预存归一化别名，运行时匹配 + 存档查看都直接用
-                    "count": min(cnt, 20),  # 上限防止滥用
-                })
-            if not norm_objs:
+            if isinstance(objectives, list):
+                for o in objectives:
+                    if not isinstance(o, dict):
+                        continue
+                    t = str(o.get("type", "")).strip()
+                    kw = str(o.get("target_keyword", "")).strip()
+                    cnt = int(o.get("count", 1))
+                    if t not in ("kill", "collect", "visit_location", "talk_npc"):
+                        continue
+                    if not kw or cnt < 1:
+                        continue
+                    norm_objs.append({
+                        "type": t,
+                        "target_keyword": kw,
+                        "aliases": _expand_keyword(kw, state),  # 预存归一化别名，运行时匹配 + 存档查看都直接用
+                        "count": min(cnt, 20),  # 上限防止滥用
+                    })
+            # 既无目标也无指引文本 → 无法给出推荐路线，跳过
+            if not norm_objs and not guide_text:
                 continue
 
             # 获取当前区域ID（用于到达新区域时过滤旧区域任务）
@@ -575,6 +582,7 @@ class QuestSystem:
                 "id": qid,
                 "title": title,
                 "description": str(offer.get("description", "")).strip(),
+                "guide_text": guide_text,  # 指引模式：推荐路线文本
                 "quest_giver": str(offer.get("quest_giver", "未知NPC")).strip(),
                 "location_hint": str(offer.get("location_hint", "")).strip(),
                 "difficulty": str(offer.get("difficulty", "normal")).strip().lower(),
@@ -598,6 +606,18 @@ class QuestSystem:
                         "title": str(offer.get("series_title", title)).strip(),
                         "description": str(offer.get("series_description", "")).strip(),
                     }
+                # 系列首段 → 播种"系列结局弧"（世界自转结算系列结局，不依赖玩家操作）
+                if int(offer.get("series_order", 1)) <= 1:
+                    try:
+                        from simlife.backend.world_simulation import WorldSimulation
+                        WorldSimulation.seed_series_arc(
+                            state,
+                            series_id=sid_final,
+                            label=str(offer.get("series_title", title)).strip() or title,
+                            region_id=_current_region,
+                        )
+                    except Exception:
+                        pass
 
             state["quests"]["available_offers"].append(offer_record)
             existing_titles.add(title)
@@ -751,10 +771,13 @@ class QuestSystem:
             return False, "前置任务未完成"
 
         # 创建任务实例（深拷贝 objectives，加 progress 字段）
+        _start_day = int(state.get("play_time_days", 1) or 1)
         instance = {
             "id": q_def["id"],
             "title": q_def["title"],
             "description": q_def["description"],
+            "guide_text": q_def.get("guide_text") or q_def.get("description", ""),  # 指引模式：推荐路线文本
+            "started_day": _start_day,
             "series_id": q_def.get("series_id"),
             "series_order": q_def.get("series_order", 0),
             "quest_giver": q_def.get("quest_giver", "未知"),
@@ -794,75 +817,9 @@ class QuestSystem:
             - narrative: "叙事文本"（可选，用于 fallback 匹配，当 LLM 输出中文名时兜底）
             - action_text: "用户行动文本"（可选，额外 fallback）
         """
-        cls._ensure_state(state)
-        active = state["quests"]["active"]
-        if not active:
-            return []
-
-        # 提取 fallback 文本（叙事文本和用户行动文本）
-        _narrative = str(kwargs.get("narrative", "") or "")
-        _action = str(kwargs.get("action_text", "") or "")
-
-        progressed = []
-        for quest in active:
-            if quest.get("status") != QUEST_ACTIVE:
-                continue
-            for obj in quest["objectives"]:
-                if obj["progress"] >= obj["count"]:
-                    continue  # 已完成的目标
-                if obj["type"] != event_type:
-                    continue
-                kw = obj["target_keyword"].lower()
-                if not kw:
-                    continue
-                # 统一归一化：优先用创建时预存的 aliases，缺失则实时扩展（中英/乱码/编号漂移都覆盖）
-                aliases = obj.get("aliases") or _expand_keyword(kw, state)
-                if not aliases:
-                    aliases = [kw]
-                matched = False
-                if event_type == "kill":
-                    names = kwargs.get("enemy_names", [])
-                    matched = _match_aliases(aliases, names)
-                    if not matched:
-                        matched = _match_aliases(aliases, [_narrative])
-                elif event_type == "collect":
-                    items = kwargs.get("items", [])
-                    # 背包物品名可能带数量后缀（如 "腐化树脂核心x3"），去后缀后再匹配
-                    _item_names = []
-                    for _it in items:
-                        _nm = str(_it.get("name", "") if isinstance(_it, dict) else _it)
-                        _item_names.append(_strip_qty_suffix(_nm))
-                    matched = _match_aliases(aliases, _item_names)
-                    if not matched:
-                        matched = _match_aliases(aliases, [_narrative, _action])
-                elif event_type == "visit_location":
-                    loc = str(kwargs.get("location", "") or "")
-                    matched = _match_aliases(aliases, [loc])
-                    if not matched:
-                        matched = _match_aliases(aliases, [_narrative, _action])
-                elif event_type == "talk_npc":
-                    npc = str(kwargs.get("npc_name", "") or "")
-                    matched = _match_aliases(aliases, [npc])
-                    if not matched:
-                        matched = _match_aliases(aliases, [_narrative, _action])
-
-                if matched:
-                    obj["progress"] = min(obj["count"], obj["progress"] + 1)
-                    progressed.append({
-                        "quest_id": quest["id"],
-                        "quest_title": quest["title"],
-                        "objective": obj,
-                    })
-
-            # 检查任务是否整体完成
-            all_done = all(o["progress"] >= o["count"] for o in quest["objectives"])
-            if all_done and quest["status"] == QUEST_ACTIVE:
-                if quest.get("auto_complete", False):
-                    # 自动完成 → 直接变 completed，玩家需主动交付领奖
-                    quest["status"] = QUEST_COMPLETED
-                # 如果 auto_complete=True 且没有 NPC 交付需求，也可以自动交付
-                # 这里保持简单：auto_complete 表示"目标达成即完成"，但仍需 turn_in 领奖
-        return progressed
+        # 指引模式：不做硬判定。任务已改为"推荐路线文本"，进度由剧情推进（guide_advance）结算。
+        # 保留函数签名以兼容旧调用点，直接返回空列表。
+        return []
 
     # ── 任务校验器：专项解决"到达地点"判定问题 ──
     @classmethod
@@ -885,131 +842,18 @@ class QuestSystem:
 
         返回：本次被推进/完成的目标列表（与 record_progress 一致的结构）。
         """
-        cls._ensure_state(state)
-        active = state["quests"]["active"]
-        if not active:
-            return []
+        # 指引模式：不做硬判定。到达/收集等目标已改为"推荐路线文本"，
+        # 进度由剧情推进（guide_advance）结算。保留签名兼容旧调用点。
+        return []
 
-        # ── 搜集当前实际所在区域数据 ──
-        # 1) 显式传入的 region_id（最高优先）
-        cur_id = str(kwargs.get("region_id", "") or "").strip()
-        # 2) 从 state.world_map 读取（触发处未传时兜底）
-        _wm = state.get("world_map") or {}
-        if not cur_id:
-            cur_id = str(_wm.get("current_region_id", "") or "").strip()
-        cur_name = ""
-        cur_desc = ""
-        _regions = _wm.get("regions") or {}
-        if isinstance(_regions, dict):
-            _reg = _regions.get(cur_id)
-            if isinstance(_reg, dict):
-                cur_name = str(_reg.get("name", "") or "")
-                cur_desc = str(_reg.get("description", "") or "")
-        # 3) story 上下文：LLM叙事设置的当前地点/场景描述/子场景栈（子地点常在此）
-        _story = state.get("story") or {}
-        _story_ctx = " ".join([
-            str(_story.get("current_location", "") or ""),
-            str(_story.get("scene_description", "") or ""),
-        ])
-        try:
-            _stack = _story.get("sub_scene_stack") or []
-            if isinstance(_stack, list):
-                _story_ctx += " " + " ".join(
-                    str(s.get("location", "") or "") for s in _stack if isinstance(s, dict))
-        except Exception:
-            pass
-        # 4) 显式补充的 location（子地点名）与叙事/行动文本
-        extra_location = str(kwargs.get("location", "") or "")
-        extra_text = " ".join([
-            str(kwargs.get("narrative", "") or ""),
-            str(kwargs.get("action_text", "") or ""),
-        ])
-
-        def _variants(kw: str) -> List[str]:
-            vs = {kw}
-            for sep in ("_", "-", " "):
-                if sep in kw:
-                    vs.update(p for p in kw.split(sep) if p)
-            # 英文内部地点ID → 扩展到中译文名（如 sanctum → 圣所）
-            for group in _TERM_ALIASES:
-                if any(t and t in kw for t in group):
-                    vs.update(group)
-            return list(vs)
-
-        progressed = []
-        for quest in active:
-            if quest.get("status") != QUEST_ACTIVE:
-                continue
-            # 任务自带 location_hint 作为额外匹配源
-            q_hint = str(quest.get("location_hint", "") or "").lower()
-            for obj in quest["objectives"]:
-                if obj.get("type") != "visit_location":
-                    continue
-                if obj.get("progress", 0) >= obj.get("count", 1):
-                    continue
-                kw_raw = str(obj.get("target_keyword", "") or "").strip()
-                if not kw_raw:
-                    continue
-                kw = kw_raw.lower()
-                # ── 多维判定 ──
-                matched = False
-                # ① 当前区域英文ID（解决英文ID vs 中文名）
-                if cur_id and kw in str(cur_id).lower():
-                    matched = True
-                # ② 当前区域中文名
-                if not matched and cur_name and kw in str(cur_name).lower():
-                    matched = True
-                # ③ 当前区域描述（解决子地点藏在描述里、措辞有差距）
-                if not matched and cur_desc:
-                    for _v in _variants(kw):
-                        if _v and _v in str(cur_desc).lower():
-                            matched = True
-                            break
-                # ③' story上下文：LLM叙事设置的当前地点/场景描述/子场景栈（子地点常在此）
-                if not matched and _story_ctx:
-                    for _v in _variants(kw):
-                        if _v and _v in _story_ctx.lower():
-                            matched = True
-                            break
-                # ④ 触发时补充的子地点名/叙事/行动文本
-                if not matched and extra_location:
-                    for _v in _variants(kw):
-                        if _v and _v in str(extra_location).lower():
-                            matched = True
-                            break
-                if not matched and extra_text:
-                    for _v in _variants(kw):
-                        if _v and _v in extra_text.lower():
-                            matched = True
-                            break
-                # ⑤ 任务自带的 location_hint（含英文ID或中文名）
-                if not matched and q_hint:
-                    for _v in _variants(kw):
-                        if _v and _v in q_hint:
-                            matched = True
-                            break
-                if not matched:
-                    continue
-
-                obj["progress"] = min(obj.get("count", 1), obj.get("progress", 0) + 1)
-                progressed.append({
-                    "quest_id": quest["id"],
-                    "quest_title": quest["title"],
-                    "objective": obj,
-                })
-
-            # 目标全部达成 → 更新任务状态（与 record_progress 保持一致）
-            if quest["status"] == QUEST_ACTIVE:
-                all_done = all(o.get("progress", 0) >= o.get("count", 1) for o in quest["objectives"])
-                if all_done and quest.get("auto_complete", False):
-                    quest["status"] = QUEST_COMPLETED
-        return progressed
-
-    # ── 交付任务（领奖）──
+    # ── 结束指引（原交付任务）──
     @classmethod
     def turn_in_quest(cls, state: Dict, quest_id: str, character: Dict) -> Tuple[bool, str, Dict]:
         """
-        交付任务并发放奖励。返回 (success, message, rewards)
+        结束一段指引。指引模式下不再有硬判定与固定奖励：
+        - 目标进度由剧情推进（guide_advance）结算
+        - 奖励由剧情记账（NPC 答应的奖励在剧情中通过 items_gained/gold_gained/exp 发放）
+        这里只把指引从 active 移除。返回 (success, message, rewards=空)
         """
         cls._ensure_state(state)
         active = state["quests"]["active"]
@@ -1019,28 +863,10 @@ class QuestSystem:
                 quest = q
                 break
         if not quest:
-            return False, "任务不在进行中", {}
+            return False, "指引不在进行中", {}
         if quest["status"] not in (QUEST_ACTIVE, QUEST_COMPLETED):
-            return False, "任务状态异常", {}
+            return False, "指引状态异常", {}
 
-        # 检查目标是否全部完成
-        all_done = all(o["progress"] >= o["count"] for o in quest["objectives"])
-        if not all_done:
-            unfinished = [
-                f"{o['type']}:{o['target_keyword']} ({o['progress']}/{o['count']})"
-                for o in quest["objectives"] if o["progress"] < o["count"]
-            ]
-            return False, "目标未完成: " + " / ".join(unfinished), {}
-
-        # 发放奖励
-        rewards = quest.get("rewards", {})
-        exp_gain = rewards.get("exp", 0)
-        gold_gain = rewards.get("gold", 0)
-        items_gain = rewards.get("items", [])
-
-        character["gold"] = character.get("gold", 0) + gold_gain
-        # 经验单独返回，由 death_mode 调用 GrowthSystem 处理
-        # 这里只更新任务状态
         for i, q in enumerate(active):
             if q["id"] == quest_id:
                 active.pop(i)
@@ -1053,10 +879,88 @@ class QuestSystem:
             cur = state["quests"]["series_progress"].get(series_id, 0)
             state["quests"]["series_progress"][series_id] = max(cur, quest.get("series_order", 0))
 
-        msg = f"任务「{quest['title']}」已交付！获得 经验+{exp_gain} 金币+{gold_gain}"
-        if items_gain:
-            msg += f" 物品：{', '.join(it.get('name','?') for it in items_gain)}"
-        return True, msg, rewards
+        msg = f"指引「{quest['title']}」已结束"
+        return True, msg, {}
+
+    # ── 系列指引递进（剧情推进触发）──
+    @classmethod
+    def advance_series_guide(cls, state: Dict, guide_advance: Dict) -> Tuple[bool, str]:
+        """
+        系列指引推进到下一段（由 StoryAgent 剧情推进时输出 guide_advance 触发）。
+        - 同系列中 order 小于新段的 active 指引移入 cancelled_ids（旧段作废，玩家可随时取消）
+        - 追加新段指引
+        guide_advance: {"series_id": "...", "next_order": 2, "title": "...", "guide_text": "...", "description": "..."}
+        """
+        cls._ensure_state(state)
+        sid = str(guide_advance.get("series_id", "") or "").strip()
+        if not sid:
+            return False, "缺少 series_id"
+        next_order = int(guide_advance.get("next_order", 1) or 1)
+        title = str(guide_advance.get("title", "") or "").strip()
+        guide_text = str(guide_advance.get("guide_text") or guide_advance.get("description", "") or "").strip()
+        if not title or not guide_text:
+            return False, "新指引缺少标题或文本"
+
+        # 旧段（order < next_order）→ 移入 cancelled_ids
+        active = state["quests"]["active"]
+        kept = []
+        for q in active:
+            if q.get("series_id") == sid and int(q.get("series_order", 0)) < next_order:
+                state["quests"]["cancelled_ids"].append(q["id"])
+            else:
+                kept.append(q)
+        state["quests"]["active"] = kept
+
+        # 新段 id（去重）
+        base = "dyn_" + "".join(c if c.isalnum() else "_" for c in title.lower())[:20]
+        nid = base
+        i = 1
+        _used = {q["id"] for q in state["quests"]["active"]} | set(state["quests"]["cancelled_ids"])
+        while nid in _used:
+            nid = f"{base}_{i}"
+            i += 1
+
+        _start_day = int(state.get("play_time_days", 1) or 1)
+        new_guide = {
+            "id": nid,
+            "title": title,
+            "description": str(guide_advance.get("description", "") or "").strip(),
+            "guide_text": guide_text,
+            "started_day": _start_day,
+            "series_id": sid,
+            "series_order": next_order,
+            "quest_giver": str(guide_advance.get("quest_giver", "") or "").strip(),
+            "objectives": [],
+            "rewards": {},
+            "auto_complete": True,
+            "status": QUEST_ACTIVE,
+        }
+        state["quests"]["active"].append(new_guide)
+        # 更新系列进度
+        cur = state["quests"]["series_progress"].get(sid, 0)
+        state["quests"]["series_progress"][sid] = max(cur, next_order)
+        return True, f"系列「{sid}」指引推进到第 {next_order} 段：{title}"
+
+    # ── 系列结局已定时，取消该系列所有进行中指引 ──
+    @classmethod
+    def cancel_series_guides(cls, state: Dict, series_id: str) -> int:
+        """系列结局弧已触发（结局已定）时调用：取消该系列所有 active 指引。
+        返回被取消的指引数量。"""
+        cls._ensure_state(state)
+        sid = str(series_id or "").strip()
+        if not sid:
+            return 0
+        active = state["quests"]["active"]
+        kept = []
+        cancelled = 0
+        for q in active:
+            if q.get("series_id") == sid:
+                state["quests"]["cancelled_ids"].append(q["id"])
+                cancelled += 1
+            else:
+                kept.append(q)
+        state["quests"]["active"] = kept
+        return cancelled
 
     # ── 清理旧区域任务委托 ──
     @classmethod
@@ -1084,10 +988,12 @@ class QuestSystem:
             print(f"[QuestSystem] 区域变更，清理 {removed} 个旧区域任务委托")
         return removed
 
-    # ── 放弃任务 ──
+    # ── 取消指引（原放弃任务）──
     @classmethod
     def abandon_quest(cls, state: Dict, quest_id: str) -> Tuple[bool, str]:
-        """放弃进行中的任务：从 active 移除，加入 failed_ids"""
+        """取消一段指引：从 active 移除，加入 cancelled_ids。
+        指引模式：取消不视为失败（不塞 failed_ids），剧情记忆保留，世界照常运转，
+        后续剧情仍可能重新给出同样的指引。"""
         cls._ensure_state(state)
         active = state["quests"]["active"]
         quest = None
@@ -1097,11 +1003,11 @@ class QuestSystem:
                 active.pop(i)
                 break
         if not quest:
-            return False, "任务不在进行中"
-        # 加入失败列表（后续不再显示）
-        state["quests"]["failed_ids"].append(quest_id)
-        # 如果是系列任务，不影响系列进度（只是当前任务放弃）
-        return True, f"已放弃任务「{quest['title']}」"
+            return False, "指引不在进行中"
+        # 加入已取消列表（不视为失败）
+        state["quests"]["cancelled_ids"].append(quest_id)
+        # 如果是系列指引，不影响系列进度（只是当前段取消）
+        return True, f"已取消指引「{quest['title']}」（剧情记忆保留，世界照常运转）"
 
     # ── 系列任务信息 ──
     @classmethod
@@ -1184,18 +1090,16 @@ class QuestSystem:
     # ── 暴露任务给 LLM prompt（让叙事能引用任务）──
     @classmethod
     def get_active_quests_summary(cls, state: Dict) -> str:
-        """生成简短的进行中任务摘要，供 story_agent prompt 使用"""
+        """生成简短的进行中指引摘要，供 story_agent prompt 使用"""
         cls._ensure_state(state)
         active = state["quests"]["active"]
         if not active:
             return ""
         lines = []
         for q in active:
-            obj_lines = []
-            for o in q["objectives"]:
-                obj_lines.append(f"{o['type']}:{o['target_keyword']}({o['progress']}/{o['count']})")
-            lines.append(f"· {q['title']} - {'/'.join(obj_lines)}")
-        return "当前任务：\n" + "\n".join(lines)
+            guide = str(q.get("guide_text") or q.get("description", "") or "").strip()
+            lines.append(f"· {q['title']}：{guide}")
+        return "当前指引：\n" + "\n".join(lines)
 
     # ── 按系列查询任务（供隐藏结局系统使用）──
     @classmethod

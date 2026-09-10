@@ -108,6 +108,49 @@ class WorldSimulation:
                 g.setdefault("triggered", False)
             ws["arcs"][arc["arc_id"]] = arc
 
+    # ── 系列剧情结局弧（剧情指引系统的系列结局结算）──
+    @classmethod
+    def seed_series_arc(cls, state: Dict, series_id: str, label: str = "",
+                        tick_rate: float = -2, gates: List[Dict] = None,
+                        region_id: str = "") -> bool:
+        """为系列剧情播种"结局弧"：世界按天自转推进系列结局，不依赖玩家是否在场。
+        - value=100 表示局势安全/进展良好，每天按 tick_rate 恶化（默认 -2/天）
+        - gates 为下行阈值（value 降到 at 时触发"既定事实"，叙事必须遵守）
+        - 玩家帮助/干预时通过 apply_influence 拉高 value，可推迟或避免坏结局
+        - region_id：结局发生地（用于结算时刷新该区域的剧情，如"村子已毁"）
+        已有同名弧则不重复播种。"""
+        cls.ensure_state(state)
+        sid = str(series_id or "").strip()
+        if not sid:
+            return False
+        ws = state["world_sim"]
+        arc_id = "series_" + sid
+        if arc_id in ws["arcs"]:
+            return False  # 已存在，不重复播种
+        if not gates:
+            gates = [
+                {"at": 60, "title": "局势恶化", "fact": f"「{label}」的局势开始恶化，危机正在逼近。"},
+                {"at": 30, "title": "危在旦夕", "fact": f"「{label}」已危在旦夕，若无援手，结局难料。"},
+                {"at": 5, "title": "结局已定", "fact": f"「{label}」的结局已定：局势崩塌，生灵涂炭。"},
+            ]
+        arc = {
+            "arc_id": arc_id,
+            "label": label or f"系列·{sid}",
+            "value": 100.0,
+            "tick_rate": float(tick_rate),
+            "gates": [],
+            "kind": "series",      # 标记：系列结局弧
+            "series_id": sid,
+        }
+        for g in gates or []:
+            ng = dict(g)
+            ng.setdefault("triggered", False)
+            ng.setdefault("settled", False)
+            ng.setdefault("region_id", region_id or "")
+            arc["gates"].append(ng)
+        ws["arcs"][arc_id] = arc
+        return True
+
     # ─────────────────────────────────────────────
     # 自治推进（按天）
     # ─────────────────────────────────────────────
@@ -145,7 +188,8 @@ class WorldSimulation:
                     fact = f"【{arc.get('label', '世界暗流')} · {gate['title']}】{gate['fact']}"
                     if fact not in ws["facts"]:
                         ws["facts"].append(fact)
-                    events.append({"type": "gate", "arc": arc.get("label"), "title": gate["title"], "fact": gate["fact"]})
+                    events.append({"type": "gate", "arc": arc.get("label"), "title": gate["title"],
+                                   "fact": gate["fact"], "region_id": gate.get("region_id", "")})
 
         # 2) 承诺待办到期检查：到期即视为执行（世界照约办事）
         for commit in ws["commitments"]:
@@ -175,6 +219,12 @@ class WorldSimulation:
             if not isinstance(eff, dict):
                 continue
             arc = ws["arcs"].get(eff.get("arc", ""))
+            # 兜底：直接用系列 ID（不带 series_ 前缀）时也匹配对应结局弧
+            if not arc:
+                for _a in ws["arcs"].values():
+                    if str(_a.get("series_id", "") or "") == str(eff.get("arc", "") or "").strip():
+                        arc = _a
+                        break
             if not arc:
                 continue
             delta = float(eff.get("delta", 0))
@@ -202,6 +252,42 @@ class WorldSimulation:
                     if fact not in ws["facts"]:
                         ws["facts"].append(fact)
         return applied
+
+    # ── 系列结局弧结算（供死亡模式每回合调用）──
+    @classmethod
+    def collect_series_settlements(cls, state: Dict) -> List[Dict]:
+        """收集已触发但尚未结算的系列结局 gate（tick 自转或 apply_influence 都可能触发）。
+        返回 [{series_id, arc_id, title, fact, region_id}]；标记 settled，防止重复结算。
+        死亡模式拿到后：刷新区域剧情 + 取消该系列进行中指引。"""
+        cls.ensure_state(state)
+        ws = state["world_sim"]
+        result = []
+        for arc_id, arc in ws["arcs"].items():
+            if str(arc.get("kind", "") or "") != "series":
+                continue
+            sid = str(arc.get("series_id", "") or "").strip()
+            if not sid:
+                continue
+            gates = arc.get("gates", [])
+            if not gates:
+                continue
+            # 只结算"最终结局"gate：下行弧取 at 最小者，上行弧取 at 最大者。
+            # 中间 gate 只作为世界自转的"计时警告"（既定事实 + 事件提示），不结算为结局。
+            pos = float(arc.get("tick_rate", 0) or 0) >= 0
+            final_gate = min(gates, key=lambda g: float(g.get("at", 0)))
+            if pos:
+                final_gate = max(gates, key=lambda g: float(g.get("at", 0)))
+            if not final_gate.get("triggered") or final_gate.get("settled"):
+                continue
+            final_gate["settled"] = True
+            result.append({
+                "series_id": sid,
+                "arc_id": arc_id,
+                "title": final_gate.get("title", ""),
+                "fact": final_gate.get("fact", ""),
+                "region_id": final_gate.get("region_id", ""),
+            })
+        return result
 
     # ─────────────────────────────────────────────
     # NPC 承诺待办
