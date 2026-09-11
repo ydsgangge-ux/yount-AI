@@ -94,6 +94,9 @@ class DeathModeEngine:
             "data": data,
         }
         self.state.setdefault("action_log", []).append(log_entry)
+        # 单调递增的日志序号：total 到 500 上限后不再变化，前端靠 seq 判断是否有新日志
+        self.state.setdefault("log_seq", 0)
+        self.state["log_seq"] += 1
         # 限制日志条数（最多500条）
         if len(self.state["action_log"]) > 500:
             self.state["action_log"] = self.state["action_log"][-500:]
@@ -4513,6 +4516,14 @@ class DeathModeEngine:
                     if dot.get("remaining", 0) <= 0:
                         dots.remove(dot)
 
+            # ── 回合开始：结算锻造回合buff（再生回血/持续回合递减）──
+            for _buff_char in [char, user_char]:
+                if _buff_char.get("hp", 0) <= 0:
+                    continue
+                if _buff_char is user_char and not user_in_combat:
+                    continue
+                CombatSystem._tick_forge_buffs(_buff_char)
+
             # ── 按出手顺序攻击 ──
             for initiative, role, attacker in actors:
                 if role == "ai" and cmd.get("ai_skip"):
@@ -7027,6 +7038,7 @@ class DeathModeEngine:
         return {
             "logs": sliced,
             "total": total,
+            "seq": state.get("log_seq", 0),  # 单调递增序号，前端用于检测新日志（total 到上限后不变）
             "limit": limit,
             "offset": offset,
             "character": {

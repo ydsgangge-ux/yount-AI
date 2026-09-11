@@ -9,7 +9,7 @@ const DeathModeUI = {
   _state: null,
   _classes: [],
   _logTimer: null,
-  _lastLogTotal: 0,
+  _lastLogKey: '',  // 最近一次日志判重 key（seq 或最新日志 time）
   _userName: '',   // 用户角色名（用于替换日志中的"你"）
 
   // ── 初始化 ──────────────────────────────────────
@@ -375,6 +375,9 @@ const DeathModeUI = {
           // 附魔描述（若已附魔）
           const enchantText = this._enchantText(item);
           const enchantHtml = enchantText ? `<div style="font-size:9px;color:#d29922;margin-top:1px;">${enchantText}</div>` : '';
+          // 高品级锻造特效（与附魔独立，仍可附魔）
+          const forgeHtml = (item.forge_effect || []).length
+            ? `<div style="font-size:9px;color:#a371f7;margin-top:1px;">✦ ${(item.forge_effect || []).map(e => e.name || e.type).join(' ')}</div>` : '';
           return `<div style="font-size:11px;color:${item.color || '#c9d1d9'};margin-bottom:3px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${slotIcon} ${item.name}（${item.rarity_name || '普通'}）</span>
@@ -386,6 +389,7 @@ const DeathModeUI = {
             </div>
             <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;font-size:9px;">${bonusHtml}</div>
             ${enchantHtml}
+            ${forgeHtml}
           </div>`;
         }).join('');
       } else {
@@ -824,9 +828,12 @@ const DeathModeUI = {
       const logs = data.logs || [];
       if (countEl) countEl.textContent = `共 ${data.total} 条记录`;
 
-      // 用 data.total 判断是否有新日志（logs.length 受 limit 限制，超过100条后永远相等）
-      if (data.total === this._lastLogTotal && container.children.length > 0) return;
-      this._lastLogTotal = data.total;
+      // 判断是否有新日志：优先用后端单调递增的 seq（total 到 500 上限后不再变化）；
+      // 旧后端无 seq 时回退用最新一条日志的 time
+      const lastEntryTime = logs.length > 0 ? (logs[0].time || '') : '';
+      const logKey = data.seq ?? lastEntryTime;
+      if (logKey === this._lastLogKey && container.children.length > 0) return;
+      this._lastLogKey = logKey;
 
       if (logs.length === 0) {
         container.innerHTML = `
@@ -1275,6 +1282,9 @@ const DeathModeUI = {
       // 附魔描述（若已附魔）
       const enchantText = this._enchantText(eq);
       const enchantHtml = enchantText ? `<div style="font-size:8px;color:#d29922;margin-top:1px;">${enchantText}</div>` : '';
+      // 高品级锻造特效（与附魔独立，仍可附魔）
+      const forgeHtml = (eq.forge_effect || []).length
+        ? `<div style="font-size:8px;color:#a371f7;margin-top:1px;">✦ ${(eq.forge_effect || []).map(e => e.name || e.type).join(' ')}</div>` : '';
       return `<div style="font-size:10px;color:${eq.color || '#c9d1d9'};margin-bottom:2px;padding:2px 4px;background:#161b22;border-radius:3px;border:1px solid #21262d;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
           <span style="display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;flex:1;">
@@ -1289,6 +1299,7 @@ const DeathModeUI = {
           ${weightHtml}
         </div>
         ${enchantHtml}
+        ${forgeHtml}
       </div>`;
     }).join('');
   },

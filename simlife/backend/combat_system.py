@@ -80,6 +80,11 @@ class CombatEntity:
                 for k, v in eq["stat_bonus"].items():
                     if k in result:
                         result[k] += v
+        # 锻造回合buff（高品级装备特效）
+        for b in self.__dict__.get("forge_buffs", []):
+            k, v = b.get("key"), b.get("value")
+            if k in result and v:
+                result[k] += v
         return result
 
     @property
@@ -246,6 +251,11 @@ class CombatSystem:
         for k, v in entity.get("temp_debuffs", {}).items():
             if k in base:
                 base[k] += v
+        # 锻造回合buff（高品级装备特效：疾风/灵巧等）
+        for b in entity.get("forge_buffs", []):
+            k, v = b.get("key"), b.get("value")
+            if k in base and v:
+                base[k] += v
         return base
 
     @staticmethod
@@ -266,6 +276,37 @@ class CombatSystem:
         if isinstance(entity, CombatEntity):
             return entity.name
         return entity.get("name", "未知")
+
+    @staticmethod
+    def _forge_buffs(entity) -> List[Dict]:
+        """锻造回合buff存储（dict / CombatEntity 通用）"""
+        if isinstance(entity, dict):
+            return entity.setdefault("forge_buffs", [])
+        return entity.__dict__.setdefault("forge_buffs", [])
+
+    @staticmethod
+    def _add_forge_buff(entity, key: str, value, turns: int, label: str):
+        """锻造回合buff：同类取较大值并刷新剩余回合"""
+        buffs = CombatSystem._forge_buffs(entity)
+        for b in buffs:
+            if b.get("key") == key:
+                b["value"] = max(b.get("value", 0), value)
+                b["remaining"] = max(b.get("remaining", 0), turns)
+                b["label"] = label
+                return
+        buffs.append({"key": key, "value": value, "remaining": turns, "label": label})
+
+    @staticmethod
+    def _tick_forge_buffs(entity):
+        """每回合开始：结算锻造回合buff（再生回血 / 剩余回合递减）"""
+        buffs = CombatSystem._forge_buffs(entity)
+        for b in buffs[:]:
+            if b.get("remaining", 0) > 0:
+                b["remaining"] -= 1
+                if b.get("key") == "regen":
+                    CombatSystem._add_hp(entity, int(b.get("value", 0)))
+            if b.get("remaining", 0) <= 0:
+                buffs.remove(b)
 
     @staticmethod
     def _enchant_attack_bonus(entity) -> int:
@@ -312,6 +353,11 @@ class CombatSystem:
         # 食物增益：攻击力临时加成（生活技能，仅dict实体）
         if isinstance(entity, dict):
             raw += int(entity.get("temp_life_attack", 0) or 0)
+        # 锻造回合buff：攻击力加成（狂怒）
+        atk_mult = sum(b.get("value", 0) for b in CombatSystem._forge_buffs(entity)
+                       if b.get("key") == "attack_pct")
+        if atk_mult:
+            raw = int(raw * (1 + atk_mult))
         return raw
 
     @staticmethod
@@ -321,6 +367,11 @@ class CombatSystem:
         # 食物增益：防御临时加成（生活技能，仅dict实体）
         if isinstance(entity, dict):
             result += int(entity.get("temp_life_defense", 0) or 0)
+        # 锻造回合buff：防御加成（铁壁）
+        def_mult = sum(b.get("value", 0) for b in CombatSystem._forge_buffs(entity)
+                       if b.get("key") == "defense_pct")
+        if def_mult:
+            result = int(result * (1 + def_mult))
         return result
 
     @staticmethod
@@ -365,6 +416,9 @@ class CombatSystem:
         for eff in CombatSystem._equipment_enchant_effects(entity):
             if eff.get("type") in ("crit", "wrath"):
                 crit += eff.get("strength", 0) or 0
+        # 锻造回合buff：暴击加成（致命）
+        crit += sum(b.get("value", 0) for b in CombatSystem._forge_buffs(entity)
+                    if b.get("key") == "crit_pct")
         return min(0.75, crit)
 
     @staticmethod
@@ -550,6 +604,7 @@ class CombatSystem:
             "dodged": defense_result.get("action") == "dodge" and defense_result.get("success"),
             "damage": final_damage,
             "raw_damage": damage,
+            "attack_type": attack_type,
             "defense_result": defense_result,
             "shield_absorbed": shield_absorbed,
             "description": f"{crit_str}{def_desc}，{damage_str}",
@@ -585,12 +640,15 @@ class CombatSystem:
 
     @staticmethod
     def _equipment_enchant_effects(entity) -> List[Dict]:
-        """收集装备上的附魔/锻造特效（equipment[i].enchant.effects / enchant.effect / 自带 effect）"""
+        """收集装备上的附魔/锻造特效（equipment[i].enchant.effects / enchant.effect / 自带 effect / 高品级锻造 forge_effect）"""
         equip_list = entity.get("equipment", []) if isinstance(entity, dict) else entity.equipment
         effects = []
         for e in equip_list or []:
             if not isinstance(e, dict):
                 continue
+            # 高品级锻造自带特效（机制同附魔特效，但不占用附魔位，可继续附魔）
+            if isinstance(e.get("forge_effect"), list):
+                effects.extend(x for x in e["forge_effect"] if isinstance(x, dict))
             ench = e.get("enchant")
             if isinstance(ench, dict):
                 if isinstance(ench.get("effects"), list):
@@ -682,13 +740,53 @@ class CombatSystem:
                     mx = attacker.get("max_mp", 20) or 20
                     attacker["mp"] = min(mx, attacker.get("mp", 0) + int(strength))
                     logs.append(f"🔷 {atk_name}「{ename}」回复{int(strength)}MP")
+            # ── 以下为高品级锻造特效（机制不同于附魔：追加攻击/回合buff/斩杀）──
+            # 连击：追加一次普攻（直接再打一次，不再重复触发其他特效）
+            elif etype == "extra_attack":
+                chance = eff.get("chance", 0.25)
+                if random.random() < chance:
+                    atk_type = atk_result.get("attack_type", "physical")
+                    extra = CombatSystem.attack(attacker, defender, defense_action=DefenseAction.NONE,
+                                                attack_type=atk_type, skill_multiplier=eff.get("strength", 0.65))
+                    if extra.get("damage", 0) > 0:
+                        logs.append(f"⚔️ {atk_name}的「{ename}」追加一次普攻！{extra['description']}")
+                    else:
+                        logs.append(f"⚔️ {atk_name}的「{ename}」追加攻击，{extra['description']}")
+            # 斩杀：目标血量不足35%时追加斩杀伤害（上限=自身攻击力×5，防止秒杀）
+            elif etype == "execute":
+                def_hp = defender.get("hp") if isinstance(defender, dict) else defender.hp
+                def_max = defender.get("max_hp") if isinstance(defender, dict) else defender.max_hp
+                if def_max and def_hp and def_hp <= def_max * 0.35:
+                    slash = int(raw * eff.get("strength", 0.45))
+                    cap = max(1, CombatSystem.calc_attack_power(attacker) * 5)
+                    slash = max(2, min(slash, cap))
+                    CombatSystem._add_hp(defender, -slash)
+                    logs.append(f"🗡️ {def_name}生命垂危！「{ename}」斩杀追加{slash}点伤害")
+            # 狂怒：命中后自身攻击力提升（回合buff）
+            elif etype == "berserk":
+                turns = int(eff.get("turns", 3))
+                val = eff.get("value", 0.25)
+                CombatSystem._add_forge_buff(attacker, "attack_pct", val, turns, ename)
+                logs.append(f"💢 {atk_name}的「{ename}」生效，攻击力+{int(val * 100)}%（{turns}回合）")
+            # 疾风：命中后自身敏捷提升（回合buff）
+            elif etype == "swift":
+                turns = int(eff.get("turns", 3))
+                val = int(eff.get("value", 15))
+                CombatSystem._add_forge_buff(attacker, "agility", val, turns, ename)
+                logs.append(f"💨 {atk_name}的「{ename}」生效，敏捷+{val}（{turns}回合）")
+            # 致命：命中后自身暴击率提升（回合buff）
+            elif etype == "lethal":
+                turns = int(eff.get("turns", 3))
+                val = eff.get("value", 0.15)
+                CombatSystem._add_forge_buff(attacker, "crit_pct", val, turns, ename)
+                logs.append(f"🎯 {atk_name}的「{ename}」生效，暴击+{int(val * 100)}%（{turns}回合）")
         if log is not None and isinstance(log, list):
             log.extend(logs)
         return logs
 
     @staticmethod
     def enchant_on_defend(defender, attacker, damage: int, log: Optional[List] = None) -> List[str]:
-        """护甲附魔特效（受击后触发）：荆棘/泰坦壁垒反伤。"""
+        """护甲附魔/锻造特效（受击后触发）：荆棘反伤；锻造·铁壁/反击/再生/灵巧。"""
         if damage <= 0:
             return []
         effects = CombatSystem._equipment_enchant_effects(defender)
@@ -698,11 +796,39 @@ class CombatSystem:
         def_name = CombatSystem._get_name(defender)
         atk_name = CombatSystem._get_name(attacker)
         for eff in effects:
-            if eff.get("type") == "thorns":
+            etype = eff.get("type", "")
+            ename = eff.get("name", etype) or etype
+            if etype == "thorns":
                 reflect = int(damage * (eff.get("strength", 0.3) or 0.3))
                 if reflect > 0:
                     CombatSystem._add_hp(attacker, -reflect)
-                    logs.append(f"🌵 {def_name}的「{eff.get('name', '荆棘')}」反弹{reflect}点伤害给{atk_name}")
+                    logs.append(f"🌵 {def_name}的「{ename}」反弹{reflect}点伤害给{atk_name}")
+            # ── 以下为高品级锻造防具特效（机制不同于附魔：回合buff/反击）──
+            # 铁壁：受击后自身防御提升（回合buff）
+            elif etype == "fortify":
+                turns = int(eff.get("turns", 3))
+                val = eff.get("value", 0.25)
+                CombatSystem._add_forge_buff(defender, "defense_pct", val, turns, ename)
+                logs.append(f"🛡️ {def_name}的「{ename}」生效，防御+{int(val * 100)}%（{turns}回合）")
+            # 反击：受击时概率反击
+            elif etype == "retaliate":
+                chance = eff.get("chance", 0.30)
+                if random.random() < chance:
+                    counter = max(1, int(CombatSystem.calc_attack_power(defender) * eff.get("strength", 0.60)))
+                    CombatSystem._add_hp(attacker, -counter)
+                    logs.append(f"💢 {def_name}的「{ename}」触发，反击{atk_name}{counter}点伤害")
+            # 再生：受击后每回合回复HP（回合buff）
+            elif etype == "regen":
+                turns = int(eff.get("turns", 3))
+                val = int(eff.get("value", 8))
+                CombatSystem._add_forge_buff(defender, "regen", val, turns, ename)
+                logs.append(f"💚 {def_name}的「{ename}」生效，每回合回复{val}HP（{turns}回合）")
+            # 灵巧：受击后自身敏捷提升（回合buff）
+            elif etype == "evade":
+                turns = int(eff.get("turns", 3))
+                val = int(eff.get("value", 15))
+                CombatSystem._add_forge_buff(defender, "agility", val, turns, ename)
+                logs.append(f"💨 {def_name}的「{ename}」生效，敏捷+{val}（{turns}回合）")
         if log is not None and isinstance(log, list):
             log.extend(logs)
         return logs

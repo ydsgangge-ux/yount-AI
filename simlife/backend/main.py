@@ -2140,6 +2140,8 @@ def api_death_mode_life_forge(data: dict):
                   "free": True, "desc": llm.get("desc", "") if llm else ""}
         rarity_map = {"perfect": "传说", "good": "史诗", "normal": "稀有"}
         result["rarity_name"] = rarity_map.get(quality, "稀有")
+        # 高品级（史诗/传说）：附加属性词条与锻造特效（不占用附魔位，仍可附魔）
+        LS.apply_forge_quality(result, quality, forging["level"], mat_val)
         LS.add_item_to_list(ls["equipment"], result, 1)
         ls["last_activity"] = f"锻造成功，得到{result_name}"
         rarity_name = rarity_map.get(quality, "稀有")
@@ -2152,8 +2154,10 @@ def api_death_mode_life_forge(data: dict):
         })
         engine._save()
         quality_name = rarity_map.get(quality, quality)
+        forge_desc = LS.forge_quality_desc(result)
         return {"success": True, "quality": quality, "quality_name": quality_name,
-                "message": f"锻造成功！得到{result['icon']} {result_name}（{quality_name}品质）",
+                "message": f"锻造成功！得到{result['icon']} {result_name}（{quality_name}品质）"
+                           + (f"｜{forge_desc}" if forge_desc else ""),
                 "xp_gained": xp, "level_up": lv["level_up"], "equipment": ls["equipment"]}
 
     # ── 固定设计图（武器/防具） ──
@@ -2161,6 +2165,9 @@ def api_death_mode_life_forge(data: dict):
     result["bonus"] = max(1, int(result["bonus"] * mult))
     rarity_map = {"perfect": "传说", "good": "史诗", "normal": "稀有"}
     result["rarity_name"] = rarity_map.get(quality, "稀有")
+    # 高品级（史诗/传说）：附加属性词条与锻造特效（不占用附魔位，仍可附魔）
+    bp_mat_val = LS.material_value(ls["inventory"], bp["materials"])
+    LS.apply_forge_quality(result, quality, forging["level"], bp_mat_val)
     LS.add_item_to_list(ls["equipment"], result, 1)
     if bp_id and bp_id not in ls["blueprints_known"]:
         ls["blueprints_known"].append(bp_id)
@@ -2174,8 +2181,10 @@ def api_death_mode_life_forge(data: dict):
     })
     engine._save()
     quality_name = rarity_map.get(quality, quality)
+    forge_desc = LS.forge_quality_desc(result)
     return {"success": True, "quality": quality, "quality_name": quality_name,
-            "message": f"锻造成功！得到{result['name']}（{quality_name}品质）",
+            "message": f"锻造成功！得到{result['name']}（{quality_name}品质）"
+                       + (f"｜{forge_desc}" if forge_desc else ""),
             "xp_gained": xp, "level_up": lv["level_up"], "equipment": ls["equipment"]}
 
 

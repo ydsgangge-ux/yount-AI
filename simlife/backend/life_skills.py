@@ -962,6 +962,105 @@ def free_gear_base(level: int, mat_val: int) -> Dict:
     return {"bonus": bonus, "type": "weapon", "damage_type": "physical"}
 
 
+# ── 高品级锻造自带属性/特效（借鉴附魔生效方式，但仍可附魔）────────────────────
+# 参考魔兽世界：高品质装备自带词条/特殊效果，数值克制、不做成碾压。
+# 史诗：1 条属性 + 1 个特效；传说：2 条属性 + 1 个更强特效；稀有：不加。
+# 特效写入 forge_effect（战斗命中触发，机制同附魔特效），不占用附魔位。
+
+FORGE_ATTR_POOL = [
+    ("strength", "力量"), ("agility", "敏捷"), ("intelligence", "智力"),
+    ("vitality", "耐力"), ("luck", "幸运"),
+]
+
+FORGE_EFFECT_POOL = {
+    "weapon_physical": [
+        ("extra_attack", "连击"), ("execute", "斩杀"), ("berserk", "狂怒"),
+        ("swift", "疾风"), ("lethal", "致命"),
+    ],
+    "weapon_magic": [
+        ("extra_attack", "连击"), ("execute", "斩杀"), ("berserk", "狂怒"),
+        ("swift", "疾风"), ("lethal", "致命"),
+    ],
+    "outfit": [
+        ("fortify", "铁壁"), ("retaliate", "反击"), ("regen", "再生"),
+        ("evade", "灵巧"),
+    ],
+}
+
+# 各锻造特效的参数模板（史诗基准；传说的强度在 apply_forge_quality 中上调）
+FORGE_EFF_PARAMS = {
+    # 连击：命中后概率追加一次普攻（伤害=本次普攻×strength）
+    "extra_attack": {"chance": 0.25, "strength": 0.65},
+    # 斩杀：目标血量<35%时追加斩杀伤害（=本次原始伤害×strength）
+    "execute": {"strength": 0.45},
+    # 狂怒：命中后自身攻击力提升 value（比例），持续 turns 回合
+    "berserk": {"value": 0.25, "turns": 3},
+    # 疾风：命中后自身敏捷提升 value，持续 turns 回合
+    "swift": {"value": 15, "turns": 3},
+    # 致命：命中后自身暴击率提升 value，持续 turns 回合
+    "lethal": {"value": 0.15, "turns": 3},
+    # 铁壁：受击后自身防御提升 value（比例），持续 turns 回合
+    "fortify": {"value": 0.25, "turns": 3},
+    # 反击：受击时概率反击（=攻击力×strength 伤害）
+    "retaliate": {"chance": 0.30, "strength": 0.60},
+    # 再生：受击后每回合回复 value HP，持续 turns 回合
+    "regen": {"value": 8, "turns": 3},
+    # 灵巧：受击后自身敏捷提升 value，持续 turns 回合
+    "evade": {"value": 15, "turns": 3},
+}
+
+
+def apply_forge_quality(item: Dict, quality: str, level: int, mat_val: int) -> Dict:
+    """高品级锻造：为装备附加属性词条与特殊特效（史诗/传说）。"""
+    if quality not in ("good", "perfect"):
+        return item
+    stats = item.setdefault("stat_bonus", {})
+    effects = item.setdefault("forge_effect", [])
+    # 属性词条：史诗 1 条，传说 2 条（不重复）
+    attr_count = 1 if quality == "good" else 2
+    attr_val = min(12, 2 + level // 3 + mat_val // 60)
+    if quality == "perfect":
+        attr_val = min(15, attr_val + 2)
+    pool = list(FORGE_ATTR_POOL)
+    random.shuffle(pool)
+    for key, label in pool[:attr_count]:
+        stats[key] = stats.get(key, 0) + attr_val
+    # 特效：按装备类型从词池里抽（传说强度更高）
+    eff_pool = None
+    if item.get("type") == "outfit":
+        eff_pool = FORGE_EFFECT_POOL["outfit"]
+    elif item.get("damage_type") == "magic":
+        eff_pool = FORGE_EFFECT_POOL["weapon_magic"]
+    else:
+        eff_pool = FORGE_EFFECT_POOL["weapon_physical"]
+    etype, ename = random.choice(eff_pool)
+    params = dict(FORGE_EFF_PARAMS[etype])
+    if quality == "perfect":
+        if "chance" in params:
+            params["chance"] = min(0.5, round(params["chance"] + 0.1, 2))
+        if "strength" in params:
+            params["strength"] = round(min(0.9, params["strength"] + 0.15), 2)
+        if "value" in params:
+            params["value"] = int(params["value"] * 1.4)
+        if "turns" in params:
+            params["turns"] += 1
+    eff = {"type": etype, "name": ename}
+    eff.update(params)
+    effects.append(eff)
+    return item
+
+
+def forge_quality_desc(item: Dict) -> str:
+    """高品级锻造自带的属性/特效，用于面板与日志展示。"""
+    parts = []
+    label_map = dict(FORGE_ATTR_POOL)
+    for k, v in (item.get("stat_bonus") or {}).items():
+        parts.append(f"{label_map.get(k, k)}+{v}")
+    for eff in (item.get("forge_effect") or []):
+        parts.append(f"特效·{eff.get('name') or eff.get('type', '')}")
+    return " ".join(parts)
+
+
 def forge_fishing_gear(ls: Dict, slot: str, gear_id: str) -> bool:
     """锻造产出钓鱼装备：将 gear_id 加入已拥有列表（若尚未拥有）"""
     fg = ls.setdefault("fish_gear", {})
