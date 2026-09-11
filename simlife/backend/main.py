@@ -2074,6 +2074,9 @@ def api_death_mode_life_forge(data: dict):
         input_step = int(steps_sorted[i]) if i < len(steps_sorted) else 0
         judgements.append(LS.judge_step(i, len(target_steps), input_step, forging["level"]))
     quality = LS.judge_overall(judgements, forging["level"])
+    # 材料品质加成：材料价值越高，普通/良好越有机会向上提升一档（封顶一次）
+    mat_val = LS.material_value(ls["inventory"], used_materials)
+    quality = LS.material_quality_bonus(quality, mat_val)
 
     for mat_id, qty in used_materials:
         LS.remove_materials(ls["inventory"], mat_id, qty)
@@ -2116,7 +2119,6 @@ def api_death_mode_life_forge(data: dict):
 
     # ── 自由组合：LLM 动态生成装备 ──
     if is_free:
-        mat_val = LS.material_value(ls["inventory"], used_materials)
         mat_desc = "、".join(
             f"{((LS._find_mat(mid) or {}).get('name') or mid)}×{qty}" for mid, qty in used_materials)
         llm = _life_llm_json(
@@ -2166,8 +2168,7 @@ def api_death_mode_life_forge(data: dict):
     rarity_map = {"perfect": "传说", "good": "史诗", "normal": "稀有"}
     result["rarity_name"] = rarity_map.get(quality, "稀有")
     # 高品级（史诗/传说）：附加属性词条与锻造特效（不占用附魔位，仍可附魔）
-    bp_mat_val = LS.material_value(ls["inventory"], bp["materials"])
-    LS.apply_forge_quality(result, quality, forging["level"], bp_mat_val)
+    LS.apply_forge_quality(result, quality, forging["level"], mat_val)
     LS.add_item_to_list(ls["equipment"], result, 1)
     if bp_id and bp_id not in ls["blueprints_known"]:
         ls["blueprints_known"].append(bp_id)

@@ -655,6 +655,30 @@ def quality_multiplier(quality: str) -> float:
     return {"perfect": 1.5, "good": 1.2, "normal": 1.0, "bad": -0.5, "fail": 0.0}.get(quality, 1.0)
 
 
+def material_quality_bonus(quality: str, mat_val: int) -> str:
+    """材料品质加成：材料价值越高，普通/良好越有机会向上提升一档（封顶一次）。
+
+    材料价值只决定"提升概率"，不会让严重失误的锻造也出完美：
+      - fail / perfect 不参与升级
+      - 好材料（稀有矿/稀有材料）明显提高升级机会
+    """
+    if quality not in ("normal", "good"):
+        return quality
+    if mat_val >= 150:
+        chance = 0.50
+    elif mat_val >= 100:
+        chance = 0.35
+    elif mat_val >= 60:
+        chance = 0.20
+    elif mat_val >= 30:
+        chance = 0.08
+    else:
+        chance = 0.0
+    if random.random() < chance:
+        return "perfect" if quality == "good" else "good"
+    return quality
+
+
 # ── 烹饪 ─────────────────────────────────────────────
 
 def get_cook_recipe(recipe_id: str) -> Optional[Dict]:
@@ -972,6 +996,11 @@ FORGE_ATTR_POOL = [
     ("vitality", "耐力"), ("luck", "幸运"),
 ]
 
+# 运气/体质为特别词条：品质越高、等级越高加得越多；高品质时更倾向被抽中
+SPECIAL_ATTR_KEYS = ("luck", "vitality")
+SPECIAL_ATTR_GROW = {"good": 1.2, "perfect": 1.5}
+SPECIAL_ATTR_WEIGHT = {"good": 1.8, "perfect": 2.5}
+
 FORGE_EFFECT_POOL = {
     "weapon_physical": [
         ("extra_attack", "连击"), ("execute", "斩杀"), ("berserk", "狂怒"),
@@ -1021,10 +1050,29 @@ def apply_forge_quality(item: Dict, quality: str, level: int, mat_val: int) -> D
     attr_val = min(12, 2 + level // 3 + mat_val // 60)
     if quality == "perfect":
         attr_val = min(15, attr_val + 2)
+    # 带权重抽取：运气/体质是特别词条，高品质时更倾向被抽中
     pool = list(FORGE_ATTR_POOL)
-    random.shuffle(pool)
-    for key, label in pool[:attr_count]:
-        stats[key] = stats.get(key, 0) + attr_val
+    weights = [SPECIAL_ATTR_WEIGHT.get(quality, 1.0) if key in SPECIAL_ATTR_KEYS else 1.0
+               for key, _ in pool]
+    chosen = []
+    for _ in range(attr_count):
+        total = sum(weights)
+        r = random.random() * total
+        acc = 0.0
+        idx = 0
+        for i, w in enumerate(weights):
+            acc += w
+            if r < acc:
+                idx = i
+                break
+        chosen.append(pool.pop(idx))
+        weights.pop(idx)
+    for key, label in chosen:
+        val = attr_val
+        if key in SPECIAL_ATTR_KEYS:
+            # 特别词条：品质高、等级高加得越多
+            val = int(attr_val * SPECIAL_ATTR_GROW.get(quality, 1.0)) + level // 4
+        stats[key] = stats.get(key, 0) + val
     # 特效：按装备类型从词池里抽（传说强度更高）
     eff_pool = None
     if item.get("type") == "outfit":
