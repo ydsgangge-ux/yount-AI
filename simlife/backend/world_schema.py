@@ -39,6 +39,11 @@ REGION_SCHEMA = {
     "level_range": [],   # 建议等级范围 [min, max]
     "biome": "",         # 生态/地貌类型（town/wild/dungeon/boss_lair/secret）
     "encounter_seq": 0,  # 怪物遭遇序号计数器（序号往后排：本次从上次结束处继续）
+    # 运行时剧情状态（region_agent/StoryAgent 写入，保存时须保留在顶层）
+    "story_state": "",       # 区域剧情进度文本
+    "story_progress": "",    # 区域剧情推进关键描述
+    "completed": False,      # 区域核心故事是否已完结（不再产生新区域委托）
+    "discoveries": [],       # 区域发现记录
 }
 
 NPC_SCHEMA = {

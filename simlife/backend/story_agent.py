@@ -89,18 +89,59 @@ class StoryAgent:
                         names = [r.get("name", "") for r in regions[:6] if isinstance(r, dict)]
                         region_ctx = f"已知区域：{'、'.join(names)}"
 
+        # ── 当前区域独立剧情（区域自己的故事，委托按区域生成）──
+        region_story_ctx = self._build_region_story_ctx(state, ws)
+
         # ── 3. 世界地理概述 ──
         geo_overview = ws.get("geography", {}).get("overview", "")
         if geo_overview:
             parts.append(f"【世界地理】{geo_overview[:200]}")
 
-        # ── 4. 当前区域本地设定 + 跨区域关系 ──
+        # ── 4. 当前区域本地设定 + 区域剧情 + 跨区域关系 ──
         if region_ctx:
             parts.append(region_ctx)
+        if region_story_ctx:
+            parts.append(region_story_ctx)
         if relations_ctx:
             parts.append(relations_ctx)
 
         return "\n".join(parts)
+
+    def _build_region_story_ctx(self, state: Dict, ws: Dict) -> str:
+        """当前区域的独立剧情进度（story_state/story_progress/completed，存于区域文件）。
+        区域独立原则：区域有自己的生活，委托只出本区故事；区域完结后不再出新委托。"""
+        try:
+            from simlife.worlds import world_manager as wm
+            world_id = ws.get("world_id", "")
+            if not world_id:
+                return ""
+            # 候选区域：优先 world_map 的区域 id（current_location 可能是子场景名，不可靠）
+            _wm_map = state.get("world_map") or {}
+            candidates = [
+                str(_wm_map.get("current_region_id", "") or "").strip(),
+                str(_wm_map.get("current_region", "") or "").strip(),
+                str(state.get("story", {}).get("current_location", "") or "").strip(),
+            ]
+            region = None
+            for c in candidates:
+                if not c:
+                    continue
+                region = wm.load_region(world_id, c)
+                if region:
+                    break
+            if not region:
+                return ""
+            lines = []
+            story = str(region.get("story_state") or region.get("story_progress") or "").strip()
+            if story:
+                lines.append(story)
+            if region.get("completed"):
+                lines.append("（该区域的核心故事已完结，不再产生新的区域委托）")
+            if not lines:
+                return ""
+            return "【当前区域剧情】\n" + "\n".join(lines)
+        except Exception:
+            return ""
 
     def _get_current_region_name(self, state: Dict, ws: Dict) -> str:
         """获取当前所在区域名（候选：地点名/区域id/地图当前区域）"""
@@ -830,6 +871,9 @@ class StoryAgent:
 - guide_text 是推荐路线文本（下一步该去哪、找谁、做什么），必须具体可执行（如"前往西边雾谷的废弃前哨，调查钟楼下的地窖"）
 - 系列指引时，series_id 用英文蛇形命名（如 "series_dark_guild_probe"），series_title 给中文名
 - 不再输出 objectives 英文关键词与 rewards 数值：奖励不由任务面板发放，NPC 在剧情中答应给什么，后续剧情兑现时通过 items_gained/gold_gained 发放
+- 【区域独立·最严格】指引必须基于【当前区域剧情】和【当前区域】设定生成——只出"这个区域自己的故事"（本区人物、本区地点、本区事件，区域有自己的生活）。绝不能凭空生成与当前区域无关的委托。玩家只是路过此地、交流、遇到本区的故事。
+- 【主线定点·严格】主线类指引（封印石、世界暗流、时空裂隙等与【世界暗流】/【命运指向】相关的）**只有**当【命运指向】明确提到当前区域时才可生成（此时 mainline 填 true）；其余情况主线类指引一律填 null。不要在无关区域生成主线委托。
+- 【区域完结】若【当前区域剧情】标注"核心故事已完结"，则不再生成该区域的任何新指引（填 null）。
 
 返回JSON格式（重要：narrative控制在150字以内，确保outcome_type等后续字段能完整输出）：
 {{
@@ -860,6 +904,7 @@ class StoryAgent:
       "series_order": 1,
       "series_title": "系列名（仅系列指引首条填）",
       "series_description": "系列简介（仅系列指引首条填）",
+      "mainline": "是否属于主线剧情（封印石/世界暗流等），仅当【命运指向】指向当前区域时才可为 true，否则填 false",
       "auto_complete": true
     }}
   ] 或 null,

@@ -461,6 +461,8 @@ QUEST_SERIES = {
 # ─────────────────────────────────────────────
 # QuestSystem 核心类
 # ─────────────────────────────────────────────
+MAX_SERIES_SEGMENTS = 8  # 单个系列指引的段数上限：超过则强制走向结局（防止"取一块又一块"没完没了）
+
 class QuestSystem:
     """任务系统核心，所有方法都是 classmethod，操作 state 字典"""
 
@@ -497,6 +499,45 @@ class QuestSystem:
                 _aq["guide_text"] = _aq.get("description", _aq.get("title", ""))
         return q
 
+    # ── 系列主题去重（防止"同一主题反复开新系列"，如"再取一块封印石"）──
+    _SERIES_STOP_BIGRAMS = {
+        "的", "了", "在", "与", "和", "并", "及", "之", "一", "是", "为", "要", "去", "取",
+        "把", "被", "就", "从", "到", "于", "等", "或", "地", "得", "着", "过", "么", "个",
+        "这", "那", "你", "我", "他", "她", "它", "们", "让", "给", "向", "往", "以", "对",
+        "有", "没", "无", "不", "也", "还", "又", "再", "最", "很", "其", "某", "些",
+    }
+
+    @classmethod
+    def _topic_bigrams(cls, text: str) -> set:
+        """提取文本主题二元组集合（过滤标点/停用词），用于系列主题相似度比较。"""
+        s = "".join(c for c in str(text or "") if "\u4e00" <= c <= "\u9fff" or c.isalnum())
+        toks = set()
+        for i in range(len(s) - 1):
+            t = s[i:i + 2]
+            if t not in cls._SERIES_STOP_BIGRAMS and not t.isdigit():
+                toks.add(t)
+        return toks
+
+    @classmethod
+    def _match_series_by_topic(cls, state: Dict, offer: Dict) -> str:
+        """新系列 offer 若与某个已有系列主题强重叠（共享≥2个主题二元组），
+        返回该已有系列ID（复用旧系列，避免平行系列无限增殖）；否则返回空串。"""
+        existing = state["quests"].get("dynamic_series", {})
+        if not existing:
+            return ""
+        cand = "{} {}".format(offer.get("series_title") or offer.get("title") or "",
+                              offer.get("title") or "")
+        cand_bg = cls._topic_bigrams(cand)
+        if not cand_bg:
+            return ""
+        best_sid, best_score = "", 0
+        for sid, meta in existing.items():
+            ex_bg = cls._topic_bigrams("{} {}".format(meta.get("title", ""), meta.get("description", "")))
+            score = len(cand_bg & ex_bg)
+            if score > best_score:
+                best_sid, best_score = sid, score
+        return best_sid if best_score >= 2 else ""
+
     # ── 动态任务生成（LLM 叙事触发）──
     @classmethod
     def create_dynamic_quests(cls, state: Dict, offers: List[Dict], ending_hint: str = "") -> Tuple[int, List[str]]:
@@ -510,6 +551,21 @@ class QuestSystem:
         返回：(成功创建数量, [任务标题列表])
         """
         cls._ensure_state(state)
+
+        # 区域完结清理：已标记完成的区域，其历史委托不再保留/展示（区域故事已收尾）
+        try:
+            _wm_done = state.get("world_map") or {}
+            _done_regions = {rid for rid, rdata in (_wm_done.get("regions") or {}).items()
+                             if rdata.get("completed")}
+            if _done_regions:
+                state["quests"]["available_offers"] = [
+                    o for o in state["quests"]["available_offers"]
+                    if str(o.get("region_id", "") or "").strip() not in _done_regions
+                    or o.get("mainline")
+                ]
+        except Exception:
+            pass
+
         if not isinstance(offers, list) or not offers:
             return 0, []
 
@@ -578,6 +634,24 @@ class QuestSystem:
             sid_clean = str(sid_raw).strip() if sid_raw else ""
             sid_final = sid_clean if sid_clean and sid_clean.lower() != "none" else None
 
+            # 系列去重：LLM 生成的 series_id 不稳定，同一主题（如"再取一块封印石"）
+            # 常开出新系列 → 新系列若与已有系列主题强重叠，则并入旧系列
+            if sid_final and sid_final not in state["quests"]["dynamic_series"]:
+                _match_sid = cls._match_series_by_topic(state, offer)
+                if _match_sid:
+                    sid_final = _match_sid
+                    # 段号接在已有系列之后（含可接offer/进行中指引/已推进进度），避免并行重复指引
+                    _max_order = 0
+                    for _o in state["quests"]["available_offers"]:
+                        if _o.get("series_id") == sid_final:
+                            _max_order = max(_max_order, int(_o.get("series_order", 0)))
+                    for _q in state["quests"]["active"]:
+                        if _q.get("series_id") == sid_final:
+                            _max_order = max(_max_order, int(_q.get("series_order", 0)))
+                    _max_order = max(_max_order,
+                                     int(state["quests"]["series_progress"].get(sid_final, 0) or 0))
+                    offer["series_order"] = _max_order + 1
+
             offer_record = {
                 "id": qid,
                 "title": title,
@@ -594,6 +668,7 @@ class QuestSystem:
                     "gold": int(offer.get("rewards", {}).get("gold", 20)),
                 },
                 "auto_complete": bool(offer.get("auto_complete", True)),
+                "mainline": bool(offer.get("mainline", False)),  # 主线类委托（封印石/世界暗流）：只在目标区域出现
                 "source": "dynamic",  # 标记为 LLM 动态生成
                 "world_id": cls._current_world_id(state),  # 记录所属世界，切世界后过滤
                 "region_id": _current_region,  # 记录当前区域，换区域后过滤
@@ -900,6 +975,19 @@ class QuestSystem:
         guide_text = str(guide_advance.get("guide_text") or guide_advance.get("description", "") or "").strip()
         if not title or not guide_text:
             return False, "新指引缺少标题或文本"
+
+        # 段数上限：超过即强制系列走向结局，避免"取一块又一块"没完没了
+        # （结算逻辑会刷新区域剧情并取消该系列所有指引，形成硬终点）
+        if next_order > MAX_SERIES_SEGMENTS:
+            try:
+                from simlife.backend.world_simulation import WorldSimulation
+                WorldSimulation.force_series_ending(
+                    state, sid,
+                    fact=f"【系列结局】「{sid}」的追寻走到了尽头：最后一块拼图归位，一切尘埃落定。",
+                )
+            except Exception:
+                pass
+            return True, f"系列「{sid}」已到最终章，指引结束，剧情走向结局。"
 
         # 旧段（order < next_order）→ 移入 cancelled_ids
         active = state["quests"]["active"]

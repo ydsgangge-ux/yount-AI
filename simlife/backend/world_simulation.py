@@ -289,6 +289,37 @@ class WorldSimulation:
             })
         return result
 
+    @classmethod
+    def force_series_ending(cls, state: Dict, series_id: str, fact: str = "") -> bool:
+        """强制把系列推向结局（段数超限/剧情完结时调用）：
+        将弧值打到终点并触发最终结局 gate，交由结算逻辑刷新区域剧情 + 取消该系列指引。
+        不标记 settled，保证 collect_series_settlements 能拾取并完成区域刷新。"""
+        cls.ensure_state(state)
+        sid = str(series_id or "").strip()
+        if not sid:
+            return False
+        arc = None
+        for _a in state["world_sim"]["arcs"].values():
+            if str(_a.get("kind", "") or "") == "series" and \
+               str(_a.get("series_id", "") or "").strip() == sid:
+                arc = _a
+                break
+        if not arc:
+            return False
+        gates = arc.get("gates", [])
+        if not gates:
+            return False
+        pos = float(arc.get("tick_rate", 0) or 0) >= 0
+        final_gate = min(gates, key=lambda g: float(g.get("at", 0)))
+        if pos:
+            final_gate = max(gates, key=lambda g: float(g.get("at", 0)))
+        arc["value"] = 100.0 if pos else 0.0
+        final_gate["triggered"] = True
+        if fact:
+            if fact not in state["world_sim"]["facts"]:
+                state["world_sim"]["facts"].append(fact)
+        return True
+
     # ─────────────────────────────────────────────
     # NPC 承诺待办
     # ─────────────────────────────────────────────

@@ -1068,18 +1068,44 @@ class DeathModeEngine:
         # ── 遭遇确认响应：用户对"待确认遭遇"选择迎战/绕开 ──
         if state.get("pending_encounter"):
             _enc_fight = (action == "_encounter_fight"
-                          or (action_type == "free" and any(k in (action or "") for k in
-                                                            ("迎战", "应战", "开打", "开战", "上吧", "干他们", "杀了它们",
-                                                             "打就打", "打吧", "动手", "迎上去", "奉陪", "应敌"))))
+                          or (action_type == "free" and any(k in (action or "") for k in (
+                              "迎战", "应战", "开打", "开战", "上吧", "干他们", "杀了它们",
+                              "打就打", "打吧", "动手", "迎上去", "奉陪", "应敌",
+                              # 宽泛战斗意图：说"打/消灭石像/杀/攻击"等都应直接开战
+                              "消灭", "击杀", "干掉", "杀死", "攻击", "袭击", "打怪",
+                              "打", "杀", "灭", "战", "攻", "砍", "劈", "揍", "斩",
+                              "冲", "干", "怼", "斗", "收拾", "清剿", "清掉", "清场"))))
             _enc_avoid = (action == "_encounter_avoid"
-                          or (action_type == "free" and any(k in (action or "") for k in
-                                                            ("绕开", "避开", "绕道", "躲开", "不打了", "不打", "撤退", "离开"))))
+                          or (action_type == "free" and any(k in (action or "") for k in (
+                              "绕开", "避开", "绕道", "躲开", "不打了", "不打", "撤退",
+                              "离开", "走人", "逃走", "逃跑", "撤", "退走", "放过",
+                              "不管", "无视", "继续探索", "绕过去", "溜走"))))
             if _enc_fight or _enc_avoid:
-                _enc_result = self._resolve_pending_encounter(state, fight=_enc_fight)
+                # 同时含战斗与撤退意图时（如"算了不打了"）→ 以"不打"为准
+                _enc_go_fight = _enc_fight and not _enc_avoid
+                _enc_result = self._resolve_pending_encounter(state, fight=_enc_go_fight)
                 # 绕开 → 直接返回平静叙事；迎战 → 敌人已入战斗，继续走正常战斗流程
-                if not _enc_fight:
+                if not _enc_go_fight:
                     self._save()
                     return _enc_result
+            elif action_type == "free":
+                # 待确认遭遇未决 + 无明确意图 → 保持待确认，不再重复生成剧情。
+                # （避免 LLM 每回合把同一场景重讲一遍、NPC 反复发问的死循环）
+                _pen = state.get("pending_encounter") or {}
+                _pen_nar = str(_pen.get("narrative") or "").strip()
+                self._save()
+                _choices = state.get("story", {}).get("choices", [])
+                return {
+                    "narrative": (f"{_pen_nar}\n\n⚔️ 战斗触发，请选择：输入「迎战」开打，或「绕开」避开。"
+                                  if _pen_nar else "⚔️ 战斗触发，请选择：输入「迎战」开打，或「绕开」避开。"),
+                    "in_combat": False,
+                    "pending_encounter": True,
+                    "encounter": True,
+                    "choices": _choices,
+                    "enemies_sighted": [{"name": e.get("name", "?"),
+                                         "level": e.get("level", 1),
+                                         "type": e.get("type", "normal")} for e in (_pen.get("enemies") or [])],
+                }
 
         # 进区托管：每次行动前把当前区域预设NPC补齐进可交互池（覆盖LLM叙事移动/战斗场景）
         try:
@@ -5389,7 +5415,7 @@ class DeathModeEngine:
         - 敌人先不进入战斗（state["in_combat"] 保持 False）
         - 存入 state["pending_encounter"]，等用户选"迎战"才真正开战
         - 写入 story["choices"]，前端自动渲染"迎战/绕开"两个按钮
-        - 附带同区域 NPC 的叙事反应，让角色世界有真实感
+        - 叙事直接提示"战斗触发，请选择"，不借 NPC 之口发问
         """
         state["pending_encounter"] = {
             "enemies": enemies,
@@ -5400,10 +5426,10 @@ class DeathModeEngine:
         # 清掉已实体化的 spotted（避免重复生成）
         state["spotted_enemies"] = []
 
-        # 组装遭遇叙事：同区域 NPC 反应（若有人在旁）
-        npc_react = self._encounter_npc_reaction(state)
-        if npc_react:
-            narrative = (narrative + "\n\n" + npc_react).strip() if narrative else npc_react
+        # 战斗触发提示：直接写明"战斗触发，请选择"，不借 NPC 之口发问
+        # （避免随机冒出从未出场的 NPC，也让玩家明确知道该选迎战还是绕开）
+        _trigger_line = "⚔️ 战斗触发，请选择……"
+        narrative = (narrative + "\n\n" + _trigger_line).strip() if narrative else _trigger_line
 
         # 写选择项（前端渲染成按钮）
         state.setdefault("story", {})["choices"] = [
@@ -5423,48 +5449,6 @@ class DeathModeEngine:
                                  "level": e.get("level", 1),
                                  "type": e.get("type", "normal")} for e in enemies],
         }
-
-    def _encounter_npc_reaction(self, state: Dict) -> str:
-        """同区域友好 NPC 对敌人出现的叙事反应（仅叙事，不实际入队）"""
-        try:
-            region = self.world_map.current_region_id if self.world_map else None
-            cands = [n for n in (self.npc_system.npcs.values() if self.npc_system else [])
-                     if getattr(n, "alive", True) and (not region or n.location == region)]
-            if not cands:
-                return ""
-            # 优先挑选当前场景中已出现的 NPC（scene_description/当前叙事提到过），
-            # 避免随机拉出一个从未出场的 NPC，让玩家觉得"突然冒出来"
-            _scene_text = " ".join([
-                str(state.get("story", {}).get("scene_description", "") or ""),
-                str(state.get("story", {}).get("current_location", "") or ""),
-                str(state.get("story", {}).get("pending_action", "") or ""),
-            ])
-
-            def _in_scene(n):
-                if not getattr(n, "name", ""):
-                    return False
-                if n.name in _scene_text:
-                    return True
-                # 拆分全名（如"艾尔文·月歌"），任一段出现在场景文本即视为在场
-                parts = [p for p in re.split(r"[·、\s]", n.name) if p]
-                return any(len(p) >= 2 and p in _scene_text for p in parts)
-
-            in_scene = [n for n in cands if _in_scene(n)]
-            # 挑一个最可能的同行者（优先在场 NPC；无则随机，避免每次都同一人）
-            npc = random.choice(in_scene) if in_scene else random.choice(cands)
-            name = npc.name or "同行者"
-            # 用 NPC 性格/好感度轻微影响反应措辞
-            rel = getattr(npc, "relationship", 0) or 0
-            brave = getattr(npc, "bravery", 50) or 50
-            if rel >= 40 and brave >= 50:
-                react = f"{name}一步上前，握紧武器护在你身前，沉声道：'当心！我来替你挡一阵！'"
-            elif brave < 30:
-                react = f"{name}脸色煞白，往后连退两步，声音发颤：'那、那些东西……我们快走！'"
-            else:
-                react = f"{name}压低身形，压低声音提醒：'别出声，它们盯上这边了。要打还是撤？'"
-            return react
-        except Exception:
-            return ""
 
     def _resolve_pending_encounter(self, state: Dict, fight: bool) -> Dict:
         """用户对"待确认遭遇"做出选择：
