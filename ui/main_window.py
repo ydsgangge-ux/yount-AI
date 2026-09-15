@@ -3313,49 +3313,89 @@ class CoderPage(QWidget):
         "info":    "#8b949e",
     }
 
+    LANG_CHOICES = ["python", "javascript", "html", "bash", "bat", "java", "cpp", "csharp", "go", "c"]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker  = None
         self._agent_llm = None
+        self._cfg     = None   # 最近一次从设置页同步的配置
         self._setup_ui()
 
     def set_llm(self, llm_client):
+        """（兼容）仅注入 LLM 客户端，下拉框仍按配置或类名填充"""
         self._agent_llm = llm_client
-        # 根据 provider 填充模型下拉框
-        self._populate_model_combo(llm_client)
+        self._populate_model_combo()
 
-    def _populate_model_combo(self, llm_client):
-        """根据 LLM 类型填充可用的编程模型"""
-        self._model_combo.clear()
-        provider = ""
+    def set_config(self, cfg: dict = None):
+        """同步设置页的大模型配置到编程智能体页：重建专用 LLM 客户端并刷新下拉框。
+
+        改设置后调用可立即生效（无需重启）：provider/模型/key 均从设置读取，
+        不再依赖类名猜测，也不受其他配置改变影响。
+        """
+        self._cfg = dict(cfg or {})
+        self._rebuild_llm()
+        self._populate_model_combo()
+
+    def _rebuild_llm(self):
+        """根据设置配置重建本页专用 LLM 客户端（供编程智能体独立使用）"""
+        if not self._cfg:
+            return
         try:
-            cls_name = llm_client.__class__.__name__
-            if "DeepSeek" in cls_name:
-                provider = "deepseek"
-            elif "OpenAI" in cls_name:
-                provider = "openai"
-            elif "Claude" in cls_name:
-                provider = "claude"
-            elif "Qwen" in cls_name:
-                provider = "qwen"
-            elif "Ollama" in cls_name:
-                provider = "ollama"
+            from engine.llm_client import create_client
+            import os
+            self._agent_llm = create_client(
+                api_key      = self._cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", ""),
+                provider     = self._cfg.get("api_provider", "deepseek"),
+                model        = self._cfg.get("llm_model", None),
+                ollama_model = self._cfg.get("ollama_model", "qwen2.5:7b"),
+                ollama_url   = self._cfg.get("ollama_url", "http://localhost:11434"),
+            )
         except Exception:
             pass
 
-        from engine.coder import CODER_MODELS
-        models = CODER_MODELS.get(provider, [])
+    def _populate_model_combo(self):
+        """填充编程模型下拉框：优先读设置配置的 provider/model，其次按类名推断，最后 Ollama 动态获取"""
+        self._model_combo.clear()
+        from engine.llm_client import PROVIDER_INFO
 
-        if provider == "ollama" and hasattr(llm_client, "list_models"):
-            ollama_models = llm_client.list_models()
-            for m in ollama_models:
+        # 1) 确定 provider：优先设置配置，其次按 LLM 类名推断
+        provider = ""
+        if self._cfg:
+            provider = self._cfg.get("api_provider", "")
+        if not provider and self._agent_llm is not None:
+            try:
+                cls_name = self._agent_llm.__class__.__name__
+                for tag, prov in (("DeepSeek", "deepseek"), ("OpenAI", "openai"),
+                                  ("Claude", "claude"), ("Qwen", "qwen"),
+                                  ("Ollama", "ollama")):
+                    if tag in cls_name:
+                        provider = prov
+                        break
+            except Exception:
+                pass
+
+        # 2) 填充模型
+        if provider == "ollama" and hasattr(self._agent_llm, "list_models"):
+            for m in self._agent_llm.list_models():
                 self._model_combo.addItem(m, m)
-        elif models:
-            for model_id, model_desc in models:
-                self._model_combo.addItem(f"{model_id}  {model_desc}", model_id)
+        else:
+            info = PROVIDER_INFO.get(provider, {})
+            for m in info.get("models", []):
+                self._model_combo.addItem(m, m)
 
-        # 默认选中"强推理"模型（第二个选项）
-        if self._model_combo.count() >= 2:
+        # 3) 默认选中设置里保存的模型（无配置则选中默认）
+        if self._cfg:
+            info = PROVIDER_INFO.get(provider, {})
+            saved = self._cfg.get("llm_model") or info.get("default_model", "")
+            if saved:
+                idx = self._model_combo.findText(saved)
+                if idx >= 0:
+                    self._model_combo.setCurrentIndex(idx)
+                else:
+                    self._model_combo.setCurrentText(saved)
+        elif self._model_combo.count() >= 2:
+            # 兼容旧逻辑：无可配置时默认"强推理"（第二个选项）
             self._model_combo.setCurrentIndex(1)
 
     def _setup_ui(self):
@@ -3379,7 +3419,7 @@ class CoderPage(QWidget):
 
         self._lang_combo = QComboBox()
         self._lang_combo.addItems([
-            "python", "javascript", "html", "bash", "bat",
+            "auto", "python", "javascript", "html", "bash", "bat",
             "java", "c", "cpp", "csharp", "go"
         ])
         self._lang_combo.setFixedWidth(120)
@@ -3779,6 +3819,33 @@ class CoderPage(QWidget):
         if d:
             self._save_path.setText(d)
 
+    def _auto_detect_lang(self, task: str, context: str = "") -> str:
+        """自动判断任务最适合的编程语言（通过 LLM 快速分类）。
+
+        用户选"auto"时，不把语言写死、也不限制编程能力，
+        让 LLM 根据任务描述挑选最合适的语言，再交给正常运行/判定流程。
+        """
+        choices = ", ".join([c for c in self.LANG_CHOICES if c != "bat"])
+        prompt = (
+            "下面这个编程任务最适合用什么语言编写？\n"
+            f"只能从这些里选一个并只输出该语言名：{choices}\n\n"
+            f"任务：{task}\n"
+            + (f"参考：\n{context[:2000]}" if context.strip() else "")
+        )
+        try:
+            resp = self._agent_llm.generate(
+                prompt, max_tokens=20, temperature=0.0
+            )
+        except Exception:
+            return "python"
+        low = (resp or "").lower()
+        # 按特异性高的优先匹配，避免 "c" 误命中 "python"/"script" 等
+        for opt in ("javascript", "csharp", "cpp", "c", "go", "bash",
+                    "python", "html", "java"):
+            if opt in low:
+                return opt
+        return "python"
+
     def _start(self):
         task = self._task_input.text().strip()
         if not task:
@@ -3791,6 +3858,10 @@ class CoderPage(QWidget):
             return
 
         lang    = self._lang_combo.currentText()
+        if lang == "auto":
+            resolved = self._auto_detect_lang(task, self._context_input.toPlainText())
+            self._log_msg(f"🔎 语言(自动) → {resolved}", "info")
+            lang = resolved
         save_to = self._save_path.text().strip() or str(_get_desktop())
 
         self._log_view.clear()
@@ -6536,8 +6607,10 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_run, daemon=True).start()
 
     def _on_settings_changed(self, cfg: dict):
-        # 重建 agent 以应用新 API key
-        pass  # 由主程序处理
+        # 同步编程智能体页的大模型配置（改设置后下拉框/LLM 立即刷新）
+        if hasattr(self, "coder_page"):
+            self.coder_page.set_config(cfg)
+        # 重建 agent 以应用新 API key —— 由主程序处理
 
     def _update_memory_count(self):
         try:

@@ -364,8 +364,9 @@ class AGIApp:
             self._simlife_timer.start(30_000)
             print("[SimLife] 悬浮窗状态面板已启用")
 
-        # 把 LLM 客户端共享给编程智能体页
-        self.main_win.coder_page.set_llm(agent.b.llm)
+        # 把设置配置同步给编程智能体页（模型下拉框/LLM 与"设置→大模型"保持一致）
+        if hasattr(self.main_win, "coder_page"):
+            self.main_win.coder_page.set_config(self.cfg)
 
         # 启动记忆衰减定时器（每2小时衰减一次）
         self._decay_timer = QTimer()
