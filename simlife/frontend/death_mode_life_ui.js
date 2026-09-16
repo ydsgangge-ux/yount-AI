@@ -314,7 +314,7 @@ const LifeSkillsUI = {
     const lit = Object.keys(dex).length;
     main.innerHTML = `
       <h4 style="margin:0 0 10px;color:#58a6ff;font-size:14px;">📖 鱼类图鉴</h4>
-      <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">钓到新鱼种即自动点亮。尚未钓到的鱼始终神秘，等你亲手上钩。</div>
+      <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">钓到新鱼种即自动点亮。尚未钓到的鱼始终神秘，等你亲手上钩。点击已钓到的鱼查看介绍。</div>
       <div style="font-size:12px;margin-bottom:12px;">已点亮 <b style="color:#f0883e;">${lit}</b> <span style="color:#8b949e;">/ ${all.length} 种</span></div>
       ${zones.map(z => {
         const fishes = all.filter(f => f.zones.includes(z.id));
@@ -325,11 +325,11 @@ const LifeSkillsUI = {
             ${fishes.map(f => {
               const rec = dex[f.id];
               if (rec) return `
-                <div title="${f.name} · 钓到${rec.times}次 · 最大 ${rec.best}kg" style="padding:8px 6px;background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:8px;text-align:center;cursor:default;">
+                <div title="点击查看介绍" onclick="LifeSkillsUI._showFishCard('${f.id}')" style="padding:8px 6px;background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:8px;text-align:center;cursor:pointer;">
+                  ${f.boss ? '<div style="font-size:9px;color:#f85149;font-weight:bold;margin-bottom:2px;">💀 BOSS</div>' : ''}
                   ${this._fishSVG(f, 56)}
                   <div style="font-size:10px;color:#c9d1d9;margin-top:3px;">${f.name}</div>
                   <div style="font-size:9px;color:${this._rarityColor(f.rarity)};">${this._rarityName(f.rarity)}</div>
-                  <div style="font-size:9px;color:#7ee787;margin-top:2px;font-weight:600;">🏆 ${rec.best}kg</div>
                 </div>`;
               return `
                 <div title="尚未钓到" style="padding:8px 6px;background:#0d1117;border:1px dashed #30363d;border-radius:8px;text-align:center;opacity:.55;">
@@ -340,6 +340,95 @@ const LifeSkillsUI = {
           </div>
         </div>`;
       }).join('')}`;
+  },
+
+  // 点击图鉴卡片：弹出鱼的生态介绍（水域/食性/性情/体型等）
+  _showFishCard(id) {
+    const f = (this._data.fish_table || []).find(x => x.id === id);
+    if (!f) return;
+    const zoneNames = (this._data.fish_zones || [])
+      .filter(z => f.zones.includes(z.id)).map(z => z.name).join('、');
+    const bossTag = f.boss ? ' · 💀 BOSS' : '';
+    const overlay = document.createElement('div');
+    overlay.id = 'fish-card-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.78);z-index:999999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#0d1117;border:1px solid ${this._rarityColor(f.rarity)};border-radius:12px;padding:20px 24px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;">
+          <span style="font-size:44px;">${f.icon}</span>
+          <div>
+            <div style="font-size:16px;color:#e6edf3;font-weight:bold;">${f.name}${bossTag}</div>
+            <div style="font-size:11px;color:${this._rarityColor(f.rarity)};">${this._rarityName(f.rarity)} · ${f.family}</div>
+          </div>
+        </div>
+        <div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px;padding:8px 10px;background:#161b22;border-radius:8px;">${f.desc || '神秘而难以捉摸的物种。'}</div>
+        <div style="font-size:12px;color:#e6edf3;display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-bottom:4px;">
+          <span>📍 水域：<span style="color:#8b949e;">${zoneNames}</span></span>
+          <span>📏 体型：<span style="color:#8b949e;">${this._fishSizeName(f)}</span></span>
+          <span>🍽 食性：<span style="color:#8b949e;">${this._fishDiet(f)}</span></span>
+          <span>⚔ 性情：<span style="color:#8b949e;">${this._fishTemper(f)}</span></span>
+          <span>🎣 咬钩：<span style="color:#8b949e;">${this._fishBite(f)}</span></span>
+          <span>⏳ 挣扎：<span style="color:#8b949e;">${this._fishStruggle(f)}</span></span>
+        </div>
+        <button onclick="document.getElementById('fish-card-overlay').remove()" style="margin-top:14px;width:100%;padding:8px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;cursor:pointer;font-size:12px;">关闭</button>
+      </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  },
+
+  // 体型描述（按最大体重）
+  _fishSizeName(f) {
+    const m = f.max || 0;
+    if (m < 1) return '巴掌大的小鱼';
+    if (m < 5) return '中小体型';
+    if (m < 20) return '中型';
+    if (m < 100) return '大型';
+    if (m < 500) return '巨型';
+    return '传说巨兽';
+  },
+
+  // 食性描述（按家族）
+  _fishDiet(f) {
+    const fam = f.family;
+    if (fam === '传说') return f.boss ? '未知，吞噬一切靠近的生灵' : '传说的食粮，无从考究';
+    if (['鲈鱼', '梭鱼', '石斑鱼'].includes(fam)) return '肉食，捕食小鱼虾';
+    if (['鳟鱼', '鲑鱼'].includes(fam)) return '肉食，喜昆虫与冷水小鱼';
+    if (['鲶鱼', '鳗鱼'].includes(fam)) return '肉食，伏击底栖生物';
+    if (['鲟鱼', '鳕鱼'].includes(fam)) return '底栖，吞食软体与甲壳';
+    if (['金枪鱼', '鲹科', '旗鱼'].includes(fam)) return '上层掠食者，追猎鱼群';
+    if (['深海'].includes(fam)) return '深渊食腐，什么都敢碰';
+    if (['鲤科', '慈鲷'].includes(fam)) return '杂食，偏爱谷物与嫩草';
+    return '杂食，见啥吃啥';
+  },
+
+  // 性情描述（按拉力 strength）
+  _fishTemper(f) {
+    const s = f.strength || 0;
+    if (f.boss) return '凶暴的传说之兽';
+    if (s >= 90) return '极度凶猛';
+    if (s >= 70) return '凶猛';
+    if (s >= 50) return '有力';
+    if (s >= 30) return '一般';
+    return '温顺';
+  },
+
+  // 咬钩倾向（按攻击性 aggress）
+  _fishBite(f) {
+    const a = f.aggress || 0;
+    if (a >= 0.8) return '贪吃，见饵就咬';
+    if (a >= 0.5) return '正常，有饵就上';
+    if (a >= 0.3) return '挑食，认味道下口';
+    return '极其挑食，难以上钩';
+  },
+
+  // 挣扎强度（按耐力 fight）
+  _fishStruggle(f) {
+    const ft = f.fight || 0;
+    if (f.boss) return '毁灭性的搏斗';
+    if (ft >= 200) return '狂暴挣扎';
+    if (ft >= 120) return '激烈反抗';
+    if (ft >= 60) return '中等拉扯';
+    return '三两下就老实';
   },
 
   // 程序化矢量鱼形（依据 silhouette 参数绘制，无需图片素材）
