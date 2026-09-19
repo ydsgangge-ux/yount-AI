@@ -2128,6 +2128,53 @@ class SettingsPage(QWidget):
         budget_row.addStretch()
         think_lay.addLayout(budget_row, 3, 1)
 
+        # ── 记忆联想（Associative Memory）──
+        assoc_box = QGroupBox("🧠 记忆联想（Associative Memory）")
+        assoc_lay = QGridLayout(assoc_box)
+
+        assoc_desc = QLabel(
+            "检索命中记忆后，自动按内容相似度带出少量「联想记忆」，达到触景生情。\n"
+            "温度调小 → 只挑最像的 1~2 条（准但少）；温度调大 → 联想更丰富（多但杂）。"
+        )
+        assoc_desc.setStyleSheet("color:#8b949e;font-size:11px;")
+        assoc_desc.setWordWrap(True)
+        assoc_lay.addWidget(assoc_desc, 0, 0, 1, 2)
+
+        self._assoc_enable = QCheckBox("启用记忆联想")
+        self._assoc_enable.setChecked(self._cfg.get("assoc_enable", True))
+        assoc_lay.addWidget(self._assoc_enable, 1, 0, 1, 2)
+
+        # 温度滑块（0.05 ~ 0.50，×100 存储为整数滑块值）
+        temp_row = QHBoxLayout()
+        temp_row.addWidget(QLabel("联想温度:"))
+        self._assoc_temp_slider = QSlider(Qt.Orientation.Horizontal)
+        self._assoc_temp_slider.setRange(5, 50)
+        self._assoc_temp_slider.setValue(int(self._cfg.get("assoc_temp", 0.15) * 100))
+        self._assoc_temp_lbl = QLabel(f"{self._assoc_temp_slider.value() / 100.0:.2f}")
+        self._assoc_temp_slider.valueChanged.connect(
+            lambda v: self._assoc_temp_lbl.setText(f"{v / 100.0:.2f}")
+        )
+        temp_row.addWidget(self._assoc_temp_slider)
+        temp_row.addWidget(self._assoc_temp_lbl)
+        assoc_lay.addLayout(temp_row, 2, 0, 1, 2)
+
+        # 联想条数
+        assoc_lay.addWidget(QLabel("最多联想条数:"), 3, 0)
+        k_row = QHBoxLayout()
+        self._assoc_k_spin = QSpinBox()
+        self._assoc_k_spin.setRange(1, 5)
+        self._assoc_k_spin.setValue(self._cfg.get("assoc_k", 3))
+        self._assoc_k_spin.setStyleSheet(
+            "QSpinBox{background:#21262d;border:1px solid #30363d;"
+            "border-radius:5px;padding:5px 8px;color:#e6edf3;}"
+        )
+        k_row.addWidget(self._assoc_k_spin)
+        k_lbl = QLabel("（封顶防淹没，1~5 条）")
+        k_lbl.setStyleSheet("color:#8b949e;font-size:11px;")
+        k_row.addWidget(k_lbl)
+        k_row.addStretch()
+        assoc_lay.addLayout(k_row, 3, 1)
+
         # ── 语音识别（STT）──
         stt_box = QGroupBox("🎤 语音识别（STT）")
         stt_lay = QGridLayout(stt_box)
@@ -2322,6 +2369,7 @@ class SettingsPage(QWidget):
         layout.addWidget(win_box)
         layout.addWidget(tts_box)
         layout.addWidget(think_box)
+        layout.addWidget(assoc_box)
         layout.addWidget(stt_box)
         layout.addWidget(sensor_box)
         layout.addWidget(news_box)
@@ -2469,6 +2517,10 @@ class SettingsPage(QWidget):
         self._cfg["thinking_mode"]     = self._thinking_mode.currentData() or "auto"
         self._cfg["thinking_effort"]   = self._thinking_effort.currentData() or "high"
         self._cfg["thinking_budget"]   = self._thinking_budget.value()
+        # 记忆联想
+        self._cfg["assoc_enable"]      = self._assoc_enable.isChecked()
+        self._cfg["assoc_temp"]        = self._assoc_temp_slider.value() / 100.0
+        self._cfg["assoc_k"]           = self._assoc_k_spin.value()
         # OCR      = self._ocr_lang.text().strip()
         self._cfg["newsapi_key"]       = self._newsapi_key.text().strip()
         # 多模态 Vision 配置

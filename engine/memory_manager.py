@@ -15,10 +15,11 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from engine.memory import MemoryStore, MemoryLevel, MemoryModality
+from engine.memory import MemoryStore, MemoryLevel, MemoryModality, cosine_similarity
 from engine.models import MemoryNode, EmotionState
 from typing import Dict, List, Tuple, Any, Optional
 import uuid
+import math
 
 
 class HierarchicalMemoryManager:
@@ -38,9 +39,13 @@ class HierarchicalMemoryManager:
         outline_k:   int = 6,
         detail_k:    int = 3,
         user_id:     str = None,
+        assoc_cfg:   Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         两阶段检索，user_id 限定检索范围
+        assoc_cfg: 联想增强配置（也可传 None 用默认值）：
+            assoc_enable 总开关(默认True)  assoc_pool 候选池(30)
+            assoc_temp 温度(0.15)  assoc_k 联想条数(3)  assoc_min 最低相似度(0.0)
         """
         results: Dict[str, Any] = {
             "summary":          [],
@@ -48,6 +53,7 @@ class HierarchicalMemoryManager:
             "detail":           [],
             "directed_expand":  [],
             "ripples":          [],
+            "associations":     [],
         }
 
         # ══ 第一阶段：检索大纲 ══════════════════
@@ -126,7 +132,99 @@ class HierarchicalMemoryManager:
         for node, _ in (results["summary"] + results["outline"] + results["detail"]):
             self.store.update_access(node.id)
 
+        # ══ 联想增强（query-time 相似度联想）══
+        self._associate(results, assoc_cfg=assoc_cfg, user_id=user_id)
+
         return results
+
+    # ══════════════════════════════════════════════
+    # 联想增强（query-time 相似度联想）
+    # ══════════════════════════════════════════════
+    def _associate(self, results: Dict[str, Any], assoc_cfg=None,
+                   user_id: Optional[str] = None) -> None:
+        """
+        命中记忆后，当场按内容相似度带出少量"联想记忆"（触景生情）。
+
+        机制：取前1~3条 summary 命中作种子 → 对同范围内候选记忆算余弦相似度
+              → 候选池 pool 收窄 → softmax(T) 加权 → 取 top-k 条作联想。
+        温度 T 决定"亮几盏灯"：T 小→只亮极少数强联想；T 大→很多都亮。
+
+        assoc_cfg 可传键（或被结果外的默认值）：
+            assoc_enable 总开关(默认True)   false 时整步跳过，行为与之前完全一致
+            assoc_pool 候选池(默认30)       想再收窄可设 15~20
+            assoc_temp 温度(默认0.15)       核心旋钮，越小越锐利
+            assoc_k 联想条数(默认3)         硬封顶，防淹没
+            assoc_min 最低相似度(默认0.0)   硬门槛，低于则不要
+        """
+        cfg = assoc_cfg or {}
+        if not cfg.get("assoc_enable", True):
+            return
+
+        pool = int(cfg.get("assoc_pool", 30))
+        temp = float(cfg.get("assoc_temp", 0.15))
+        k    = int(cfg.get("assoc_k", 3))
+        mins = float(cfg.get("assoc_min", 0.0))
+
+        # 选种子：取前 1~3 条 summary 命中，取其 embedding
+        seed_vecs = [node.embedding for node, _ in results.get("summary", [])[:3]
+                     if node.embedding]
+        if not seed_vecs:
+            return
+
+        # 已在主检索命中的 id（联想步不再重复带出）
+        hit_ids = set()
+        for key in ("summary", "outline", "detail"):
+            for node, _ in results.get(key, []):
+                hit_ids.add(node.id)
+        for r in results.get("ripples", []):
+            hit_ids.add(r.triggered_memory_id)
+
+        # 候选：同用户范围内所有带向量的记忆
+        candidates = self.store.get_all_memories_with_embedding(user_id=user_id)
+        if not candidates:
+            return
+
+        # 算相似度：对任意种子取最大相似（排除已命中、排除自身种子）
+        scored = []
+        for node in candidates:
+            if node.id in hit_ids or not node.embedding:
+                continue
+            best = max(
+                (cosine_similarity(seed, node.embedding) for seed in seed_vecs),
+                default=0.0,
+            )
+            scored.append((node, best))
+
+        # 硬门槛
+        scored = [(n, s) for n, s in scored if s >= mins]
+        if not scored:
+            return
+
+        # 候选池：按分数降序取前 pool 个
+        scored.sort(key=lambda x: x[1], reverse=True)
+        scored = scored[:pool]
+
+        # softmax(T) 加权（softmax 在固定 T 下保持 s 的降序，故按 p 取 top-k 即按相似度取）
+        if temp <= 0:
+            temp = 0.01
+        exps = [math.exp(s / temp) for _, s in scored]
+        total = sum(exps) if sum(exps) > 0 else 1e-9
+        probs = [e / total for e in exps]
+
+        ranked = sorted(zip([n for n, _ in scored], probs),
+                        key=lambda x: x[1], reverse=True)[:k]
+
+        # 记录（标上原始相似度与来源，供渲染与调试）
+        results["associations"] = [
+            {
+                "memory_id": n.id,
+                "content": n.content,
+                "score": round(p, 4),
+                "depth": 0,
+                "source": "similar",
+            }
+            for n, p in ranked
+        ]
 
     # ══════════════════════════════════════════════
     # 存储（大纲精炼）
@@ -177,16 +275,27 @@ class HierarchicalMemoryManager:
         )
         stored_ids["summary"] = self.store.add(n, user_id=user_id, user_name=user_name)
 
-        # 关联网络
+        # 关联网络：importance≥门槛（默认0.5）才进网络；用实体型标签建边
+        # （@人物 / #地点物品；无前缀的话题词跳过）
+        # 锚定 summary id：检索种子是大纲，边必须挂在大纲上才能被涟漪触发
         if self.net and tags:
-            from engine.association import AssociationAnalyzer
-            entities = AssociationAnalyzer.extract_entities(content, tags)
-            primary_id = (stored_ids.get("detail")
-                          or stored_ids.get("outline")
-                          or stored_ids.get("summary"))
-            for etype, enames in entities.items():
-                for ename in enames:
-                    self.net.register_entity(ename, etype, primary_id)
+            try:
+                from desktop.config import load_config
+                min_imp = float(load_config().get("edge_min_importance", 0.5))
+            except Exception:
+                min_imp = 0.5
+            if importance >= min_imp:
+                anchor_id = stored_ids.get("summary")
+                if anchor_id:
+                    for tag in tags:
+                        tag = (tag or "").strip()
+                        ename = None
+                        if tag.startswith("@"):
+                            ename, etype = tag[1:].strip(), "person"
+                        elif tag.startswith("#"):
+                            ename, etype = tag[1:].strip(), "place"
+                        if ename:
+                            self.net.register_entity(ename, etype, anchor_id)
 
         return stored_ids
 
@@ -288,6 +397,13 @@ class HierarchicalMemoryManager:
                     lines.append(
                         f"  ↳ [{assoc_label}{shared_str}] {content[:200]}"
                     )
+
+        # ── 联想记忆（query-time 相似度联想，加分素材）────
+        associations = results.get("associations", [])
+        if associations:
+            lines.append(f"\n▌ 联想到的更早记忆（{len(associations)} 条）")
+            for a in associations:
+                lines.append(f"  ↳ {a['content'][:200]}")
 
         return "\n".join(lines)
 

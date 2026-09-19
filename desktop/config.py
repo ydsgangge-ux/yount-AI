@@ -66,6 +66,17 @@ DEFAULT_CONFIG = {
     "thinking_mode":      "auto",  # "auto" / "always_on" / "always_off"
     "thinking_effort":    "high", # 思考深度：low/medium/high/max
     "thinking_budget":    8000,   # 思考 token 预算（Claude/Gemini/通义/智谱）
+    # ── 记忆联想（检索命中后带出少量"联想记忆"）──
+    "assoc_enable":       True,    # 总开关：False 则完全不联想，行为与旧版一致
+    "assoc_temp":         0.15,    # 联想温度：调小只挑最像的 1~2 条（准但少），调大联想更丰富（多但杂）
+    "assoc_k":            3,       # 每次最多联想条数（封顶，防命中率爆炸）
+    # ── 实体型标签（存储记忆时 LLM 提取）──
+    "tag_enable":         True,    # 总开关：False 则退回旧标签路径
+    "tag_max":            6,       # 每次最多几个实体标签
+    "tag_max_len":        8,       # 单个标签最大字数
+    # ── 关联网络（边表）──
+    "edge_sim_threshold":   0.8,   # 标签相似度 ≥ 此值才建边（归一化/embedding，可调）
+    "edge_min_importance":  0.5,   # importance 低于此值不进网络、不建边
 }
 
 

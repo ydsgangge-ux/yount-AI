@@ -395,6 +395,31 @@ class MemoryStore:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
+    def get_all_memories_with_embedding(
+        self, user_id: Optional[str] = None
+    ) -> List[MemoryNode]:
+        """取某用户范围内所有带向量的记忆节点（用于联想相似度计算）。
+
+        复用主检索的用户过滤规则（user_id 或 default/system），
+        只返回已存向量(embedding_blob 非空)且未遗忘(decay_factor>0.1)的记忆。
+        """
+        conditions = ["decay_factor > 0.1", "embedding_blob IS NOT NULL"]
+        params: list = []
+        if user_id:
+            conditions.append("(user_id=? OR user_id='default' OR user_id='system')")
+            params.append(user_id)
+        where = " AND ".join(conditions)
+        with guarded_connect(self.db_path) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM memories WHERE {where}", params
+            ).fetchall()
+        result = []
+        for r in rows:
+            n = self._row_to_node(r)
+            if n and n.embedding:
+                result.append(n)
+        return result
+
     def get_recent(
         self,
         top_k: int = 6,

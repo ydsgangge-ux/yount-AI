@@ -11,6 +11,7 @@
 
 import sqlite3
 from engine.db_guard import guarded_connect
+from engine.memory import get_embedding, cosine_similarity
 import json
 import uuid
 from typing import List, Dict, Tuple, Optional, Set
@@ -153,6 +154,45 @@ class MemoryAssociationNetwork:
         self.link(id_a, id_b, assoc_type, strength, shared_elements)
         self.link(id_b, id_a, assoc_type, strength, shared_elements)
 
+    # 实体名归一化（写法变体 → 标准写法）
+    _ALIAS = {
+        "我妈": "妈妈", "mama": "妈妈", "mum": "妈妈", "mom": "妈妈", "mother": "妈妈",
+        "我爸": "爸爸", "dad": "爸爸", "father": "爸爸", "daddy": "爸爸",
+        "小孩": "孩子", "children": "孩子", "kid": "孩子", "女孩": "孩子", "男孩": "孩子",
+    }
+
+    @classmethod
+    def _normalize_entity(cls, name: str) -> str:
+        """我妈/妈妈/Mama → 妈妈（同实体多种写法归一）"""
+        n = (name or "").strip().lower()
+        if not n:
+            return ""
+        return cls._ALIAS.get(n, n)
+
+    def _entity_similarity(self, a: str, b: str) -> float:
+        """标签相似度：embedding 余弦优先，失败降级字符串相似度"""
+        try:
+            va = get_embedding(a)
+            vb = get_embedding(b)
+            s = cosine_similarity(va, vb)
+            if s and s > 0:
+                return float(s)
+        except Exception:
+            pass
+        try:
+            from difflib import SequenceMatcher
+            return SequenceMatcher(None, a, b).ratio()
+        except Exception:
+            return 0.0
+
+    def _edge_threshold(self) -> float:
+        """相似度建边阈值（配置 edge_sim_threshold，默认 0.8）"""
+        try:
+            from desktop.config import load_config
+            return float(load_config().get("edge_sim_threshold", 0.8))
+        except Exception:
+            return 0.8
+
     def register_entity(
         self,
         name: str,
@@ -161,9 +201,12 @@ class MemoryAssociationNetwork:
     ):
         """
         注册实体（人物/地点/感官元素）并关联到记忆
-        同一实体出现在多条记忆中，自动建立关联
+        同一实体（含写法变体/近似名）出现在多条记忆中，自动建立关联
         """
-        entity_id = f"{entity_type}:{name}"
+        norm = self._normalize_entity(name)
+        if not norm:
+            return
+        entity_id = f"{entity_type}:{norm}"
 
         with guarded_connect(self.db_path) as conn:
             row = conn.execute(
@@ -174,26 +217,57 @@ class MemoryAssociationNetwork:
             if row:
                 existing_ids = json.loads(row[0])
                 if memory_id not in existing_ids:
-                    # 与已有记忆建立关联
+                    # 与已有记忆建立关联（归一化同名 → 强关联）
                     for existing_id in existing_ids:
                         atype = self._entity_type_to_assoc(entity_type)
-                        # 强度：同一重要实体，关联强
                         self.link_bidirectional(
                             memory_id, existing_id, atype,
-                            strength=0.75,
-                            shared_elements=[name]
+                            strength=0.75, shared_elements=[norm]
                         )
                     existing_ids.append(memory_id)
                     conn.execute(
                         "UPDATE memory_entities SET memory_ids=? WHERE entity_id=?",
                         (json.dumps(existing_ids), entity_id)
                     )
-            else:
+                return
+
+            # 无精确匹配：同类型实体里找近似名（embedding/归一化相似度 ≥ 阈值）
+            threshold = self._edge_threshold()
+            best_row, best_sim = None, 0.0
+            rows = conn.execute(
+                "SELECT name, memory_ids FROM memory_entities WHERE entity_type=?",
+                (entity_type,)
+            ).fetchall()
+            for r in rows:
+                other_norm = self._normalize_entity(r[0])
+                if not other_norm or other_norm == norm:
+                    continue
+                sim = self._entity_similarity(norm, other_norm)
+                if sim >= threshold and sim > best_sim:
+                    best_sim, best_row = sim, r
+
+            if best_row:
+                # 近似名 → 并入已有实体并建边（强度随相似度，最高 0.85）
+                existing_ids = json.loads(best_row[1])
+                atype = self._entity_type_to_assoc(entity_type)
+                strength = min(0.85, 0.75 + (best_sim - threshold) * 0.5)
+                for existing_id in existing_ids:
+                    self.link_bidirectional(
+                        memory_id, existing_id, atype,
+                        strength=strength, shared_elements=[norm]
+                    )
+                existing_ids.append(memory_id)
                 conn.execute(
-                    "INSERT INTO memory_entities VALUES (?,?,?,?)",
-                    (entity_id, name, entity_type, json.dumps([memory_id]))
+                    "UPDATE memory_entities SET memory_ids=?, name=? "
+                    "WHERE entity_type=? AND name=?",
+                    (json.dumps(existing_ids), norm, entity_type, best_row[0])
                 )
-            conn.commit()
+                return
+
+            conn.execute(
+                "INSERT INTO memory_entities VALUES (?,?,?,?)",
+                (entity_id, norm, entity_type, json.dumps([memory_id]))
+            )
 
     # ── 涟漪扩散检索 ─────────────────────────────────
 

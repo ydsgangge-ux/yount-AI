@@ -353,12 +353,21 @@ class ConsciousnessAgent:
                 perception["needs_deep_memory"] = True
 
         if not is_guest and perception.get("needs_deep_memory", True):
+            # 联想增强配置（做成配置项，不是写死；关掉则与旧行为完全一致）
+            assoc_cfg = {
+                "assoc_enable": self._get_config("assoc_enable", True),
+                "assoc_pool":   self._get_config("assoc_pool", 30),
+                "assoc_temp":   self._get_config("assoc_temp", 0.15),
+                "assoc_k":      self._get_config("assoc_k", 3),
+                "assoc_min":    self._get_config("assoc_min", 0.0),
+            }
             search_results = self.memory.hierarchical_search(
                 user_input,
                 summary_k=MEMORY_SUMMARY_K,
                 outline_k=MEMORY_OUTLINE_K,
                 detail_k=MEMORY_DETAIL_K,
                 user_id=None,
+                assoc_cfg=assoc_cfg,
             )
             memory_context = self.memory.format_for_prompt(search_results)
 
@@ -682,13 +691,18 @@ class ConsciousnessAgent:
             except ValueError:
                 modality = MemoryModality.SEMANTIC
 
+            # 实体型标签：LLM 提取（失败时退回原标签，保持现状不退化）
+            entity_tags = self._extract_entity_tags(content_to_store, raw_conversation)
+            if not entity_tags:
+                entity_tags = perception.get("topic_tags", [])
+
             stored_ids = self.memory.store_with_hierarchy(
                 content=content_to_store,         # 大纲/细纲用摘要
                 raw_content=raw_conversation,      # 细节层用原始对话
                 modality=modality,
                 emotion=emotion,
                 importance=storage_decision.get("importance", 0.5),
-                tags=perception.get("topic_tags", []),
+                tags=entity_tags,
                 source="conversation",
                 user_id=current_uid,
                 user_name=current_user_name,
@@ -874,6 +888,54 @@ class ConsciousnessAgent:
             long_hint = "，你们已经很久没聊了" if delta >= timedelta(days=7) else ""
             return (f"\n（距离上次对话已过去 {gap_desc}；上次对话是 {last_anchor}，"
                     f"现在是 {now_anchor}{long_hint}）")
+
+    def _extract_entity_tags(
+        self, content: str, raw_conversation: str = ""
+    ) -> List[str]:
+        """存储记忆时用 LLM 提取「实体型标签」（@人物 / #地点物品 / 具体事件）。
+
+        只提取具体实体，禁止泛主题词；失败静默返回 []，不影响存储主流程。
+        max_tokens 给余量保证 JSON 完整，标签内容总量由 prompt 限制在 ~20 字。
+        """
+        if not self._get_config("tag_enable", True):
+            return []
+        prompt = (
+            "你是记忆整理员，从下面的对话中提取「实体型标签」，用于记忆关联。\n"
+            "规则：\n"
+            "- 只提取具体实体，禁止泛主题词（如：日常、冒险、心情、计划这类话题词）\n"
+            "- 人物 → @前缀 + 人名（如 @小王）\n"
+            "- 地点/物品 → #前缀 + 名字（如 #霜棘高地、#封印石）\n"
+            "- 时间事件 → 直接写具体事件（如 7月12日小明生日）\n"
+            "- 每个标签不超过 4 个字（人名可放宽到 6 字），共 2~4 个\n"
+            "- 标签总字数不超过 20 字；宁缺毋滥，提不出来就返回空数组\n"
+            f"要总结的内容：{content}\n"
+            f"原始对话：{raw_conversation[:800]}\n"
+            '只输出 JSON：{"tags": ["@小王", "#霜棘高地", "7月12日生日"]}'
+        )
+        try:
+            raw = self.b.generate(
+                prompt, max_tokens=80, temperature=0.3, thinking=False
+            )
+        except Exception:
+            return []
+        tags: List[str] = []
+        try:
+            data = json.loads(raw.strip())
+            raw_tags = data.get("tags", []) if isinstance(data, dict) else []
+        except Exception:
+            # 容错：从输出里抠出引号包裹的标签
+            raw_tags = re.findall(r'"([^"]+)"', raw)
+        tag_max = int(self._get_config("tag_max", 6))
+        tag_max_len = int(self._get_config("tag_max_len", 8))
+        for t in raw_tags:
+            t = (t or "").strip()
+            if not t or len(t) > tag_max_len:
+                continue
+            if t not in tags:
+                tags.append(t)
+            if len(tags) >= tag_max:
+                break
+        return tags
 
     def _perceive(self, user_input: str, simlife_context: str = "",
                   time_gap: str = "") -> Dict:
